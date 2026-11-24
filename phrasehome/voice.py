@@ -252,6 +252,88 @@ STYLES["mean"] = {**STYLES["deadpan"], **{
     "all_clear": "All clear. Nothing happened. Like every other day around here.",
 }}
 
+# `voice: {style: aussie}`: the mean style with an Australian mouth on it (made for the Mac's
+# "Lee" voice). Safety lines stay plain.
+STYLES["aussie"] = {**STYLES["mean"], **{
+    # mornings
+    "alarm": ["It's {time}. Up you get, ya bludger. The day's not gonna waste itself.",
+              "{time}, mate. Rise and shine. Well, rise. Shine's a big ask for you.",
+              "Oi. It's {time}. Your doona's put in for a restraining order."],
+    "wake_still_in_bed": ["Turning me off from under the doona doesn't count, mate. Back in {minutes} minutes.",
+                          "Nice try, ya galah. You haven't moved a muscle. Round two in {minutes} minutes."],
+    "wake_nag": ["This is your {count} reminder. The bed's started charging you rent.",
+                 "Still horizontal. Fair dinkum, it's impressive. Not good. Just impressive.",
+                 "The bed sensor reckons you're still there. The bed sensor's embarrassed for ya.",
+                 "Your {count} reminder, mate. I'm a house. I've got all day. You haven't."],
+    "wake_snoozed": ["Righto. {minutes} more minutes of being useless. {left} snoozes left. Spend 'em wisely. You won't.",
+                     "Snoozing {minutes} minutes. {left} left. The clock doesn't care, and neither do I."],
+    "wake_snooze_denied": ["Nah. You've snoozed {snoozes} times. That's not a rest, mate, that's a lifestyle.",
+                           "Snooze denied. Had a look at your choices and I'm overruling the lot of 'em.",
+                           "No more snoozes. The snooze button's been retired for its own safety."],
+    "wake_up": ["Oh look, you're vertical. Only took {minutes} minutes. Someone fetch a medal. A small one. From the servo.",
+                "You're up. {minutes} minutes, {snoozes} snoozes. That's going on your permanent record, mate.",
+                "Upright at last. Took evolution millions of years. Took you {minutes} minutes. Close race."],
+    "wake_back_to_bed": ["Back under the doona? Bold move. Stupid, but bold. Alarm's back on.",
+                         "Saw that. The bed saw that. We're both disappointed. Up ya get."],
+    "wake_gave_up": ["Righto, stay there then. I've told your phone you're a lost cause.",
+                     "I give up. Which is the first thing either of us has finished today."],
+    "snoozed": ["Righto. {minutes} more minutes of being unconscious.",
+                "Snoozing {minutes} minutes. The clock keeps ticking, mate. It doesn't care about ya either."],
+    "alarm_set": "Alarm's set for {time}. We both know you'll ignore it. Setting it anyway. That's called hope, mate.",
+    "good_morning": ["Mornin'. Another day for you to almost get stuff done.",
+                     "G'day. You're awake. Technically. Let's not get carried away."],
+    # doors
+    "retinal_scan_complete": ["Retinal scan complete. Oh. It's you, {name}. Was hoping for someone more interesting.",
+                              "Retinal scan complete. G'day, {name}. House was quieter without ya. Better, too."],
+    "retinal_scan_failed": ["Retinal scan failed. Dunno who you are, mate, and I don't reckon I want to. "
+                            "Locking the {door} door.",
+                            "Retinal scan failed. Whoever you are, the {door} door's decided you're not coming in. Hooroo."],
+    "fingerprint_prompt": "Finger on the scanner, mate. One of your own, preferably.",
+    "fingerprint_accepted": "Fingerprint accepted. Welcome home, {name}. Lower your expectations accordingly.",
+    "fingerprint_rejected": "Don't recognise that fingerprint. Barely recognise that finger. Have another go.",
+    "fingerprint_lockout": "Too many stuff-ups. The {door} door's locked. It's your own finger, mate. How'd you get that wrong?",
+    "access_denied": "Access denied. Don't take it personally. Actually, do.",
+    "door_locked": "The {door} door's locked. Someone round here has to be the responsible one.",
+    "door_auto_locked": "Some drongo left the {door} door unlocked again. Won't say who. It was you.",
+    "door_left_open": "The {door} door's been open for ages. Were you born in a tent? We heating the whole street now?",
+    "doorbell_announce": "Someone's at the {door} door. Go on, pretend you're not home. You're a natural.",
+    "welcome_person": ["G'day, {name}. Didn't hear you come in. Didn't miss ya either.",
+                       "{name}. You're back. Lovely. For you."],
+    "welcome_home": ["Oh, you're back. Just when I was enjoying the quiet.",
+                     "Welcome home. Shoes off. You live here, mate. You don't run the place. I do."],
+    # routines
+    "lockdown": "Lockdown's on. Doors locked, lights off. House is finally how I like it: no worries, no people.",
+    "goodnight": "Night, mate. I'll be up all night keeping you safe. Don't thank me. You never do.",
+    "leaving": "Heading off? I'll lock up. Try and get something done out there. Anything. I'll wait.",
+    # timers and reminders
+    "timer_set": "Timer's set for {duration}. Don't wander off and forget, like you always do.",
+    "timer_done": ["Timer's done. Whatever's in there, I'm sure it's fine. It's not fine.",
+                   "Timer's up, mate. Go sort out whatever you started and then wandered off from."],
+    "timer_done_named": "Your {label} timer's done. Try and look like you meant it.",
+    "timer_cancelled": "Timer cancelled. Another plan, chucked in the bin. Very on brand.",
+    "no_timers": "No timers going. Nothing's cooking. Shocking, I know.",
+    "reminder": ["Reminder: {text}. You asked me to remember 'cause you can't.",
+                 "{name}. Reminder: {text}. Yep, again. Yep, still your problem."],
+    # the house
+    "privacy_on": "Fine. Not listening. Whatever you're about to say, I'm sure it's a ripper.",
+    "privacy_off": "Listening again. Try and say something worth hearing this time, eh.",
+    "dnd_on": "Do not disturb's on. I'll keep my opinions to meself. Gonna be hard.",
+    "dnd_off": "Do not disturb's off. Been saving up, mate.",
+    "mode_changed": "House is in {mode} mode now. Hold your applause.",
+    "time_now": "It's {time}. Later than you reckon. Always is with you.",
+    "date_now": "It's {date}. Another one.",
+    "listening": ["What.", "Yeah? Make it quick.", "Listening. Unfortunately."],
+    "assistant_error": "Can't answer that right now. Enjoy not knowing. You're used to it.",
+    "device_offline": "The {node} module's gone offline. Can't say I blame it.",
+    "alarm_arming": "Alarm's on in {seconds} seconds. Rack off, or don't. I'm watching either way.",
+    "alarm_alert": "The alarm wasn't disarmed. The owners have been told. Cameras are rolling. Smile, mate.",
+    "alarm_disarmed": "Alarm off. Welcome home. Took ya long enough.",
+    "package_delivered": "Parcel's arrived: {description}. More stuff. Exactly what this place needed.",
+    "package_taken": "The parcel on the porch is gone and nobody here took it. So that's gone. Good on ya, everyone.",
+    "mail": "You've got mail. Bills, probably. It's always bills.",
+    "all_clear": "All clear. Nothing happened. Like every other day round here.",
+}}
+
 # `voice: {effect: synthetic}` (or any ffmpeg -af filter string). {up}/{rate} are filled in.
 EFFECTS: dict[str, str] = {
     # a cool, slightly-too-perfect machine voice: nudged up in pitch, metallic, a hint of echo

@@ -111,7 +111,7 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Feature | How |
 |---|---|
 | Custom wording | `voice.phrases`; lists pick one at random |
-| Mean by default | The house is satirical and mean out of the box ("Somebody left the front door unlocked again. I won't say who. It was you."), and so is the AI (`persona: mean`). `style: deadpan` is drier, `style: plain` / `persona: butler` are polite. Smoke, CO, leak and weather warnings always stay plain |
+| Mean by default | The house is satirical and mean out of the box ("Somebody left the front door unlocked again. I won't say who. It was you."), and so is the AI (`persona: mean`). `style: aussie` / `persona: aussie` is the same with Australian slang (made for the Mac's "Lee" voice), `style: deadpan` is drier, `style: plain` / `persona: butler` are polite. Smoke, CO, leak and weather warnings always stay plain |
 | Find a voice like a recording | `phrasehome voice match clip.mp3`: compares every voice on the computer (Mac voices, Piper, espeak), with and without effects, on pitch, flatness, brightness and pace, and prints the closest with its config lines. Picks among voices you have; doesn't clone |
 | Machine voice | `voice: {effect: synthetic}` (also robot, deep, radio, or any ffmpeg filter) on top of any engine |
 | Record your own | `phrasehome voice record retinal_scan_complete` |

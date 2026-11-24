@@ -90,7 +90,7 @@ Zarvox              en_US    # That looks like a peaceful planet.
     assert vm.say_voices(novelty=True) == ["Bahh", "Samantha", "Zarvox"]
 
 
-@pytest.mark.parametrize("style", ["mean", "deadpan", "plain"])
+@pytest.mark.parametrize("style", ["mean", "aussie", "deadpan", "plain"])
 def test_demo_lines_have_every_blank_filled(tmp_path, style):
     from phrasehome.config import load_config
     from phrasehome.voice import Voice
