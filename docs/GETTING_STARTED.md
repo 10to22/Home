@@ -130,8 +130,11 @@ and the fingerprint sensor.
 - Voice: `engine: espeak` works everywhere. For the natural voice, `pip install piper-tts` and download a
   voice (see install.sh). Try `phrasehome voice say retinal_scan_complete`. Record your own lines now
   with `phrasehome voice record <name>`.
-- AI: put `ANTHROPIC_API_KEY=...` in `.env`, then `.venv/bin/phrasehome ask "what can you do?"`, or type
-  `house, plan dinners for next week` in the dashboard during `simulate`.
+- AI: get a key at console.anthropic.com (API keys), put `ANTHROPIC_API_KEY=your-key` in the `.env` file in
+  the phrasehome folder (every `phrasehome` command reads it), then run `.venv/bin/phrasehome ai-check`.
+  It sends one tiny question and tells you exactly what's wrong if anything is. Then
+  `.venv/bin/phrasehome ask "what can you do?"`, or type `house, plan dinners for next week` in the
+  dashboard during `simulate`.
 
 ### 0.7 The morning alarm (make sure you're up)
 

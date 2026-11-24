@@ -607,6 +607,98 @@ def _cmd_auth_google(args) -> int:
     return 0
 
 
+def load_env(*folders) -> list[str]:
+    """Read KEY=value lines from .env (in the config's folder and the current folder) into the
+    environment, like the Pi's service file does. Values already set win. Returns the keys set."""
+    import os
+    from pathlib import Path
+
+    done, seen = [], set()
+    for folder in folders:
+        f = Path(folder) / ".env"
+        try:
+            real = f.resolve()
+            if real in seen or not f.is_file():
+                continue
+            seen.add(real)
+            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            key = key.strip().removeprefix("export ").strip()
+            val = val.split(" #", 1)[0].strip().strip("\u201c\u201d\u2018\u2019\"'").strip()
+            if key and val and key not in os.environ:
+                os.environ[key] = val
+                done.append(key)
+    return done
+
+
+def _cmd_ai_check(args) -> int:
+    """Is the AI linked? Sends one tiny question and explains any problem."""
+    import os
+
+    cfg = load_config(args.config)
+    a = cfg.assistant
+    model = a.get("model", "claude-opus-5-5")
+    print(f"AI section in config: {'yes' if a else 'NO: add an assistant: section'}")
+    print(f"Model: {model}   effort: {a.get('effort', 'low')}   persona: {a.get('persona', 'mean')}")
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if key:
+        print(f"API key: found ({key[:7]}...{key[-4:]})")
+    else:
+        print("API key: not in .env or the environment (trying a saved `ant auth login` profile instead)")
+    try:
+        import anthropic
+    except ImportError:
+        print("PROBLEM: the AI package isn't installed. Run:  .venv/bin/pip install -e \".[ai]\"")
+        return 1
+    try:
+        client = anthropic.Anthropic()
+        resp = client.beta.messages.create(
+            model=model, max_tokens=200, output_config={"effort": "low"},
+            betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+            messages=[{"role": "user", "content": "Reply with just the word: linked"}])
+    except anthropic.AuthenticationError:
+        print("PROBLEM: the key was refused. Copy it again from console.anthropic.com > API keys into .env")
+        return 1
+    except anthropic.PermissionDeniedError as e:
+        print(f"PROBLEM: this key isn't allowed to use {model}: {e.message}")
+        return 1
+    except anthropic.NotFoundError:
+        print(f"PROBLEM: model {model!r} wasn't found. Use model: claude-opus-5-5 under assistant:")
+        return 1
+    except anthropic.RateLimitError:
+        print("PROBLEM: rate limited. Wait a minute and try again.")
+        return 1
+    except anthropic.BadRequestError as e:
+        msg = e.message or ""
+        if "credit" in msg.lower() or "billing" in msg.lower():
+            print("PROBLEM: no credit on the account. Add some at console.anthropic.com > Billing.")
+        else:
+            print(f"PROBLEM: the request was rejected: {msg}")
+        return 1
+    except anthropic.APIStatusError as e:
+        print(f"PROBLEM: the API answered {e.status_code}: {e.message}. Try again in a bit.")
+        return 1
+    except anthropic.APIConnectionError:
+        print("PROBLEM: couldn't reach the API. Check the internet connection.")
+        return 1
+    except Exception as e:  # no credentials at all, etc.
+        print(f"PROBLEM: {e}\nPut ANTHROPIC_API_KEY=your-key in the .env file in this folder.")
+        return 1
+    if resp.stop_reason == "refusal":
+        print("The AI answered with a refusal, but the link works.")
+        return 0
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    print(f"Claude says: {text!r}\nThe AI is linked. Everything AI will work: 'house, ...' questions, the morning "
+          "briefing, meal planning, the diary, the watcher, and the cameras' descriptions.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="phrasehome", description=__doc__)
     p.add_argument("-c", "--config", default="config.yaml")
@@ -727,7 +819,13 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--no-browser", action="store_true", help="print the URL instead of opening it")
     a.set_defaults(fn=_cmd_auth_google)
 
+    ac = sub.add_parser("ai-check", help="check that the AI (Claude) is linked: key, model, a test question")
+    ac.set_defaults(fn=_cmd_ai_check)
+
     args = p.parse_args(argv)
+    from pathlib import Path as _P
+
+    load_env(_P(args.config).expanduser().resolve().parent, _P.cwd())  # secrets in .env, like on the Pi
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S",
