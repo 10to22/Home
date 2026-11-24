@@ -209,8 +209,19 @@ def test_smarthome_example_routines_dry_run(tmp_path):
     try:
         for name in cfg.routines:
             assert "failed" not in h.run_action({"backend": "routine", "routine": name}), name
-        for step in cfg.door_scanners[0]["on_unknown"]:
-            h.run_action(step, {"door": "front", "name": "visitor 1"})
+        sc = cfg.door_scanners[0]
+        steps = [st for k in ("on_allowed", "on_denied", "on_unknown", "on_doorbell") for st in sc.get(k, [])]
+        for fp in cfg.fingerprint:
+            steps += [st for k in ("on_accepted", "on_rejected", "on_lockout") for st in fp.get(k, [])]
+        for rule in cfg.automations + cfg.schedules:
+            steps += rule["do"]
+        failed = h.run_steps(steps, {"door": "front", "name": "visitor 1", "node": "hallway",
+                                     "photo": "", "here": "kitchen"})
+        assert failed == 0
+        for c in cfg.commands:  # every command's action renders and runs (dry)
+            if c.action["backend"] != "routine":
+                h.run_action(c.action, {"here": "kitchen", **{k: next(iter(v.values()))
+                                                              for k, v in cfg.slots.items()}})
     finally:
         h.close()
 

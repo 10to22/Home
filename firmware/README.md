@@ -4,8 +4,9 @@ Two sketches, one per board:
 
 | Sketch | What it does | Parts (approx. cost) |
 |---|---|---|
-| `mic_satellite/` | Mic in a room. Streams audio to the hub, blinks its LED when a command is heard | ESP32 dev board + INMP441 I2S mic (~$8) |
+| `mic_satellite/` | **Room module**: mic + optional speaker. Streams audio to the hub, plays that room's replies, reminders and timers. Mute button | ESP32 dev board + INMP441 mic + MAX98357A amp + small speaker (~$14) |
 | `device_node/` | Switches relays and dims LED strips on command. Has its own web page with buttons | ESP32 dev board + relay module and/or MOSFET module (~$6–10) |
+| `door_fingerprint/` | Fingerprint sensor at the door (stage 2 after the face scan) | ESP32 + R503 fingerprint sensor (~$25) |
 | `door_cam/` | Door camera for the face scanner. Serves photos to the hub | AI-Thinker ESP32-CAM + ESP32-CAM-MB flasher (~$12) |
 | `speaker/` | Bluetooth speaker on its own, or one of a synced multi-room group | **Classic** ESP32 dev board + MAX98357A amp + 3 W speaker (~$10) |
 
@@ -33,6 +34,22 @@ INMP441      ESP32
   WS   ────  GPIO 25
   SD   ────  GPIO 33
 ```
+
+**Room module speaker (optional, recommended):** a MAX98357A on the second I2S port. With it, the room
+module answers you, rings timers and alarms, and reads reminders in that room.
+
+```
+MAX98357A      ESP32
+  VIN   ────  5V / VIN
+  GND   ────  GND
+  BCLK  ────  GPIO 27
+  LRC   ────  GPIO 14
+  DIN   ────  GPIO 13
+  + / -  ───  small 3 W speaker (point it away from the mic)
+```
+
+**Mute button:** the BOOT button (GPIO 0) by default, or wire your own between a pin and GND. While
+muted, no audio leaves the device and the LED stays on.
 
 Mount the mic facing the room, away from fans and speakers. To check it, run the hub with
 `log_heard: true` and talk. If you see nothing, set `MIC_USE_RIGHT_CHANNEL 1`. If the hub hears
@@ -66,6 +83,22 @@ Relay module        ESP32
 ```
 
 Optional wall button: wire a push button between `GPIO 19` and `GND` to toggle "lights" by hand.
+
+**Timed switching:** add `for: 15` to any action and the node switches back after 15 s. Use it for
+pumps, pet feeders, a door strike, or a garage-door opener (wire a relay across the opener's wall-button
+terminals and pulse it with `for: 0.5`).
+
+**Sensors** (`INPUT_LIST` in `config.h`). The hub polls them every second and turns changes into events
+for automations:
+
+| Sensor | Wiring | Type |
+|---|---|---|
+| Door/window reed switch | between the pin and GND | `DIGITAL`, active_low `true` |
+| PIR motion (HC-SR501, AM312) or mmWave presence (LD2410 OUT pin) | VCC 5 V, GND, OUT → pin | `DIGITAL`, active_low `false` |
+| Water leak probe | two bare wires/contacts: pin and GND | `DIGITAL`, active_low `true` |
+| Push button / doorbell | between the pin and GND | `DIGITAL`, active_low `true` (presses are counted) |
+| Capacitive soil moisture sensor | VCC 3V3, GND, AOUT → GPIO 32–39 | `ANALOG_INVERTED` |
+| Light sensor (LDR + 10 kΩ divider) | → GPIO 32–39 | `ANALOG` |
 
 > ⚠️ **Mains voltage (110/230 V) can kill you and start fires.** Only wire relays to mains if you're
 > qualified, use a proper enclosure, and follow local electrical code. A safer route for mains lamps is a
@@ -125,7 +158,40 @@ and a power switch. Feed the boost output to the ESP32's `5V` pin and the amp's 
 lens (no IR filter) plus an 850 nm IR LED board switched by a transistor on a free pin. A side benefit is
 that phone screens show up dark in IR, which makes spoofing with a photo on a phone harder.
 
+**Doorbell:** wire a push button between GPIO 13 and GND (`DOORBELL_PIN`). Every press makes the
+house chime in every room, announces it, and sends the camera snapshot to your phone (`on_doorbell`).
+
 **Power:** use a solid 5 V 2 A supply. Weak USB power is the #1 cause of ESP32-CAM resets.
+
+## Fingerprint sensor (R503)
+
+1. Install the **Adafruit Fingerprint Sensor Library** in the Library Manager.
+2. Wire it as below, set `DOOR_NAME` and `TOKEN` in `config.h`, and flash an ordinary ESP32 DevKit with `door_fingerprint.ino`.
+
+```
+R503 wire          ESP32
+  red   (3.3 V) ──  3V3
+  black (GND)   ──  GND
+  yellow (TX)   ──  GPIO 16  (FP_RX_PIN)
+  green  (RX)   ──  GPIO 17  (FP_TX_PIN)
+  (blue touch / white 3.3 V touch: optional, unused)
+```
+
+Wire colors vary between sellers, so check yours. Mount the sensor next to the door camera, under a
+little overhang if it faces the weather.
+
+**Enroll a finger** (the person must already be in the face bank):
+
+```bash
+.venv/bin/phrasehome fingerprint enroll "Sam"
+```
+
+The ring LED breathes purple: place the finger, lift it when the LED turns solid, place it again.
+Three blue flashes mean it's saved.
+
+**At the door:** a face scan of an allowed person makes the LED breathe blue. The same person's finger
+within 30 seconds unlocks the door (purple flash). A wrong finger flashes red, and three in a row lock
+the door and alert your phone.
 
 ## Protocol (if you want to build your own)
 

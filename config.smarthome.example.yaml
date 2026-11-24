@@ -1,8 +1,10 @@
-# phrasehome: the whole smart home. Copy to config.yaml and edit.
-#   ESP32 mics in every room -> voice commands + an AI assistant ("house, ...")
-#   ESP32 device nodes (lights, locks), ESP32 speakers, a door camera with face scanning
-#   Google Home for everything else (TV, vacuum, thermostat, smart plugs)
-# Lines marked CHANGE ME need your own names/addresses.
+# phrasehome: the whole smart home. Copy to config.yaml and edit (CHANGE ME marks your values).
+#
+#   Room modules (ESP32 mic + speaker) in every room: voice commands + a personal AI per room
+#   Device nodes (lights, locks, sensors), speakers, door camera + fingerprint, Google Home
+#   Dashboard: http://<your pi>:8800
+#
+# Try it safely first:  phrasehome -c config.yaml run --dry-run
 
 settings:
   model_path: models/vosk-model-small-en-us-0.15
@@ -16,37 +18,66 @@ settings:
   default_backend: esp
   log_heard: false
 
-data_dir: data            # face bank, event log, door states, voice cache
+data_dir: data                      # face bank, reminders, lists, events, door states
+location: { latitude: 40.71, longitude: -74.00 }   # CHANGE ME: for sunrise/sunset
 
 sources:
   satellites: { port: 7777 }
   local_mic: { room: living room }   # delete if the Pi has no mic
 
+# ---------------------------------------------------------------- instances (one per room/person)
+# Each has its own reminders, alarms, timers, lists, notes, wake name, voice and quiet hours.
+# The main one (living room) sees and manages everyone's.
+instances:
+  household:
+    main: true
+    rooms: [living room, kitchen, front door, hallway]
+  sam:                                   # CHANGE ME: one per person
+    name: Sam
+    rooms: [bedroom]
+    people: [Sam]                        # face-bank name(s), so door scans mark Sam home
+    wake_names: [jarvis]                 # Sam can also say "jarvis, ..." in their room
+    voice: { piper_model: models/piper/en_US-lessac-medium.onnx, speed: 1.05, volume: 80 }
+    persona: "You are Sam's laid-back, slightly witty room assistant."
+    quiet_hours: "22:30-07:00"           # announcements skip this room, replies are quieter
+    phone: CHANGE-ME-sam-xk29            # Sam's ntfy topic for reminders
+    # phone_ip: 192.168.1.50             # optional presence by pinging Sam's phone
+    # calendar: https://calendar.google.com/calendar/ical/.../basic.ics   # "Secret address in iCal format"
+  mia:
+    name: Mia
+    rooms: [kids room]
+    kid_mode: true                       # age-appropriate AI, can't touch doors or modes
+    quiet_hours: "20:00-07:00"
+shared_lists: [shopping, groceries, household]
+
 backends:
   esp:                               # ESP32 device nodes (firmware/device_node)
     type: esp32
     token_env: PHRASEHOME_TOKEN
-    nodes:                           # CHANGE ME: one per device node
+    nodes:                           # CHANGE ME
       kitchen: phrasehome-kitchen.local
       bedroom: phrasehome-bedroom.local
       living room: phrasehome-living-room.local
+      hallway: phrasehome-hallway.local
       porch: phrasehome-porch.local
       front door: phrasehome-front-door.local
-      back door: phrasehome-back-door.local
+      garage: phrasehome-garage.local
+      garden: phrasehome-garden.local
   music:                             # ESP32 speakers (firmware/speaker)
     type: speakers
     token_env: PHRASEHOME_TOKEN
     speakers:
       kitchen: phrasehome-speaker-kitchen.local
       living room: phrasehome-speaker-living-room.local
-      front door: phrasehome-speaker-front-door.local   # a speaker by the door for the scanner's voice
-  google:                            # Google Home: TV, vacuum, thermostat, plugs...
+  google:                            # Google Home: TV, vacuum, thermostat, smart plugs...
     type: google_assistant
     credentials: credentials.json
-  phone:                             # push notifications via the free ntfy app (ntfy.sh)
-    type: webhook
-    url: https://ntfy.sh
-    # CHANGE ME: pick a long random topic name and subscribe to it in the ntfy app
+  phone:                             # push alerts with the free ntfy app
+    type: ntfy
+    topic: CHANGE-ME-house-alerts-8f3k2   # long and unguessable; subscribe in the app
+
+web: { port: 8800, token_env: PHRASEHOME_TOKEN, api_unlock: false }
+presence: { away_after_minutes: 15 }
 
 # ---------------------------------------------------------------- doors
 doors:
@@ -54,93 +85,112 @@ doors:
     lock:   { node: front door, channel: lock, state: on }
     unlock: { node: front door, channel: lock, state: off }
     sensor: { backend: esp, node: front door, channel: lock, locked_when: on }
-  back:
-    lock:   { node: back door, channel: lock, state: on }
-    unlock: { node: back door, channel: lock, state: off }
-    sensor: { backend: esp, node: back door, channel: lock, locked_when: on }
-  # A smart lock already in Google Home instead of an ESP32:
-  # garage:
-  #   lock: { backend: google, say: lock the garage door }
+    contact: { node: front door, input: contact }     # reed switch: is it actually shut?
+    auto_lock_minutes: 3                              # relock if left unlocked
+    room: front door                                  # door messages are spoken here
 
-# ---------------------------------------------------------------- door scanner
 door_scanner:
   door: front
-  camera: http://phrasehome-doorcam-front.local/capture   # ESP32-CAM; or 0 for a USB webcam
-  min_face_px: 90            # ignore faces farther away than ~1.5 m
-  match_threshold: 0.40      # higher = stricter
-  confirm_frames: 3
-  repeat_seconds: 30
-  on_allowed:                # recognized and allowed. Note: never locks.
+  camera: http://phrasehome-doorcam-front.local/capture
+  min_face_px: 90
+  match_threshold: 0.40
+  remember_unknown: true
+  on_allowed:
     - { speak: retinal_scan_complete }
     - { speak: fingerprint_prompt }
-    # Face-only unlocking is easy to fool with a photo. Wait for the fingerprint stage, or accept the risk:
-    # - { door: "{door}", state: unlocked }
-  on_denied:                 # in the bank but not allowed
+  on_denied:
     - { speak: retinal_scan_failed }
     - { door: "{door}", state: locked }
-    - { backend: phone, json: { topic: CHANGE-ME-house-alerts, title: "Door", message: "{name} was denied at the {door} door" } }
-  on_unknown:                # never seen before
+    - { backend: phone, title: Door, message: "{name} was refused at the {door} door", attach: "{photo}" }
+  on_unknown:
     - { speak: retinal_scan_failed }
     - { door: "{door}", state: locked }
-    - { node: porch, channel: lights, state: on }
-    - { backend: phone, json: { topic: CHANGE-ME-house-alerts, title: "Unknown visitor", message: "Someone unrecognized is at the {door} door" } }
+    - { if: { sun: down }, then: [ { node: porch, channel: lights, state: on, for: 300 } ] }
+    - { backend: phone, title: Unknown visitor, message: "Someone unrecognized is at the {door} door", attach: "{photo}" }
+  on_doorbell:
+    - { speak: doorbell, everywhere: true }
+    - { speak: doorbell_announce, everywhere: true }
+    - { backend: phone, title: Doorbell, message: "Someone rang the {door} doorbell", attach: "{photo}", tags: bell }
 
-# ---------------------------------------------------------------- voice bank
+fingerprint:
+  - door: front
+    host: phrasehome-finger-front.local
+    window_seconds: 30            # finger must follow the face scan within this time
+    require_face: true            # two factors: face + finger of the same person
+    max_failures: 3
+    on_accepted:
+      - { speak: fingerprint_accepted }
+      - { door: "{door}", state: unlocked }
+      - { if: { sun: down }, then: [ { node: hallway, channel: lights, state: on, for: 180 } ] }
+    on_lockout:
+      - { speak: fingerprint_lockout }
+      - { door: "{door}", state: locked }
+      - { backend: phone, title: Door, priority: 5, message: "Too many failed fingerprints at the {door} door" }
+
+# ---------------------------------------------------------------- voice
 voice:
-  engine: piper                          # piper (natural) | espeak (robotic) | command (your own)
+  engine: piper
   piper_model: models/piper/en_US-lessac-medium.onnx
-  speed: 1.0
-  speakers: music                        # also speak through speakers in group mode
-  phrases:                               # change any wording; a list picks one at random
+  quiet_volume: 40
+  phrases:
     retinal_scan_complete:
       - "Retinal scan complete. Welcome home, {name}."
       - "Retinal scan complete. Good to see you, {name}."
     retinal_scan_failed: "Retinal scan failed. Locking the {door} door."
-    fingerprint_prompt: "Please place your finger on the scanner."
-    lockdown: "Lockdown engaged. All doors are locked."
-    goodnight: "Good night. The house is secure."
-    leaving: "Goodbye. Locking up behind you."
+    dinner: "Dinner's ready! Come to the kitchen."
     good_morning: ["Good morning.", "Morning! Rise and shine."]
-    panic: "Emergency mode. All lights on. Doors locked."
+    intruder: "Warning. Motion detected while the house is armed. The owner has been notified."
     all_clear: "All clear."
-  # Record your own clip for any phrase: phrasehome voice record retinal_scan_complete
 
 # ---------------------------------------------------------------- AI assistant
 assistant:
-  names: [house]               # say "house, ..." (pick a word that doesn't come up in normal talk)
+  names: [house]
   model: claude-opus-5-5
-  effort: low                  # fast spoken answers; medium/high for harder questions
-  location: ""                 # CHANGE ME e.g. "Austin, Texas" (for weather and local questions)
+  effort: low
+  location: ""                 # CHANGE ME e.g. "Brooklyn, New York"
   web_search: true
-  allow_unlock: false          # the AI can lock but never unlock doors
-  transcriber: vosk            # or whisper (more accurate: pip install faster-whisper)
-  memory_minutes: 5
+  allow_unlock: false
+  transcriber: vosk            # or whisper (pip install faster-whisper)
+
+# ---------------------------------------------------------------- vacation mode
+vacation:                      # random lights from sunset to 23:30 while in vacation mode
+  from: sunset
+  until: "23:30"
+  lights:
+    - { node: living room, channel: lights }
+    - { node: kitchen, channel: lights }
+    - { node: bedroom, channel: lamp }
 
 # ---------------------------------------------------------------- routines
 routines:
-  lockdown:                    # most lights off, every door locked
+  lockdown:
     - { door: all, state: locked }
     - { node: kitchen, channel: lights, state: off }
     - { node: bedroom, channel: lights, state: off }
     - { node: living room, channel: lights, state: off }
-    - { node: porch, channel: lights, state: on }     # keep the porch lit
+    - { node: porch, channel: lights, state: on }
     - { speak: lockdown }
   goodnight:
     - { routine: lockdown }
-    - { node: bedroom, channel: lamp, level: 10 }
+    - { mode: night }
     - { backend: music, speaker: all, mode: bluetooth }
     - { backend: google, say: turn off the TV }
     - { speak: goodnight }
   leaving:
     - { speak: leaving }
-    - { wait: 20 }                                    # time to get out the door
+    - { wait: 20 }
     - { routine: lockdown }
-    - { backend: google, say: start the vacuum }      # clean while you're out
+    - { if: { nobody_home: true }, then: [ { mode: away }, { backend: google, say: start the vacuum } ] }
+  welcome_home:
+    - { mode: home }
+    - { if: { sun: down }, then: [ { node: living room, channel: lights, state: on } ] }
+    - { speak: welcome_home }
   good_morning:
+    - { mode: home }
     - { node: kitchen, channel: lights, state: on }
-    - { node: bedroom, channel: lamp, level: 60 }
     - { backend: google, say: set the thermostat to 70 }
     - { speak: good_morning }
+    - { ask: "Give me a 3 sentence morning briefing: today's weather, my reminders and calendar today, and anything that happened overnight at the door." }
   movie_time:
     - { node: living room, channel: lights, state: off }
     - { node: living room, channel: lamp, level: 15 }
@@ -148,16 +198,25 @@ routines:
   party:
     - { backend: music, speaker: all, mode: group }
     - { node: all, channel: lights, state: on }
-  panic:                       # everything on so you can see; doors locked; phone alert
+  panic:
     - { node: all, channel: lights, state: on }
-    - { node: all, channel: lamp, level: 100 }
     - { door: all, state: locked }
-    - { speak: panic }
-    - { backend: phone, json: { topic: CHANGE-ME-house-alerts, title: "PANIC", priority: 5, message: "Panic mode was triggered at home" } }
+    - { speak: siren, everywhere: true, urgent: true }
+    - { speak: panic, everywhere: true, urgent: true }
+    - { backend: phone, title: PANIC, priority: 5, tags: rotating_light, message: "Panic mode was triggered at home" }
+  all_clear:
+    - { mode: home }
+    - { node: hallway, channel: siren, state: off }
+    - { speak: all_clear, everywhere: true }
+  garage_toggle:               # garage opener button wired to a relay; reed switch says if it's shut
+    - if: { sensor: { node: garage, input: closed, state: on } }
+      then: [ { node: garage, channel: opener, state: on, for: 0.5 }, { speak: "Opening the garage." } ]
+      else: [ { node: garage, channel: opener, state: on, for: 0.5 }, { speak: "Closing the garage." } ]
 
 slots:
-  room: [kitchen, bedroom, living room, porch]
-  door: [front, back]
+  room: [kitchen, bedroom, living room, porch, hallway]
+  door: [front]
+  minutes: { numbers: [1, 120] }
   level: { ten: "10", twenty: "20", thirty: "30", forty: "40", fifty: "50",
            sixty: "60", seventy: "70", eighty: "80", ninety: "90", one hundred: "100" }
   temp: { sixty five: "65", sixty eight: "68", seventy: "70", seventy two: "72", seventy five: "75" }
@@ -171,24 +230,57 @@ commands:
   - { name: all_lights_off, phrases: [all lights off, turn off all the lights], action: { node: all, channel: lights, state: off } }
   - { name: dim, phrases: ["dim the lights to {level} percent", "lamp {level} percent"], action: { node: "{here}", channel: lamp, level: "{level}" } }
 
-  # ---- doors (lock only: unlocking is the door scanner's job, never a voice's)
+  # ---- doors (lock only; unlocking is face + fingerprint)
   - { name: lock_door, phrases: ["lock the {door} door"], action: { door: "{door}", state: locked } }
   - { name: lock_all, phrases: [lock all the doors, lock the doors, lock up], action: { door: all, state: locked } }
 
-  # ---- routines
+  # ---- timers and alarms (offline, instant, per room)
+  - { name: timer_set, phrases: ["set a timer for {minutes} minutes", "set a {minutes} minute timer", "timer {minutes} minutes"], action: { timer: set, minutes: "{minutes}" } }
+  - { name: timer_cancel, phrases: [cancel the timer, stop the timer], action: { timer: cancel } }
+  - { name: timer_status, phrases: [how much time is left, how long is left on the timer], action: { timer: status } }
+  - { name: alarm_stop, phrases: [stop the alarm, "i'm up", alarm off, stop], action: { alarm: stop } }
+  - { name: alarm_snooze, phrases: [snooze, snooze the alarm], action: { alarm: snooze, minutes: 9 } }
+
+  # ---- time
+  - { name: what_time, phrases: [what time is it, "what's the time"], action: { speak: time_now } }
+  - { name: what_date, phrases: ["what's the date", "what day is it"], action: { speak: date_now } }
+
+  # ---- routines and modes
   - { name: lockdown, phrases: [lockdown, lock down, lockdown mode], action: { routine: lockdown } }
   - { name: goodnight, phrases: [good night house, goodnight house, bedtime], action: { routine: goodnight } }
   - { name: leaving, phrases: ["i'm leaving", "we're leaving", heading out], action: { routine: leaving } }
+  - { name: im_home, phrases: ["i'm home", "we're home"], action: { routine: welcome_home } }
   - { name: good_morning, phrases: [good morning house, good morning], action: { routine: good_morning } }
   - { name: movie_time, phrases: [movie time, movie mode], action: { routine: movie_time } }
   - { name: party, phrases: [party mode, party time], action: { routine: party } }
   - { name: panic, phrases: [panic mode, emergency, help help help], action: { routine: panic } }
+  - { name: all_clear, phrases: [all clear, false alarm], action: { routine: all_clear } }
+  - { name: away_mode, phrases: [away mode, arm the house], action: { mode: away } }
+  - { name: vacation_mode, phrases: [vacation mode], action: { mode: vacation } }
+  - { name: guest_mode, phrases: [guest mode], action: { mode: guest } }
+  - { name: home_mode, phrases: [home mode, disarm the house], action: { mode: home } }
+
+  # ---- privacy and quiet
+  - { name: privacy_on, phrases: [stop listening, privacy mode], action: { privacy: on, minutes: 60 } }
+  - { name: privacy_off, phrases: [start listening, privacy off], action: { privacy: off } }
+  - { name: dnd_on, phrases: [do not disturb], action: { dnd: on } }
+  - { name: dnd_off, phrases: [turn off do not disturb, disturb me], action: { dnd: off } }
+
+  # ---- intercom presets
+  - { name: dinner, phrases: ["dinner's ready", dinner time], action: { speak: dinner, everywhere: true } }
+  - { name: whos_home, phrases: ["who's home", "who is home"], action: { ask: "Who's home right now? One sentence." } }
+  - { name: my_reminders, phrases: [read my reminders, "what's on today"], action: { ask: "What are my reminders and calendar events today? Keep it short." } }
 
   # ---- music (ESP32 speakers)
   - { name: play_everywhere, phrases: [play everywhere, all speakers], action: { backend: music, speaker: all, mode: group } }
   - { name: speaker_bluetooth, phrases: [bluetooth speaker, speaker on its own], action: { backend: music, speaker: "{here}", mode: bluetooth } }
   - { name: louder, phrases: [volume up, louder], action: { backend: music, speaker: "{here}", volume: up } }
   - { name: quieter, phrases: [volume down, quieter], action: { backend: music, speaker: "{here}", volume: down } }
+
+  # ---- garage, garden, pets
+  - { name: garage, phrases: [open the garage, close the garage, garage door], action: { routine: garage_toggle } }
+  - { name: water_plants, phrases: [water the plants, water the garden], action: { node: garden, channel: pump, state: on, for: 15 } }
+  - { name: feed_pet, phrases: [feed the cat, feed the dog, feed the pets], action: { node: kitchen, channel: feeder, state: on, for: 2 } }
 
   # ---- Google Home devices
   - { name: vacuum_start, phrases: [start the vacuum, vacuum the house, start cleaning], action: { backend: google, say: start the vacuum } }
@@ -197,4 +289,82 @@ commands:
   - { name: tv_on, phrases: [turn on the tv, tv on], action: { backend: google, say: turn on the TV } }
   - { name: tv_off, phrases: [turn off the tv, tv off], action: { backend: google, say: turn off the TV } }
   - { name: thermostat, phrases: ["set the temperature to {temp}", "make it {temp} degrees"], action: { backend: google, say: "set the thermostat to {temp}" } }
-  - { name: find_phone, phrases: [find my phone, where's my phone], action: { backend: google, say: find my phone } }
+  - { name: warmer, phrases: ["i'm cold", make it warmer], action: { backend: google, say: raise the temperature by 2 degrees } }
+  - { name: cooler, phrases: ["i'm hot", make it cooler], action: { backend: google, say: lower the temperature by 2 degrees } }
+  - { name: find_phone, phrases: [find my phone, "where's my phone"], action: { backend: google, say: find my phone } }
+
+# ---------------------------------------------------------------- automations (when -> if -> do)
+automations:
+  - name: water leak
+    when: { event: sensor, node: kitchen, input: leak, state: on }
+    do:
+      - { speak: siren, everywhere: true, urgent: true }
+      - { speak: leak_alarm, everywhere: true, urgent: true, room: kitchen }
+      - { backend: phone, title: WATER LEAK, priority: 5, tags: droplet, message: "Leak detected in the kitchen" }
+    cooldown: 600
+
+  - name: intruder
+    when: { event: sensor, input: motion, state: on }
+    if: { mode: [away, vacation] }
+    do:
+      - { speak: intruder, everywhere: true, urgent: true }
+      - { node: all, channel: lights, state: on }
+      - { backend: phone, title: Motion while away, priority: 5, message: "Motion at {node} while the house is armed" }
+    cooldown: 300
+
+  - name: night hallway light
+    when: { event: sensor, node: hallway, input: motion, state: on }
+    if: { any: [ { mode: night }, { time: "23:00-06:00" } ] }
+    do: [ { node: hallway, channel: lamp, level: 10, for: 120 } ]
+
+  - name: front door left open
+    when: { event: sensor, node: front door, input: contact, state: off }
+    for: 600
+    do:
+      - { speak: door_left_open, door: front, everywhere: true }
+      - { backend: phone, title: Door, message: "The front door has been open for 10 minutes" }
+
+  - name: everyone left
+    when: { event: presence.everyone_left }
+    do: [ { mode: away }, { routine: lockdown } ]
+
+  - name: first one home
+    when: { event: presence.first_home }
+    if: { mode: [away, vacation] }
+    do: [ { routine: welcome_home } ]
+
+  - name: thirsty plants
+    when: { event: sensor, node: garden, input: soil, below: 25 }
+    do: [ { node: garden, channel: pump, state: on, for: 15 } ]
+    cooldown: 21600
+
+  - name: device offline
+    when: { event: device.offline }
+    do: [ { backend: phone, title: Device offline, message: "{node} stopped responding" } ]
+    cooldown: 3600
+
+  - name: package delivered          # e.g. from a phone shortcut or another system: POST /api/event
+    when: { event: external.package }
+    do: [ { speak: "A package was delivered.", everywhere: true } ]
+
+# ---------------------------------------------------------------- schedules
+schedules:
+  - { name: porch on at sunset, at: sunset, offset: -10, do: [ { node: porch, channel: lights, state: on } ] }
+  - { name: porch off at sunrise, at: sunrise, do: [ { node: porch, channel: lights, state: off } ] }
+  - name: lock up at 11
+    at: "23:00"
+    if: { door: { front: unlocked } }
+    do: [ { door: front, state: locked }, { speak: "It's late, so I locked the front door." } ]
+  - name: Mia's bedtime
+    at: "19:45"
+    days: [sun, mon, tue, wed, thu]
+    do: [ { speak: "Mia, it's almost bedtime. Time to brush your teeth!", rooms: [kids room] } ]
+  - name: Sam's weekday briefing
+    at: "07:15"
+    days: weekdays
+    if: { home: [sam] }
+    do: [ { ask: "Good morning briefing for Sam: weather, Sam's reminders and calendar today. Three sentences.", room: bedroom } ]
+  - name: trash night
+    at: "19:00"
+    days: [tue]
+    do: [ { speak: "Reminder: tomorrow is trash day. Take the bins out tonight.", rooms: [living room, kitchen] } ]

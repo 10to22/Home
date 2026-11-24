@@ -20,7 +20,7 @@ for ESP32 parts; Amazon/Adafruit/DigiKey are faster and more reliable.
 
 | Module | Parts | ~Cost |
 |---|---|---|
-| **Mic satellite** (`firmware/mic_satellite`) | ESP32 DevKit, INMP441 I2S mic, USB power supply, small case | $10 |
+| **Room module** (`firmware/mic_satellite`) | ESP32 DevKit, INMP441 I2S mic, MAX98357A amp + 2–3 W speaker (so the room can talk back), USB power supply, small case | $15 |
 | **Device node** (`firmware/device_node`) | ESP32 DevKit, 2- or 4-channel opto-isolated relay board and/or MOSFET LED-driver board, 12 V supply + 12→5 V buck converter, case | $10–20 |
 | **Speaker** (`firmware/speaker`) | *Classic* ESP32 (WROOM-32), MAX98357A amp, 3 W 4 Ω speaker, case; optional 18650 + TP4056 + boost for battery | $12 (+$8 battery) |
 | LED strip (dimmable lighting) | 12 V LED strip, warm white or COB | $10–20 |
@@ -39,10 +39,25 @@ for ESP32 parts; Amazon/Adafruit/DigiKey are faster and more reliable.
 | Door sensor (reed switch) | Tells you whether the door is actually *closed*, not just locked | $2 |
 | Speaker by the door | A speaker module in group mode, so "retinal scan complete" is heard outside | $12 |
 
-### Stage 2: fingerprint (next build)
+| Doorbell button | Any momentary push button (illuminated ones look great) on the door camera | $3 |
+
+### Stage 2: fingerprint (`firmware/door_fingerprint`)
 | Item | Notes | ~Cost |
 |---|---|---|
-| R503 capacitive fingerprint sensor (round, ring LED) | UART, stores 200 fingerprints on the sensor, has a weather-resistant metal ring. Pairs with an ESP32 at the door | $20 |
+| R503 capacitive fingerprint sensor (round, ring LED) | UART, stores 200 fingerprints on the sensor, weather-resistant metal ring | $20 |
+| ESP32 DevKit + small weatherproof box | Runs the sensor | $6 |
+
+## 3b. Sensors and extras (optional, per need)
+
+| Item | For | ~Cost |
+|---|---|---|
+| Reed switches (magnetic door/window contacts) | Door left open, garage open, auto-relock only when shut | $1–2 each |
+| PIR motion sensor (AM312 / HC-SR501) or LD2410 mmWave presence sensor | Night lights, intruder alerts while away | $2–5 |
+| Water leak probe (or two screws on a 3D-printed puck) | Under sinks, water heater, washing machine | $1–3 |
+| Capacitive soil moisture sensor v2 | Automatic plant watering | $2 |
+| 12 V mini water pump or solenoid valve + tubing | Plant watering | $8 |
+| Relay across your garage opener's wall-button terminals + reed switch | "Open the garage", "is the garage open?" | $4 |
+| Gravity/auger pet feeder with a 5–12 V motor | "Feed the cat" | $15 |
 
 ### About retinal and iris scanning
 - **True retinal scanning** images the blood vessels at the back of the eye. It needs a specialized
@@ -73,13 +88,15 @@ and a 3D printer or project boxes for cases.
 | | Qty | Subtotal |
 |---|---|---|
 | Hub (Pi 5, SSD, UPS, speaker) | 1 | ~$190 |
-| Mic satellites | 3 | ~$30 |
+| Room modules (mic + speaker) | 3 | ~$45 |
 | Device nodes (lights) | 3 | ~$45 |
 | Speakers | 3 | ~$40 |
 | Door camera + IR + enclosure | 1 | ~$25 |
 | Smart deadbolt | 1 | ~$200 |
+| Fingerprint sensor + ESP32 | 1 | ~$26 |
+| A few sensors (contacts, motion, leak) | | ~$20 |
 | LED strips, supplies, wire | | ~$50 |
-| **Total** | | **~$580** (~$400 with a DIY strike instead of a smart deadbolt) |
+| **Total** | | **~$640** (~$470 with a DIY strike instead of a smart deadbolt) |
 
 ## Safety and legal checklist
 

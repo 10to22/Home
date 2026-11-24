@@ -3,9 +3,11 @@
 // Remembers its state across power cuts. Has a web page at http://phrasehome-<name>.local
 //
 // HTTP API:
-//   GET  /api/status                                  -> JSON of all channels
+//   GET  /api/status                                  -> JSON of all channels and inputs
 //   POST /api/set?channel=lights&state=on|off|toggle  (and/or &level=0-100 for dimmable)
+//        &for=5  -> switch back after 5 seconds (pumps, feeders, garage-door button, door strike)
 //   header X-Token: <TOKEN> if a token is configured
+// Inputs (sensors) are read here and reported in /api/status; the hub polls them.
 //
 // Works with the Arduino ESP32 core 2.x and 3.x. No extra libraries needed.
 
@@ -23,6 +25,14 @@ struct Channel {
   int button;
 };
 
+enum InputType { DIGITAL = 0, ANALOG = 1, ANALOG_INVERTED = 2 };
+struct Input {
+  const char *name;
+  int pin;
+  int type;
+  bool activeLow;
+};
+
 #if __has_include("config.h")
 #include "config.h"
 #else
@@ -31,6 +41,17 @@ struct Channel {
 
 Channel channels[] = { CHANNEL_LIST };
 const int NUM = sizeof(channels) / sizeof(channels[0]);
+
+#ifndef INPUT_LIST
+#define INPUT_LIST
+#endif
+Input inputs[] = { INPUT_LIST { nullptr, -1, DIGITAL, false } };  // last entry marks the end
+const int NUM_IN = sizeof(inputs) / sizeof(inputs[0]) - 1;
+bool inOn[NUM_IN + 1];
+uint32_t inCount[NUM_IN + 1];
+uint32_t inChanged[NUM_IN + 1];
+int inValue[NUM_IN + 1];
+uint32_t offAt[NUM];  // millis() at which a timed "for=" switch flips back, 0 = none
 bool isOn[NUM];
 int level[NUM];            // 0-100, dimmable channels only
 bool lastButton[NUM];
@@ -77,6 +98,16 @@ String statusJson() {
     if (channels[i].dimmable) j += ",\"level\":" + String(level[i]);
     j += "}";
   }
+  j += "],\"inputs\":[";
+  for (int i = 0; i < NUM_IN; i++) {
+    if (i) j += ",";
+    j += "{\"name\":\"" + String(inputs[i].name) + "\"";
+    if (inputs[i].type == DIGITAL)
+      j += ",\"on\":" + String(inOn[i] ? "true" : "false") + ",\"count\":" + String((int)inCount[i]);
+    else
+      j += ",\"value\":" + String(inValue[i]);
+    j += "}";
+  }
   return j + "]}";
 }
 
@@ -109,6 +140,11 @@ void handleSet() {
   }
   applyOutput(i);
   save(i);
+  offAt[i] = 0;
+  if (server.hasArg("for")) {
+    float secs = server.arg("for").toFloat();
+    if (secs > 0) offAt[i] = millis() + (uint32_t)(secs * 1000);
+  }
   Serial.printf("%s -> %s %d%%\n", channels[i].name, isOn[i] ? "on" : "off", level[i]);
   server.send(200, "application/json", statusJson());
 }
@@ -151,6 +187,13 @@ void setup() {
     }
   }
 
+  for (int i = 0; i < NUM_IN; i++) {
+    if (inputs[i].type == DIGITAL) {
+      pinMode(inputs[i].pin, inputs[i].activeLow ? INPUT_PULLUP : INPUT);
+      inOn[i] = (digitalRead(inputs[i].pin) == LOW) == inputs[i].activeLow;
+    }
+  }
+
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("phrasehome-" NODE_NAME);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -179,6 +222,32 @@ void loop() {
   if (WiFi.status() != WL_CONNECTED && millis() - lastReconnect > 10000) {
     lastReconnect = millis();
     WiFi.reconnect();
+  }
+
+  // Timed switches ("for=") flip back when their time is up.
+  for (int i = 0; i < NUM; i++) {
+    if (offAt[i] && (int32_t)(millis() - offAt[i]) >= 0) {
+      offAt[i] = 0;
+      isOn[i] = !isOn[i];
+      applyOutput(i);
+      save(i);
+    }
+  }
+
+  // Sensors: debounce digital inputs (counting presses so none are missed), smooth analog ones.
+  for (int i = 0; i < NUM_IN; i++) {
+    if (inputs[i].type == DIGITAL) {
+      bool on = (digitalRead(inputs[i].pin) == LOW) == inputs[i].activeLow;
+      if (on != inOn[i] && millis() - inChanged[i] > 30) {
+        inChanged[i] = millis();
+        inOn[i] = on;
+        if (on) inCount[i]++;
+      }
+    } else {
+      int pct = analogRead(inputs[i].pin) * 100 / 4095;
+      if (inputs[i].type == ANALOG_INVERTED) pct = 100 - pct;
+      inValue[i] = (inValue[i] * 7 + pct) / 8;
+    }
   }
 
   // Physical buttons (to GND): toggle on press.

@@ -1,7 +1,9 @@
-// phrasehome mic satellite
-// ESP32 + INMP441 I2S microphone. Streams audio to the phrasehome hub, which does all
-// the speech recognition. The LED blinks once when a command is heard, stays lit briefly
-// when it worked, and flashes 3 times if it failed.
+// phrasehome mic satellite (room module)
+// ESP32 + INMP441 I2S microphone, plus an optional MAX98357A speaker. Streams audio to the
+// phrasehome hub, which does all the speech recognition, and plays back what the hub says in
+// this room (reminders, timers, AI answers). The LED blinks once when a command is heard,
+// stays lit briefly when it worked, and flashes 3 times if it failed. The mute button stops
+// all audio leaving the device (LED solid while muted).
 //
 // Works with the Arduino ESP32 core 2.x and 3.x. No extra libraries needed.
 
@@ -16,9 +18,19 @@
 #include <WiFiUdp.h>
 #include <ESPmDNS.h>
 
+#ifndef MUTE_BUTTON_PIN
+#define MUTE_BUTTON_PIN -1
+#endif
+#ifndef SPEAKER_ENABLED
+#define SPEAKER_ENABLED 0
+#endif
+
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
 #include <ESP_I2S.h>
 I2SClass mic;
+#if SPEAKER_ENABLED
+I2SClass spk;
+#endif
 #else
 #include <driver/i2s.h>
 #endif
@@ -94,6 +106,105 @@ size_t micRead(int32_t *buf, size_t bytes) {
 #endif
 }
 
+// ---------- speaker: plays "PHV1" speech packets (16 kHz mono) ----------
+#if SPEAKER_ENABLED
+static const int SPK_RING = 16384;  // samples (~1 s)
+int16_t spkRing[SPK_RING];
+volatile uint32_t spkHead = 0, spkTail = 0;
+
+void spkBegin() {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  spk.setPins(SPK_BCLK_PIN, SPK_LRC_PIN, SPK_DIN_PIN);
+  if (!spk.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO)) {
+    Serial.println("speaker I2S init failed");
+  }
+#else
+  i2s_config_t cfg = {};
+  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+  cfg.sample_rate = SAMPLE_RATE;
+  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
+  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
+  cfg.dma_buf_count = 6;
+  cfg.dma_buf_len = 256;
+  cfg.tx_desc_auto_clear = true;  // silence, not old sound, if we ever fall behind
+  i2s_driver_install(I2S_NUM_1, &cfg, 0, NULL);
+  i2s_pin_config_t pins = {};
+  pins.mck_io_num = I2S_PIN_NO_CHANGE;
+  pins.bck_io_num = SPK_BCLK_PIN;
+  pins.ws_io_num = SPK_LRC_PIN;
+  pins.data_out_num = SPK_DIN_PIN;
+  pins.data_in_num = I2S_PIN_NO_CHANGE;
+  i2s_set_pin(I2S_NUM_1, &pins);
+#endif
+}
+
+void spkTask(void *) {
+  static int16_t frame[256 * 2];  // stereo: same sample left and right
+  for (;;) {
+    for (int i = 0; i < 256; i++) {
+      int16_t v = 0;
+      if (spkTail != spkHead) {
+        v = spkRing[spkTail % SPK_RING];
+        spkTail++;
+      }
+      frame[i * 2] = frame[i * 2 + 1] = v;
+    }
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    spk.write((const uint8_t *)frame, sizeof(frame));
+#else
+    size_t w;
+    i2s_write(I2S_NUM_1, frame, sizeof(frame), &w, portMAX_DELAY);
+#endif
+  }
+}
+
+void spkPush(const uint8_t *pcm, int bytes) {
+  const int16_t *s = (const int16_t *)pcm;
+  for (int i = 0; i < bytes / 2; i++) {
+    if (spkHead - spkTail >= (uint32_t)SPK_RING) break;  // full: drop
+    spkRing[spkHead % SPK_RING] = s[i];
+    spkHead++;
+  }
+}
+#endif
+
+// ---------- mute + hello ----------
+bool muted = false;
+uint32_t lastHello = 0;
+
+void sendHello() {
+  uint8_t pkt[6 + 32];
+  size_t n = strlen(ROOM);
+  if (n > 32) n = 32;
+  memcpy(pkt, "PHC1", 4);
+  pkt[4] = (SPEAKER_ENABLED ? 1 : 0) | (muted ? 2 : 0);
+  pkt[5] = (uint8_t)n;
+  memcpy(pkt + 6, ROOM, n);
+  udp.beginPacket(hubIp, HUB_PORT);
+  udp.write(pkt, 6 + n);
+  udp.endPacket();
+  lastHello = millis();
+}
+
+void checkMuteButton() {
+  if (MUTE_BUTTON_PIN < 0) return;
+  static bool last = HIGH;
+  static uint32_t changed = 0;
+  bool b = digitalRead(MUTE_BUTTON_PIN);
+  if (b != last && millis() - changed > 40) {
+    changed = millis();
+    last = b;
+    if (b == LOW) {
+      muted = !muted;
+      Serial.println(muted ? "muted" : "unmuted");
+      led(muted);
+      sendHello();
+    }
+  }
+}
+
 // ---------- network ----------
 void connectWifi() {
   if (WiFi.status() == WL_CONNECTED) return;
@@ -145,7 +256,13 @@ void setup() {
   headerLen = 5 + n;
 
   micBegin();
+#if SPEAKER_ENABLED
+  spkBegin();
+  xTaskCreatePinnedToCore(spkTask, "spk", 4096, nullptr, 6, nullptr, 0);
+#endif
+  if (MUTE_BUTTON_PIN >= 0) pinMode(MUTE_BUTTON_PIN, INPUT_PULLUP);
   led(false);
+  sendHello();
 }
 
 void loop() {
@@ -158,8 +275,11 @@ void loop() {
     resolveHub();
   }
 
-  size_t got = micRead(raw, sizeof(raw));
-  size_t samples = got / sizeof(int32_t);
+  checkMuteButton();
+  if (millis() - lastHello > 5000) sendHello();
+
+  size_t got = micRead(raw, sizeof(raw));  // keep reading even when muted, to keep timing steady
+  size_t samples = muted ? 0 : got / sizeof(int32_t);
   int16_t *out = (int16_t *)(packet + headerLen);
   for (size_t i = 0; i < samples; i++) {
     int32_t s = raw[i] >> GAIN_SHIFT;
@@ -175,17 +295,20 @@ void loop() {
     udp.endPacket();
   }
 
-  // Feedback from the hub: "PHA1" + status
-  int len = udp.parsePacket();
-  if (len >= 5) {
-    uint8_t ack[8];
-    udp.read(ack, sizeof(ack));
-    if (memcmp(ack, "PHA1", 4) == 0 && ack[4] >= 1 && ack[4] <= 3) {
-      ledPattern = ack[4];
+  // From the hub: "PHA1" + status (LED feedback) or "PHV1" + seq + speech
+  for (int len = udp.parsePacket(); len > 0; len = udp.parsePacket()) {
+    static uint8_t in[8 + 1024];
+    int n = udp.read(in, sizeof(in));
+    if (n >= 5 && memcmp(in, "PHA1", 4) == 0 && in[4] >= 1 && in[4] <= 3 && !muted) {
+      ledPattern = in[4];
       ledStart = millis();
     }
-  } else if (len > 0) {
-    udp.flush();
+#if SPEAKER_ENABLED
+    else if (n > 8 && memcmp(in, "PHV1", 4) == 0) {
+      spkPush(in + 8, n - 8);
+    }
+#endif
   }
-  updateLed();
+  if (muted) led(true);
+  else updateLed();
 }

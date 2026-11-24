@@ -12,6 +12,7 @@ action:
     { backend: esp, node: kitchen, channel: lights, state: on }
     { backend: esp, node: "{here}", channel: lamp, level: 40 }     # 0-100 for dimmable channels
     { backend: esp, node: all, channel: lights, state: off }       # every node that has that channel
+    { backend: esp, node: garden, channel: pump, state: on, for: 15 }  # on for 15 s, then off
 """
 
 from __future__ import annotations
@@ -74,6 +75,8 @@ class Esp32Backend(Backend):
             params["state"] = st
         if action.get("level") is not None:
             params["level"] = int(action["level"])
+        if action.get("for") not in (None, ""):
+            params["for"] = float(action["for"])  # device switches back after this many seconds
         if len(params) == 1:
             raise ValueError("esp32 action needs `state` and/or `level`")
 

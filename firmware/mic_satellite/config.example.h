@@ -25,4 +25,15 @@
 #define GAIN_SHIFT 14
 
 // Status LED (GPIO 2 on most ESP32 dev boards; set -1 for none)
+// Solid = muted. Short blink = heard a command, long = done, 3 flashes = failed.
 #define LED_PIN 2
+
+// Mute button: press to stop sending audio (hard privacy switch). GPIO 0 = BOOT button. -1 = none.
+#define MUTE_BUTTON_PIN 0
+
+// Optional speaker (MAX98357A) so this room module can talk: reminders, timers, AI answers.
+// Needs a classic ESP32 or ESP32-S3 (two I2S ports). Set to 0 if there's no speaker.
+#define SPEAKER_ENABLED 1
+#define SPK_BCLK_PIN 27
+#define SPK_LRC_PIN  14
+#define SPK_DIN_PIN  13

@@ -19,3 +19,8 @@
 // Picture: FRAMESIZE_VGA (640x480) is a good balance of detail and speed for face recognition.
 #define FRAME_SIZE FRAMESIZE_VGA
 #define JPEG_QUALITY 12   // 10 = best .. 63 = worst
+
+// Doorbell button (push button between this pin and GND). GPIO 13 is free on the ESP32-CAM
+// when the SD card isn't used. -1 = no doorbell. The hub chimes the house and can send the
+// snapshot to your phone.
+#define DOORBELL_PIN 13

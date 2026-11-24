@@ -26,6 +26,12 @@ An always-on listener for Google Home with **no wake word**. Say "turn on the li
 - **A voice you can customize.** Change any line the house says, record your own, or switch voices.
 - **AI assistant.** "house, who came to the door today?" or "house, set things up for movie night".
   See [AI assistant](#ai-assistant).
+- **A personal assistant in every room.** Each person's room module keeps its own reminders, alarms,
+  timers, lists, notes, wake word and voice, and speaks in that room. The living room sees and manages
+  everyone's. See [Rooms and instances](#rooms-and-instances).
+- **And much more:** timers, ringing alarms, sensors, fingerprint unlock, auto-relock, doorbell,
+  away/vacation modes, presence, sunset schedules, automations, intercom, a dashboard, and phone alerts.
+  **The full list is in [docs/FEATURES.md](docs/FEATURES.md).**
 - **Other backends.** Home Assistant, webhooks (IFTTT, Node-RED…) and local scripts.
 
 ## What you need
@@ -225,6 +231,39 @@ cp config.smarthome.example.yaml config.yaml
 - **What to buy:** [docs/BUILD_LIST.md](docs/BUILD_LIST.md), with parts, costs, a 3-room budget and a safety checklist.
 - **What to add next:** [docs/IDEAS.md](docs/IDEAS.md), from vacuums to fingerprint unlock to a morning briefing.
 
+### Rooms and instances
+
+```
+   Sam's room module ──┐                         ┌── Sam's reminders, alarms, lists, notes, voice
+   Mia's room module ──┼──► Pi hub (one brain) ──┼── Mia's (kid mode)
+   Living room ────────┘                         └── Household: shared lists, and sees everyone's
+```
+
+Each room module is a mic satellite with a small speaker. Everything lives on the Pi, so the rooms
+are always in sync: a reminder Sam sets in his room is visible from the living room, and one set for
+Sam from the living room rings in Sam's room. In a personal room the assistant only sees that person's
+things, plus the shared household lists.
+
+```yaml
+instances:
+  household: { main: true, rooms: [living room, kitchen] }
+  sam:  { name: Sam, rooms: [bedroom], wake_names: [jarvis], quiet_hours: "22:30-07:00", phone: sam-xk29 }
+  mia:  { name: Mia, rooms: [kids room], kid_mode: true }
+```
+
+```bash
+.venv/bin/phrasehome agenda          # everyone's reminders, alarms, timers and lists
+```
+
+### Dashboard
+
+Open `http://<your pi>:8800` on a phone or a wall tablet. It shows doors, the house mode, who's home,
+every room's reminders and lists, recent activity with door-scan photos, offline devices, routine
+buttons, and boxes to make the house say something or ask the AI. Set `PHRASEHOME_TOKEN` in `.env`;
+the first visit asks for it.
+
+![Dashboard](docs/img/dashboard.png)
+
 ### Door scanner
 
 ```
@@ -265,9 +304,15 @@ A match never locks the door, so an unlocked door stays unlocked. The responses 
 .venv/bin/phrasehome faces scans                        # recent scans with their photos
 ```
 
-**Security:** a face alone can be fooled by a good photo, so the example config never unlocks on a face.
-That's what the fingerprint stage is for (see IDEAS). Locks must always open from the inside without power;
-see the safety checklist in the build list.
+**Fingerprint (stage 2):** after an allowed face, the same person's finger on the R503 sensor within
+30 seconds unlocks the door. Three wrong fingers lock it and alert your phone.
+
+```bash
+.venv/bin/phrasehome fingerprint enroll "Sam"   # press the same finger twice
+```
+
+**Security:** a face alone can be fooled by a good photo, so the example config only unlocks after face + finger.
+Locks must always open from the inside without power; see the safety checklist in the build list.
 
 ### Routines
 

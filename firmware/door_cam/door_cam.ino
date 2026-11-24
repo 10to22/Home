@@ -5,8 +5,8 @@
 // Board: "AI Thinker ESP32-CAM". Flash it with a USB-serial adapter or an ESP32-CAM-MB board.
 //
 // HTTP API:
-//   GET  /capture[?token=]        -> JPEG
-//   GET  /status                  -> {"door": "...", "light": false}
+//   GET  /capture[?token=]        -> JPEG, with header X-Doorbell: <press count>
+//   GET  /status                  -> {"door": "...", "light": false, "doorbell": 3}
 //   POST /light?on=1|0[&token=]
 
 #if __has_include("config.h")
@@ -39,8 +39,13 @@
 #define HREF_GPIO_NUM  23
 #define PCLK_GPIO_NUM  22
 
+#ifndef DOORBELL_PIN
+#define DOORBELL_PIN -1
+#endif
+
 WebServer server(80);
 bool lightOn = false;
+volatile uint32_t doorbellCount = 0;
 
 bool authorized() {
   if (strlen(TOKEN) == 0 || server.arg("token") == TOKEN) return true;
@@ -65,6 +70,7 @@ void handleCapture() {
   setLight(fb->len < 6000);
 #endif
   server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("X-Doorbell", String((int)doorbellCount).c_str());
   server.setContentLength(fb->len);
   server.send(200, "image/jpeg", "");
   server.client().write(fb->buf, fb->len);
@@ -75,6 +81,7 @@ void setup() {
   Serial.begin(115200);
   if (LIGHT_PIN >= 0) pinMode(LIGHT_PIN, OUTPUT);
   setLight(false);
+  if (DOORBELL_PIN >= 0) pinMode(DOORBELL_PIN, INPUT_PULLUP);
 
   camera_config_t c = {};
   c.ledc_channel = LEDC_CHANNEL_0;
@@ -127,7 +134,8 @@ void setup() {
   server.on("/capture", HTTP_GET, handleCapture);
   server.on("/status", HTTP_GET, [] {
     server.send(200, "application/json",
-                String("{\"door\":\"" DOOR_NAME "\",\"light\":") + (lightOn ? "true" : "false") + "}");
+                String("{\"door\":\"" DOOR_NAME "\",\"light\":") + (lightOn ? "true" : "false") +
+                ",\"doorbell\":" + String((int)doorbellCount) + "}");
   });
   server.on("/light", HTTP_POST, [] {
     if (!authorized()) return;
@@ -139,6 +147,16 @@ void setup() {
 
 void loop() {
   server.handleClient();
+  if (DOORBELL_PIN >= 0) {  // count presses; the hub sees the count go up
+    static bool last = HIGH;
+    static uint32_t changed = 0;
+    bool b = digitalRead(DOORBELL_PIN);
+    if (b != last && millis() - changed > 50) {
+      changed = millis();
+      last = b;
+      if (b == LOW) doorbellCount++;
+    }
+  }
   static uint32_t lastReconnect = 0;
   if (WiFi.status() != WL_CONNECTED && millis() - lastReconnect > 10000) {
     lastReconnect = millis();
