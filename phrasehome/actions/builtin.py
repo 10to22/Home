@@ -253,3 +253,45 @@ class SecurityBackend(_Builtin):
                 self.home.state.set_mode("home", reason="disarm")
             return result
         return self.home.voice.speak(f"The alarm is {a.state}.", room=room)
+
+
+class EnergyBackend(_Builtin):
+    """{plug: dishwasher, state: on|off}  or  {plug: dishwasher, run: cheap, hours: 2}"""
+
+    def run(self, action: dict[str, Any], phrase: str) -> str:
+        e = getattr(self.home, "energy", None)
+        if e is None:
+            raise RuntimeError("no `energy:` section with plugs")
+        if str(action.get("run", "")).lower() == "cheap":
+            return self.home.voice.speak(e.run_when_cheap(action["plug"], action.get("hours")),
+                                         room=action.get("_context", {}).get("here"))
+        st = action.get("state", "on")
+        on = st is True or str(st).lower() in ("on", "true")
+        e.plug(action["plug"]).switch(on)
+        return f"{action['plug']} {'on' if on else 'off'}"
+
+
+class SpotifyBackend(_Builtin):
+    """{spotify: play, query: jazz, rooms: [kitchen]} / {spotify: play, playlist: dinner} /
+    {spotify: pause|resume|next|previous|like|what|shuffle} / {spotify: volume, level: 40}"""
+
+    def run(self, action: dict[str, Any], phrase: str) -> str:
+        sp = getattr(self.home, "spotify", None)
+        if sp is None:
+            from ..spotify import Spotify
+
+            sp = Spotify(self.home)
+        what = str(action["spotify"]).lower()
+        room = action.get("_context", {}).get("here")
+        if what == "play":
+            rooms = action.get("rooms")
+            rooms = [rooms] if isinstance(rooms, str) else rooms
+            if rooms == ["here"]:
+                rooms = [room] if room else None
+            text = sp.play(str(action.get("query", "")), str(action.get("kind", "any")), rooms,
+                           str(action.get("playlist", "")))
+        else:
+            text = sp.simple(what, action.get("level"))
+        if what in ("what", "like") or action.get("confirm"):
+            self.home.voice.speak(text, room=room)
+        return text

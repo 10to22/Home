@@ -136,7 +136,8 @@ class Dispatcher:
                        "timer": b.TimerBackend, "alarm": b.AlarmBackend, "mode": b.ModeBackend,
                        "presence": b.PresenceBackend, "assistant": b.AskBackend,
                        "privacy": b.PrivacyBackend, "dnd": b.DndBackend, "logic": b.LogicBackend,
-                       "report": b.ReportBackend, "security": b.SecurityBackend}
+                       "report": b.ReportBackend, "security": b.SecurityBackend,
+                       "energy": b.EnergyBackend, "spotify": b.SpotifyBackend}
             try:
                 if name in builtin:
                     b = builtin[name](name, {}, self.config)
@@ -248,7 +249,7 @@ class Dispatcher:
 
 
 BUILTIN_NAMES = {"routine", "doors", "voice", "timer", "alarm", "mode", "presence", "assistant",
-                 "privacy", "dnd", "logic", "report", "security"}
+                 "privacy", "dnd", "logic", "report", "security", "energy", "spotify"}
 
 
 def _quality(m: Match) -> float:

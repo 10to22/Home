@@ -293,6 +293,38 @@ def _cmd_backup(args) -> int:
     return 0
 
 
+def _cmd_auth_spotify(args) -> int:
+    from .dispatcher import Dispatcher
+    from .spotify import login
+
+    home = Dispatcher(load_config(args.config), dry_run=True)
+    try:
+        login(home, open_browser=not args.no_browser)
+    finally:
+        home.close()
+    return 0
+
+
+def _cmd_package(args) -> int:
+    from .dispatcher import Dispatcher
+    from .packages import Packages
+
+    home = Dispatcher(load_config(args.config), dry_run=True)
+    try:
+        p = Packages(home)
+        if args.action == "add":
+            it = p.add(args.number, args.name or "")
+            print(f"tracking {it['name']} ({it['number']})")
+        elif args.action == "remove":
+            print(f"removed {p.remove(args.number)}")
+        else:
+            for it in p.items:
+                print(f"{it['name']:<20} {it['number']:<24} {it['status']:<16} {it.get('eta', '')}  {it.get('description', '')}")
+    finally:
+        home.close()
+    return 0
+
+
 def _cmd_devices(args) -> int:
     import sounddevice as sd
 
@@ -372,6 +404,16 @@ def main(argv: list[str] | None = None) -> int:
     bk = sub.add_parser("backup", help="back up config, face bank, reminders and recordings")
     bk.add_argument("--to", help="folder to save the backup in")
     bk.set_defaults(fn=_cmd_backup)
+
+    sa = sub.add_parser("auth-spotify", help="link your Spotify account (one time)")
+    sa.add_argument("--no-browser", action="store_true")
+    sa.set_defaults(fn=_cmd_auth_spotify)
+
+    pk = sub.add_parser("package", help="track packages")
+    pk.add_argument("action", choices=["add", "list", "remove"], nargs="?", default="list")
+    pk.add_argument("number", nargs="?", default="")
+    pk.add_argument("--name")
+    pk.set_defaults(fn=_cmd_package)
 
     ak = sub.add_parser("ask", help="type a question to the AI assistant")
     ak.add_argument("question", nargs="*")

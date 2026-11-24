@@ -52,6 +52,8 @@ class Instance:
     kid_mode: bool = False
     calendar: str = ""
     people: list[str] = field(default_factory=list)  # face-bank names that are this person
+    diet: dict[str, Any] = field(default_factory=dict)  # allergies, dislikes, style
+    extra: dict[str, Any] = field(default_factory=dict)  # commute, sunrise, language, spotify...
 
     def can_manage(self, other: "Instance") -> bool:
         return self.main or other.id == self.id
@@ -76,6 +78,9 @@ def parse_instances(raw: dict[str, Any] | None) -> list[Instance]:
             phone=str(cfg.get("phone", "")), phone_ip=str(cfg.get("phone_ip", "")),
             kid_mode=bool(cfg.get("kid_mode")), calendar=str(cfg.get("calendar", "")),
             people=[str(p) for p in cfg.get("people", [])],
+            diet=dict(cfg.get("diet") or {}),
+            extra={k: v for k, v in cfg.items() if k in ("commute", "sunrise", "language", "spotify",
+                                                          "pre_alarm_minutes", "bed")},
         ))
     if not any(i.main for i in out):
         main = next((i for i in out if i.id in ("household", "main", "home")), None)
@@ -136,6 +141,8 @@ class Instances:
             d.setdefault("lists", {})
             d.setdefault("memory", [])
             d.setdefault("dnd", False)
+            d.setdefault("countdowns", [])
+            d.setdefault("diet", {})
         return self._data[iid]
 
     def _save(self, iid: str) -> None:
@@ -289,6 +296,60 @@ class Instances:
     def memories(self, inst: Instance) -> list[dict]:
         with self._lock:
             return list(self._load(inst.id)["memory"])
+
+    # ---------- countdowns ----------
+    def countdown_add(self, inst: Instance, name: str, date: str) -> dict:
+        datetime.strptime(date, "%Y-%m-%d")  # validates
+        with self._lock:
+            cds = self._load(inst.id)["countdowns"]
+            cds[:] = [c for c in cds if c["name"].lower() != name.lower()]
+            item = {"name": name, "date": date}
+            cds.append(item)
+            self._save(inst.id)
+            return item
+
+    def countdown_remove(self, inst: Instance, name: str) -> int:
+        with self._lock:
+            cds = self._load(inst.id)["countdowns"]
+            keep = [c for c in cds if name.lower() not in c["name"].lower()]
+            n = len(cds) - len(keep)
+            cds[:] = keep
+            self._save(inst.id)
+            return n
+
+    def countdowns(self, inst: Instance) -> list[dict]:
+        """This instance's countdowns plus the household's, soonest first, past ones dropped."""
+        today = clock.now().date()
+        with self._lock:
+            own = list(self._load(inst.id)["countdowns"])
+            shared = [] if inst.main else list(self._load(self.main.id)["countdowns"])
+        out = []
+        for c in own + shared:
+            days = (datetime.strptime(c["date"], "%Y-%m-%d").date() - today).days
+            if days >= 0:
+                out.append({**c, "days": days})
+        return sorted(out, key=lambda c: c["days"])
+
+    # ---------- diet (allergies, dislikes, style) for the meal planner ----------
+    def diet(self, inst: Instance, config_diet: dict | None = None) -> dict:
+        with self._lock:
+            d = dict(config_diet or {})
+            for k, v in self._load(inst.id)["diet"].items():
+                d[k] = sorted(set(d.get(k, [])) | set(v)) if isinstance(v, list) else v
+            return d
+
+    def diet_update(self, inst: Instance, key: str, add: list[str] = (), remove: list[str] = ()) -> dict:
+        if key not in ("allergies", "dislikes", "likes", "style"):
+            raise ValueError("diet key must be allergies, dislikes, likes or style")
+        with self._lock:
+            d = self._load(inst.id)["diet"]
+            if key == "style":
+                d["style"] = ", ".join(add)
+            else:
+                cur = set(d.get(key, [])) | {a.lower() for a in add}
+                d[key] = sorted(cur - {r.lower() for r in remove})
+            self._save(inst.id)
+            return dict(d)
 
     # ---------- do not disturb ----------
     def set_dnd(self, inst: Instance, on: bool) -> None:

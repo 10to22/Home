@@ -42,6 +42,10 @@ def start_services(home) -> list:
         ("cameras", lambda: home.config.cameras, "vision", "CameraHub"),
         ("weather", lambda: "latitude" in home.config.location, "weather", "Weather"),
         ("alarm", lambda: "alarm" in home.config.extra, "alarm", "AlarmSystem"),
+        ("energy", lambda: bool((home.config.extra.get("energy") or {}).get("plugs")), "energy", "Energy"),
+        ("packages", lambda: "packages" in home.config.extra, "packages", "Packages"),
+        ("meals", lambda: True, "meals", "Meals"),
+        ("spotify", lambda: "spotify" in home.config.extra, "spotify", "Spotify"),
     ]
     for label, wanted, module, cls in optional:
         if not wanted():

@@ -67,6 +67,8 @@ class SpeakerHub:
         if not self.speakers:
             raise ValueError(f"backend '{name}': add at least one speaker under `speakers:`")
         self.source = cfg.get("source", DEFAULT_SOURCE)
+        # librespot (Spotify Connect) should stay visible in the Spotify app even with no group
+        self.keep_source = bool(cfg.get("keep_source_running", "librespot" in str(self.source)))
         self.latency_us = int(float(cfg.get("latency_ms", 300)) * 1000)
         self.audio_port = int(cfg.get("audio_port", 7779))
         self.time_port = int(cfg.get("time_port", 7778))
@@ -229,7 +231,7 @@ class SpeakerHub:
         while self._running:
             with self._lock:
                 targets = list(self.members.values())
-            if not targets:
+            if not targets and not self.keep_source:
                 self._stop_source()  # nobody listening: don't burn CPU or Wi-Fi
                 time.sleep(0.5)
                 continue

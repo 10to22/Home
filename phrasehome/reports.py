@@ -80,3 +80,54 @@ def report_alarm(home, action) -> str:
 
 def _join(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+@register("energy")
+def report_energy(home, action) -> str:
+    e = getattr(home, "energy", None)
+    if e is None:
+        return "Energy monitoring isn't set up."
+    period = str(action.get("period", "month")).lower()
+    return e.report({"today": 1, "week": 7, "month": 30}.get(period, 30))
+
+
+@register("price")
+def report_price(home, action) -> str:
+    e = getattr(home, "energy", None)
+    if e is None:
+        return "Energy prices aren't set up."
+    from . import clock
+
+    price, cheap = e.price_at(clock.now())
+    text = f"Power costs {e.currency}{price:.2f} per kilowatt hour right now" + (", which is the cheap rate." if cheap else ".")
+    nxt = e.next_cheap()
+    if nxt and not cheap:
+        text += f" It gets cheaper at {clock.spoken_time(nxt)}."
+    return text
+
+
+@register("packages")
+def report_packages(home, action) -> str:
+    p = getattr(home, "packages", None)
+    return p.report() if p else "Package tracking isn't set up."
+
+
+@register("countdowns")
+def report_countdowns(home, action) -> str:
+    inst = home.instances.for_room(action.get("_context", {}).get("here"))
+    items = home.instances.countdowns(inst)
+    if not items:
+        return "There are no countdowns."
+    return " ".join(f"{c['days']} day{'s' if c['days'] != 1 else ''} until {c['name']}." if c["days"] > 0
+                    else f"{c['name']} is today!" for c in items[:4])
+
+
+@register("dinner")
+def report_dinner(home, action) -> str:
+    m = getattr(home, "meals", None)
+    if m is None:
+        return "The meal planner isn't set up."
+    from .meals import spoken_meal
+
+    slot = action.get("slot", "dinner")
+    return spoken_meal(m.today(slot), "tonight" if slot == "dinner" else f"{slot} today")

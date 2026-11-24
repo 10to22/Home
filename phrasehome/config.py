@@ -49,7 +49,7 @@ class Settings:
 BUILTIN_BACKENDS = {"speak": "voice", "door": "doors", "routine": "routine", "timer": "timer",
                     "alarm": "alarm", "mode": "mode", "presence": "presence", "ask": "assistant",
                     "privacy": "privacy", "dnd": "dnd", "if": "logic", "report": "report",
-                    "security": "security"}
+                    "security": "security", "plug": "energy", "spotify": "spotify"}
 RESERVED = set(BUILTIN_BACKENDS.values())
 
 
