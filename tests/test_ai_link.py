@@ -16,9 +16,15 @@ commands:
 """
 
 
+def _unset(monkeypatch, *names):
+    """Unset for this test, and make sure whatever load_env sets is removed afterwards."""
+    for n in names:
+        monkeypatch.setenv(n, "x")  # records the original state, so teardown restores it
+        monkeypatch.delenv(n)
+
+
 def test_env_file_is_loaded(tmp_path, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("PHRASEHOME_TOKEN", raising=False)
+    _unset(monkeypatch, "ANTHROPIC_API_KEY", "PHRASEHOME_TOKEN", "SPOTIFY_CLIENT_ID")
     (tmp_path / ".env").write_text(
         "# secrets\n"
         "ANTHROPIC_API_KEY=“sk-ant-test-1234”\n"   # TextEdit's curly quotes
@@ -31,6 +37,7 @@ def test_env_file_is_loaded(tmp_path, monkeypatch):
 
 def test_env_file_doesnt_override(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "from-shell")
+    _unset(monkeypatch, "PHRASEHOME_TOKEN")
     (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=from-file\n")
     cli.load_env(tmp_path)
     assert os.environ["ANTHROPIC_API_KEY"] == "from-shell"
@@ -74,6 +81,7 @@ def test_ai_check_bad_key(tmp_path, monkeypatch, capsys):
             raise err
 
     monkeypatch.setattr(anthropic, "Anthropic", Fake)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xxxxxxx-abcd")
     (tmp_path / "config.yaml").write_text(CFG)
     assert cli.main(["-c", str(tmp_path / "config.yaml"), "ai-check"]) == 1
     assert "the key was refused" in capsys.readouterr().out
