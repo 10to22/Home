@@ -91,7 +91,7 @@ class VoiceID:
         import vosk
 
         with wave.open(path) as w:
-            rec = vosk.KaldiRecognizer(self.home.voice_id._model_for_wav(), w.getframerate())
+            rec = vosk.KaldiRecognizer(self._model_for_wav(), w.getframerate())
             rec.SetSpkModel(self.spk_model())
             while True:
                 data = w.readframes(4000)

@@ -325,6 +325,65 @@ def _cmd_package(args) -> int:
     return 0
 
 
+def _cmd_ir(args) -> int:
+    """Learn a button from a remote pointed at a device node's IR receiver, or list codes."""
+    import json as _json
+    import time as _time
+
+    import requests
+
+    from .actions.esp32 import Esp32Backend
+
+    cfg = load_config(args.config)
+    be_name = next((n for n, b in cfg.backends.items() if b["type"] == "esp32"), None)
+    if not be_name:
+        print("no esp32 backend in the config", file=sys.stderr)
+        return 2
+    be = Esp32Backend(be_name, cfg.backends[be_name], cfg)
+    if args.action == "list":
+        for n, c in be.ir_codes().items():
+            print(f"{n:<20} {c['protocol']:<10} {c['code']}  ({c.get('bits', '?')} bits)")
+        return 0
+    if not (args.name and args.node):
+        print("usage: phrasehome ir learn <name> --node <device node>", file=sys.stderr)
+        return 2
+    (_, host), = be._hosts(args.node)
+    before = requests.get(f"http://{host}/api/ir/learn", timeout=5).json().get("seq", 0)
+    print(f"Point the remote at the {args.node} receiver and press the button for '{args.name}'...")
+    end = _time.monotonic() + 20
+    while _time.monotonic() < end:
+        got = requests.get(f"http://{host}/api/ir/learn", timeout=5).json()
+        if got.get("seq", 0) != before:
+            path = cfg.resolve_path(cfg.data_dir) / "ir_codes.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            codes = _json.loads(path.read_text()) if path.exists() else {}
+            codes[args.name] = {k: got[k] for k in ("protocol", "code", "bits")}
+            path.write_text(_json.dumps(codes, indent=1))
+            print(f"learned {args.name}: {got['protocol']} {got['code']}. Use it: {{ node: {args.node}, ir: {args.name} }}")
+            return 0
+        _time.sleep(0.4)
+    print("nothing received; try again closer to the receiver", file=sys.stderr)
+    return 1
+
+
+def _cmd_voice_id(args) -> int:
+    from .dispatcher import Dispatcher
+    from .voiceid import VoiceID
+
+    home = Dispatcher(load_config(args.config), dry_run=True)
+    try:
+        v = VoiceID(home)
+        if args.action == "list":
+            for p, vs in v.prints.items():
+                print(f"{p:<16} {len(vs)} samples")
+            return 0
+        vecs = [v.vector_from_wav(f) for f in args.files]
+        print(f"{args.person}: {v.enroll(args.person, vecs)} samples")
+    finally:
+        home.close()
+    return 0
+
+
 def _cmd_devices(args) -> int:
     import sounddevice as sd
 
@@ -414,6 +473,18 @@ def main(argv: list[str] | None = None) -> int:
     pk.add_argument("number", nargs="?", default="")
     pk.add_argument("--name")
     pk.set_defaults(fn=_cmd_package)
+
+    ir = sub.add_parser("ir", help="learn IR remote buttons for the IR blaster")
+    ir.add_argument("action", choices=["learn", "list"], nargs="?", default="list")
+    ir.add_argument("name", nargs="?")
+    ir.add_argument("--node")
+    ir.set_defaults(fn=_cmd_ir)
+
+    vi = sub.add_parser("voice-id", help="teach the house who's who by voice (from recordings)")
+    vi.add_argument("action", choices=["enroll", "list"], nargs="?", default="list")
+    vi.add_argument("person", nargs="?")
+    vi.add_argument("files", nargs="*", help="WAV recordings (3+ seconds each)")
+    vi.set_defaults(fn=_cmd_voice_id)
 
     ak = sub.add_parser("ask", help="type a question to the AI assistant")
     ak.add_argument("question", nargs="*")

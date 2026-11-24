@@ -35,3 +35,21 @@
   { "button",  27, DIGITAL, true },
 //  { "leak",    33, DIGITAL, true },
 //  { "soil",    34, ANALOG_INVERTED, false },
+
+// ---------------- optional extras (see extras.h) ----------------
+// Temperature + humidity: an SHT40/SHT41 (4) or SHT31 (3) board on I2C, VCC 3V3.
+// #define CLIMATE_SENSOR 4
+// #define I2C_SDA_PIN 32
+// #define I2C_SCL_PIN 33
+
+// Motorized blinds/curtains on two relays (open, close), one line each:
+//   { "name", open relay pin, close relay pin, seconds from closed to open, active_low },
+// #define COVER_LIST { "blinds", 13, 14, 18.0, true },
+
+// IR blaster (IR LED through a transistor) and learning receiver (TSOP38238).
+// Needs the IRremoteESP8266 library (Library Manager).
+// #define IR_SEND_PIN 4
+// #define IR_RECV_PIN 15
+
+// Report nearby Bluetooth tags for "where are my keys?" (Tools -> Partition Scheme -> Huge APP).
+// #define ENABLE_BLE_SCAN

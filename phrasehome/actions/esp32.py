@@ -66,7 +66,41 @@ class Esp32Backend(Backend):
                 return ch
         raise ValueError(f"node '{node}' has no channel '{channel}'")
 
+    # ---------- IR blaster ----------
+    def ir_codes(self) -> dict[str, dict]:
+        """Named IR codes: backend `ir_codes:` in config plus codes learned with `phrasehome ir learn`."""
+        import json
+        from pathlib import Path
+
+        codes = dict(self.cfg.get("ir_codes") or {})
+        if self.config is not None:
+            p = Path(self.config.resolve_path(self.config.data_dir)) / "ir_codes.json"
+            if p.exists():
+                codes.update(json.loads(p.read_text()))
+        return codes
+
+    def send_ir(self, node: str, names: Any) -> str:
+        codes = self.ir_codes()
+        (_, host), = self._hosts(node)
+        headers = {"X-Token": self.token} if self.token else {}
+        sent = []
+        for name in names if isinstance(names, list) else [names]:
+            code = codes.get(str(name))
+            if code is None:
+                raise ValueError(f"no IR code called '{name}' (learn it: phrasehome ir learn {name} --node \"{node}\")")
+            params = {"protocol": code["protocol"], "code": code["code"]}
+            if code.get("bits"):
+                params["bits"] = code["bits"]
+            if code.get("repeat"):
+                params["repeat"] = code["repeat"]
+            r = requests.post(f"http://{host}/api/ir/send", params=params, headers=headers, timeout=self.timeout)
+            r.raise_for_status()
+            sent.append(str(name))
+        return "sent " + ", ".join(sent)
+
     def run(self, action: dict[str, Any], phrase: str) -> str:
+        if action.get("ir"):
+            return self.send_ir(str(action["node"]), action["ir"])
         node, channel = action.get("node"), action.get("channel")
         if not node or not channel:
             raise ValueError("esp32 action needs `node` and `channel`")

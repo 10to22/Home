@@ -215,3 +215,39 @@ def test_ble_from_device_node_status(home):
     w = SensorWatcher(home)
     w.poll_node("living room", "x", {"inputs": [], "ble": [{"mac": "AA:00:00:00:00:03", "rssi": -61}]})
     assert home.locator.where("luna")["room"] == "living room"
+
+
+def test_ir_blaster_codes(home, tmp_path):
+    import json as _j
+    import threading as _th
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from phrasehome.actions.esp32 import Esp32Backend
+
+    got = []
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            got.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    p = home.config.resolve_path(home.config.data_dir) / "ir_codes.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(_j.dumps({"tv_power": {"protocol": "NEC", "code": "0x20DF10EF", "bits": 32}}))
+    be = Esp32Backend("esp", {"nodes": {"living room": f"127.0.0.1:{srv.server_port}"},
+                              "ir_codes": {"fan": {"protocol": "SONY", "code": "0xA90", "bits": 12, "repeat": 2}}},
+                      home.config)
+    assert be.run({"node": "living room", "ir": ["tv_power", "fan"]}, "") == "sent tv_power, fan"
+    srv.shutdown()
+    assert got[0] == "/api/ir/send?protocol=NEC&code=0x20DF10EF&bits=32"
+    assert got[1] == "/api/ir/send?protocol=SONY&code=0xA90&bits=12&repeat=2"
+    with pytest.raises(ValueError, match="phrasehome ir learn"):
+        be.run({"node": "living room", "ir": "soundbar"}, "")

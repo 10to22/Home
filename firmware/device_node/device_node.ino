@@ -8,6 +8,7 @@
 //        &for=5  -> switch back after 5 seconds (pumps, feeders, garage-door button, door strike)
 //   header X-Token: <TOKEN> if a token is configured
 // Inputs (sensors) are read here and reported in /api/status; the hub polls them.
+// Optional extras (extras.h): temperature/humidity, blinds/curtains, IR blaster, Bluetooth tags.
 //
 // Works with the Arduino ESP32 core 2.x and 3.x. No extra libraries needed.
 
@@ -59,6 +60,15 @@ uint32_t lastButtonChange[NUM];
 
 WebServer server(80);
 Preferences prefs;
+String statusJson();
+bool authorized();
+void climateStatus(String &j, bool &first);
+void coversStatus(String &j);
+void bleStatus(String &j);
+bool coverSet();
+void extrasSetup();
+void extrasRoutes();
+void extrasLoop();
 
 const int PWM_FREQ = 5000;
 const int PWM_BITS = 10;
@@ -98,7 +108,9 @@ String statusJson() {
     if (channels[i].dimmable) j += ",\"level\":" + String(level[i]);
     j += "}";
   }
+  coversStatus(j);
   j += "],\"inputs\":[";
+  bool first = NUM_IN == 0;
   for (int i = 0; i < NUM_IN; i++) {
     if (i) j += ",";
     j += "{\"name\":\"" + String(inputs[i].name) + "\"";
@@ -108,7 +120,10 @@ String statusJson() {
       j += ",\"value\":" + String(inValue[i]);
     j += "}";
   }
-  return j + "]}";
+  climateStatus(j, first);
+  j += "]";
+  bleStatus(j);
+  return j + "}";
 }
 
 bool authorized() {
@@ -119,6 +134,7 @@ bool authorized() {
 }
 
 void handleSet() {
+  if (coverSet()) return;  // blinds/curtains (extras.h)
   if (!authorized()) return;
   int i = findChannel(server.arg("channel"));
   if (i < 0) {
@@ -194,6 +210,8 @@ void setup() {
     }
   }
 
+  extrasSetup();
+
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("phrasehome-" NODE_NAME);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -213,11 +231,13 @@ void setup() {
   server.on("/", HTTP_GET, [] { server.send_P(200, "text/html", PAGE); });
   server.on("/api/status", HTTP_GET, [] { server.send(200, "application/json", statusJson()); });
   server.on("/api/set", HTTP_POST, handleSet);
+  extrasRoutes();
   server.begin();
 }
 
 void loop() {
   server.handleClient();
+  extrasLoop();
   static uint32_t lastReconnect = 0;
   if (WiFi.status() != WL_CONNECTED && millis() - lastReconnect > 10000) {
     lastReconnect = millis();
@@ -266,3 +286,5 @@ void loop() {
   }
   delay(2);
 }
+
+#include "extras.h"
