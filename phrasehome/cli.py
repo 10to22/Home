@@ -269,12 +269,44 @@ def _cmd_voice(args) -> int:
             print(f"{key:<24} {'[recorded clip] ' if clip else ''}{shown}")
     elif args.action == "say":
         print(v.speak(text or "Hello. This is your house speaking."))
+    elif args.action == "match":
+        return _voice_match(cfg, text, args)
     elif args.action == "record":
         if not text:
             print("usage: phrasehome voice record <phrase_key> [--seconds 4]", file=sys.stderr)
             return 2
         print(f"Recording {args.seconds:.0f} seconds for '{text}' - speak now...")
         print(f"saved {v.record(text, args.seconds)}")
+    return 0
+
+
+def _voice_match(cfg, path: str, args) -> int:
+    from pathlib import Path
+
+    from .voice_match import match
+
+    if not path or not Path(path).expanduser().exists():
+        print("usage: phrasehome voice match <recording.mp3|.wav|...>", file=sys.stderr)
+        return 2
+    print("Comparing every voice on this computer with that recording (takes a minute or two)...")
+    try:
+        ref, best = match(cfg, Path(path).expanduser(), top=args.top, effects=not args.no_effects,
+                          progress=lambda m: print(m, flush=True))
+    except Exception as e:
+        print(f"couldn't compare: {e}", file=sys.stderr)
+        return 1
+    print(f"\nThe recording: {ref.describe()}\n")
+    print(f"{'#':>2}  {'closeness':>9}  voice")
+    for i, (dist, label, effect, settings, p) in enumerate(best, 1):
+        close = max(0, 100 - 20 * dist)
+        print(f"{i:>2}  {close:>8.0f}%  {label}" + (f" + effect {effect}" if effect else ""))
+        print(f"{'':>15}{p.describe()}")
+    if best:
+        _, label, effect, settings, _ = best[0]
+        print("\nTo use the closest one, put this under `voice:` in config.yaml:")
+        for k, v in settings.items():
+            print(f"  {k}: {v}")
+        print("\nHear it:  phrasehome voice say \"Hello. This is your house speaking.\"")
     return 0
 
 
@@ -551,10 +583,13 @@ def main(argv: list[str] | None = None) -> int:
     fc.set_defaults(fn=_cmd_faces)
 
     vo = sub.add_parser("voice", help="test and customize the voice bank",
-                        description="phrasehome voice list | say <key or text> | record <key>")
-    vo.add_argument("action", choices=["list", "say", "record"], nargs="?", default="list")
+                        description="phrasehome voice list | say <key or text> | record <key> | "
+                                    "match <recording>")
+    vo.add_argument("action", choices=["list", "say", "record", "match"], nargs="?", default="list")
     vo.add_argument("text", nargs="*")
     vo.add_argument("--seconds", type=float, default=4.0)
+    vo.add_argument("--top", type=int, default=8, help="match: how many voices to show")
+    vo.add_argument("--no-effects", action="store_true", help="match: don't try the voice effects")
     vo.set_defaults(fn=_cmd_voice)
 
     ag = sub.add_parser("agenda", help="show everyone's reminders, alarms, timers and lists")

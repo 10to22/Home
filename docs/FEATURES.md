@@ -112,6 +112,7 @@ instantly; lines starting "house, ..." go to the AI assistant.
 |---|---|
 | Custom wording | `voice.phrases`; lists pick one at random |
 | Deadpan house AI | `voice: {style: deadpan}`: dry, sardonic versions of the lines ("Someone left the front door unlocked. I fixed it. Again."). Smoke, CO, leak and weather warnings stay plain. Pair with `assistant: {persona: deadpan}` |
+| Find a voice like a recording | `phrasehome voice match clip.mp3`: compares every voice on the computer (Mac voices, Piper, espeak), with and without effects, on pitch, flatness, brightness and pace, and prints the closest with its config lines. Picks among voices you have; doesn't clone |
 | Machine voice | `voice: {effect: synthetic}` (also robot, deep, radio, or any ffmpeg filter) on top of any engine |
 | Record your own | `phrasehome voice record retinal_scan_complete` |
 | Built-in sounds | chime, doorbell, alarm, timer, reminder, siren (generated, nothing to download) |
