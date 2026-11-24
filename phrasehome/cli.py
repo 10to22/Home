@@ -122,7 +122,9 @@ def _cmd_faces(args) -> int:
                     f = max(faces, key=lambda f: f.size)
                     embs.append(eng.embed(img, f))
                     photo = photo or eng.crop_jpeg(img, f)
-            if args.camera:
+            if args.webcam:
+                sc = {**sc, "camera": 0}
+            if args.camera or args.webcam:
                 from .door_scanner import DoorScanner
 
                 print("Look at the door camera. Turn your head a little and change expression...")
@@ -134,7 +136,9 @@ def _cmd_faces(args) -> int:
                 embs += got
                 photo = photo or ph
             if not embs:
-                print("no face samples collected; use --camera and/or --image", file=sys.stderr)
+                print("no face samples collected; use --camera, --webcam and/or --image "
+                      "(on a Mac, allow Terminal to use the camera: System Settings > Privacy & Security > Camera)",
+                      file=sys.stderr)
                 return 1
             p = bank.enroll(ref, embs, allowed=not args.deny)
             if photo:
@@ -444,6 +448,7 @@ def main(argv: list[str] | None = None) -> int:
                     nargs="?", default="list")
     fc.add_argument("ref", nargs="*", help="name or id")
     fc.add_argument("--camera", action="store_true", help="enroll from the door camera")
+    fc.add_argument("--webcam", action="store_true", help="enroll from this computer's webcam")
     fc.add_argument("--image", nargs="+", help="enroll from photo files")
     fc.add_argument("--samples", type=int, default=8)
     fc.add_argument("--deny", action="store_true", help="enroll as NOT allowed (e.g. banned)")

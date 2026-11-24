@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -31,7 +32,8 @@ class AudioRouter:
         vcfg = home.config.voice
         local = home.config.sources.get("local_mic") or {}
         self.local_room = str(vcfg.get("local_room") or local.get("room") or "").lower() or None
-        self.player = vcfg.get("player", ["aplay", "-q", "{file}"])
+        default_player = ["afplay", "{file}"] if sys.platform == "darwin" else ["aplay", "-q", "{file}"]
+        self.player = vcfg.get("player", default_player)
         self.play_local = vcfg.get("local", True)
         self.fallback_local = vcfg.get("fallback", "local") == "local"
         self.group_backend = vcfg.get("speakers")  # also speak un-roomed speech on the speaker group

@@ -247,3 +247,28 @@ def test_forget_unknown_faces_option(home):
     d = walk_up(sc, STRANGER)
     assert d.result == "unknown" and d.photo is None and sc.bank.people == {}
     assert home.doors.state("front") == "locked"
+
+
+def test_mac_voice_fallback(home, monkeypatch, tmp_path):
+    import shutil
+    import subprocess
+    import sys
+
+    from phrasehome import audio_out, voice
+    from phrasehome.voice import Voice
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/say" if x == "say" else None)
+    assert Voice.available_engine("piper") == "say"
+    ran = []
+
+    def fake_run(cmd, **kw):
+        ran.append(cmd)
+        out = cmd[cmd.index("-o") + 1]
+        open(out, "wb").write(b"RIFF")
+        return subprocess.CompletedProcess(cmd, 0)
+    monkeypatch.setattr(voice.subprocess, "run", fake_run)
+    v = Voice(home.config)
+    wav = v.synthesize("Retinal scan complete.", {"engine": "piper", "speed": 1.0})
+    assert wav.exists() and ran[0][0] == "say" and ran[0][-1] == "Retinal scan complete."
+    assert audio_out.AudioRouter(home).player == ["afplay", "{file}"]

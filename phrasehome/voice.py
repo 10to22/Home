@@ -19,7 +19,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import random
+import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -167,12 +169,23 @@ class Voice:
         return v
 
     # ---------- making sound ----------
+    @staticmethod
+    def available_engine(engine: str) -> str:
+        """Piper isn't installed (e.g. on a Mac while testing)? Use what this computer has."""
+        if engine != "piper" or shutil.which("piper"):
+            return engine
+        if sys.platform == "darwin" and shutil.which("say"):
+            return "say"  # macOS's built-in voice
+        if shutil.which("espeak-ng"):
+            return "espeak"
+        return engine
+
     def synthesize(self, text: str, v: dict[str, Any] | None = None) -> Path | None:
         v = v or self.base
-        engine = v.get("engine", "piper")
+        engine = self.available_engine(v.get("engine", "piper"))
         if engine == "none" or not text.strip():
             return None
-        ident = f"{engine}|{v.get('piper_model')}|{v.get('espeak_voice')}|{v.get('speed')}|{v.get('command')}|{text}"
+        ident = f"{engine}|{v.get('say_voice')}|{v.get('piper_model')}|{v.get('espeak_voice')}|{v.get('speed')}|{v.get('command')}|{text}"
         wav = self.cache / (hashlib.sha1(ident.encode()).hexdigest() + ".wav")
         if wav.exists():
             return wav
@@ -183,6 +196,12 @@ class Voice:
             cmd = ["piper", "--model", str(self.config.resolve_path(v["piper_model"])),
                    "--length_scale", str(1 / speed), "--output_file", str(tmp)]
             subprocess.run(cmd, input=text.encode(), check=True, capture_output=True, timeout=60)
+        elif engine == "say":  # macOS
+            cmd = ["say", "--file-format=WAVE", "--data-format=LEI16@22050",
+                   "-r", str(int(180 * speed)), "-o", str(tmp), text]
+            if v.get("say_voice"):
+                cmd[1:1] = ["-v", str(v["say_voice"])]
+            subprocess.run(cmd, check=True, capture_output=True, timeout=60)
         elif engine == "espeak":
             cmd = ["espeak-ng", "-v", str(v.get("espeak_voice", "en-us")), "-s", str(int(170 * speed)),
                    "-w", str(tmp), text]
@@ -194,7 +213,7 @@ class Voice:
             cmd = [str(c).replace("{text}", text).replace("{wav}", str(tmp)) for c in command]
             subprocess.run(cmd, check=True, capture_output=True, timeout=120)
         else:
-            raise ValueError(f"unknown voice engine '{engine}' (piper, espeak, command, none)")
+            raise ValueError(f"unknown voice engine '{engine}' (piper, espeak, say, command, none)")
         tmp.rename(wav)
         return wav
 
