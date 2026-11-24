@@ -9,6 +9,8 @@ SupplementaryGroups=audio
 WorkingDirectory=@DIR@
 ExecStart=@DIR@/.venv/bin/phrasehome -c @DIR@/config.yaml run
 Restart=always
+# Lets the speaker hub record music from the user's PipeWire session
+Environment=XDG_RUNTIME_DIR=/run/user/@UID@
 RestartSec=5
 # EnvironmentFile=@DIR@/.env   # e.g. HA_TOKEN=...
 

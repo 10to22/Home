@@ -44,6 +44,34 @@ def _cmd_check(args) -> int:
     return 0
 
 
+def _cmd_speakers(args) -> int:
+    from .speakers import SpeakerHub
+
+    cfg = load_config(args.config)
+    hubs = [(n, b) for n, b in cfg.backends.items() if b["type"] == "speakers"]
+    if not hubs:
+        print("no `type: speakers` backend in config", file=sys.stderr)
+        return 2
+    hub = SpeakerHub(hubs[0][0], hubs[0][1], cfg)
+    names = args.names or ["all"]
+    if args.action == "status":
+        for name, info in hub.status().items():
+            if isinstance(info, dict):
+                print(f"{name:<14} {info.get('mode', '?'):<10} volume {info.get('volume', '?')}"
+                      f"{'  (synced)' if info.get('synced') else ''}")
+            else:
+                print(f"{name:<14} {info}")
+    elif args.action in ("group", "bluetooth"):
+        for n in names:
+            print(f"{args.action}: {', '.join(hub.set_mode(n, args.action))}")
+    elif args.action == "volume":
+        if len(names) < 2:
+            print("usage: phrasehome speakers volume <speaker|all> <0-100|up|down>", file=sys.stderr)
+            return 2
+        print(f"volume: {', '.join(hub.set_volume(names[0], names[1]))}")
+    return 0
+
+
 def _cmd_devices(args) -> int:
     import sounddevice as sd
 
@@ -87,6 +115,14 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("check", help="validate config").set_defaults(fn=_cmd_check)
     sub.add_parser("devices", help="list microphones").set_defaults(fn=_cmd_devices)
+
+    sp = sub.add_parser("speakers", help="show or change ESP32 speakers",
+                        description="phrasehome speakers status | group [names] | bluetooth [names]"
+                                    " | volume <name|all> <0-100|up|down>")
+    sp.add_argument("action", choices=["status", "group", "bluetooth", "volume"], nargs="?",
+                    default="status")
+    sp.add_argument("names", nargs="*")
+    sp.set_defaults(fn=_cmd_speakers)
 
     a = sub.add_parser("auth-google", help="authorize Google Assistant (one time)")
     a.add_argument("--client-secrets", default="client_secret.json")

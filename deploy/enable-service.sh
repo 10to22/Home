@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 DIR=$(pwd)
 RUN_USER=${SUDO_USER:-$(whoami)}
-sed -e "s|@DIR@|$DIR|g" -e "s|@USER@|$RUN_USER|g" deploy/phrasehome.service \
+RUN_UID=$(id -u "$RUN_USER")
+sed -e "s|@DIR@|$DIR|g" -e "s|@USER@|$RUN_USER|g" -e "s|@UID@|$RUN_UID|g" deploy/phrasehome.service \
   > /etc/systemd/system/phrasehome.service
 systemctl daemon-reload
 systemctl enable --now phrasehome

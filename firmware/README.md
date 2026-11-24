@@ -6,6 +6,7 @@ Two sketches, one per board:
 |---|---|---|
 | `mic_satellite/` | Mic in a room. Streams audio to the hub, blinks its LED when a command is heard | ESP32 dev board + INMP441 I2S mic (~$8) |
 | `device_node/` | Switches relays and dims LED strips on command. Has its own web page with buttons | ESP32 dev board + relay module and/or MOSFET module (~$6–10) |
+| `speaker/` | Bluetooth speaker on its own, or one of a synced multi-room group | **Classic** ESP32 dev board + MAX98357A amp + 3 W speaker (~$10) |
 
 You can mix and match: one mic and one device node per room, a mic-only room that controls
 things elsewhere, and so on.
@@ -73,8 +74,47 @@ Optional wall button: wire a push button between `GPIO 19` and `GND` to toggle "
 Test a node from any browser: `http://phrasehome-kitchen.local` shows buttons for each channel. Add
 `?token=YOURTOKEN` to the address if you set a token.
 
+## Speaker module
+
+**Parts:** a *classic* ESP32 (ESP32-WROOM-32 DevKit), because the S3, C3 and C6 have no Bluetooth audio.
+Add a MAX98357A I2S amp board and a 4–8 Ω, 3 W speaker. For better sound, use a PCM5102A DAC board
+feeding any amplifier instead (same three signal wires).
+
+```
+MAX98357A      ESP32
+  VIN   ────  5V / VIN
+  GND   ────  GND
+  BCLK  ────  GPIO 26
+  LRC   ────  GPIO 25
+  DIN   ────  GPIO 22
+  GAIN, SD    leave unconnected (9 dB gain, mono mix of left + right)
+  + / -  ───  speaker
+```
+
+**Battery (optional):** an 18650 cell, a TP4056 charger board *with protection*, a 5 V boost converter
+and a power switch. Feed the boost output to the ESP32's `5V` pin and the amp's `VIN`.
+
+**Extra setup in the Arduino IDE (speaker only):**
+
+1. Install the two libraries by Phil Schatzmann. On each GitHub page, use **Code → Download ZIP**, then in
+   the IDE go to **Sketch → Include Library → Add .ZIP Library**:
+   - <https://github.com/pschatzmann/ESP32-A2DP>
+   - <https://github.com/pschatzmann/arduino-audio-tools>
+2. Go to **Tools → Partition Scheme → Huge APP (3MB No OTA)**. Bluetooth and Wi-Fi together don't fit in the default partition.
+
+**Using it:**
+
+- **Bluetooth mode** (the default): pair your phone with **"phrasehome kitchen"** like any speaker. The LED blinks
+  while it waits and stays solid when a phone is connected.
+- **Group mode:** plays the Pi's music in sync with the other group speakers. The LED is solid while playing.
+- **To switch:** hold the BOOT button for 1.5 s, say a voice command ("play everywhere", "bluetooth speaker"), or run
+  `phrasehome speakers group kitchen`. The speaker restarts to switch, which takes about 3 seconds.
+
 ## Protocol (if you want to build your own)
 
 - **Mic → hub (UDP, port 7777):** `"PHM1"`, 1 byte room-name length, the room name, then 16 kHz 16-bit LE mono PCM
 - **Hub → mic (UDP):** `"PHA1"` + 1 status byte (1 = heard, 2 = worked, 3 = failed)
+- **Hub → speaker (UDP :7779):** `"PHS1"`, u32 seq, i64 play-at time in hub µs, 256 frames of 44.1 kHz 16-bit stereo PCM
+- **Speaker → hub clock sync (UDP :7778):** `"PHT1"` + u64 speaker µs; the reply adds an i64 hub µs
+- **Hub → speaker (HTTP):** `POST /api/mode?mode=bluetooth|group`, `POST /api/volume?level=|change=`, `GET /api/status`
 - **Hub → device (HTTP):** `POST /api/set?channel=<name>&state=on|off|toggle&level=0-100`, header `X-Token`; `GET /api/status`

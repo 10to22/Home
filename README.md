@@ -17,6 +17,8 @@ An always-on listener for Google Home with **no wake word**. Say "turn on the li
 - **Slots.** `turn on the {room} lights` covers every room with one line.
 - **ESP32s all over the house.** Put a $8 ESP32 mic in each room and wire ESP32 device nodes to
   relays and LED strips. Say "lights on" and the lights *in that room* turn on. See [ESP32 setup](#esp32-setup).
+- **Multi-room speakers.** ESP32 speaker modules work as Bluetooth speakers on their own, or join a
+  group that plays the same music in sync in every room. See [Speakers](#speakers).
 - **Other backends.** Home Assistant, webhooks (IFTTT, Node-RED…) and local scripts.
 
 ## What you need
@@ -148,6 +150,61 @@ and is never stored, but it isn't encrypted, so keep the mics on a Wi-Fi network
 `allowed_ips` so only your mics are accepted). Setting `TOKEN` on device nodes stops other devices on
 the network from switching them.
 
+## Speakers
+
+Each ESP32 speaker module (`firmware/speaker`) has two modes:
+
+```
+ Separately:   phone ──Bluetooth──► [speaker: kitchen]          phone 2 ──Bluetooth──► [speaker: bedroom]
+
+ Together:     phone ──Bluetooth──► Pi hub ──Wi-Fi, synced──┬─► [speaker: kitchen]
+               (or Spotify Connect)                         ├─► [speaker: bedroom]
+                                                            └─► [speaker: living room]
+```
+
+Bluetooth can only send audio from a phone to one speaker at a time, so for "together" your phone connects
+to the Pi. The Pi relays the music over Wi-Fi with a timestamp on every packet. Each speaker keeps its clock
+in step with the Pi and plays each packet at exactly that moment. In a simulation of the speaker's sync logic,
+each speaker stayed within about 1 ms of the Pi's schedule, so rooms stay in time with each other.
+
+1. Build the modules: [firmware/README.md](firmware/README.md#speaker-module).
+2. Make the Pi a Bluetooth speaker your phone can connect to:
+
+   ```bash
+   ./deploy/setup-bluetooth-sink.sh
+   ```
+
+3. Add the `music:` backend and the speaker commands from `config.esp32.example.yaml` to your config.
+4. Say "play everywhere", then play music on your phone connected to Bluetooth device **phrasehome**.
+
+The voice commands include "play everywhere", "add this speaker", "bluetooth speaker", "louder" and "quieter".
+They act on the speaker in the room you're in. You can do the same from the terminal:
+
+```bash
+.venv/bin/phrasehome speakers status
+```
+
+```bash
+.venv/bin/phrasehome speakers group kitchen bedroom
+```
+
+```bash
+.venv/bin/phrasehome speakers volume all 40
+```
+
+**Music sources for the group:** by default the Pi records whatever it's playing, which is how phone-over-Bluetooth works.
+`source:` can be any command that outputs raw 16-bit, 44.1 kHz stereo audio. For example, Spotify Connect with
+[librespot](https://github.com/librespot-org/librespot) (`librespot --name phrasehome --backend pipe`) lets you pick
+"phrasehome" in the Spotify app with no Bluetooth needed. You can also play a file with ffmpeg:
+`ffmpeg -i song.mp3 -f s16le -ar 44100 -ac 2 -`.
+
+**Good to know**
+- Group audio plays about half a second after your phone (Bluetooth delay plus the sync buffer). That's fine
+  for music, but not for video.
+- Each group speaker uses about 1.4 Mbit/s of Wi-Fi. If it stutters, raise `latency_ms` or move the router closer.
+- Mics near speakers hear the music. Lyrics rarely match a whole command in `utterance` mode, but keep mic
+  satellites a little away from the speakers.
+
 ## Tuning
 
 | Problem | Fix |
@@ -194,7 +251,7 @@ pytest
 
 Code layout: `phrasehome/matcher.py` (phrase expansion and fuzzy matching), `listener.py` (mics and Vosk),
 `satellites.py` (ESP32 mic receiver), `dispatcher.py` (cooldown, multi-mic arbitration, background execution),
-`actions/` (backends), `firmware/` (ESP32 sketches).
+`speakers.py` (synced multi-room streaming), `actions/` (backends), `firmware/` (ESP32 sketches).
 
 ## Caveats
 

@@ -188,3 +188,13 @@ def test_esp32_example_config_loads():
     m = Matcher(expand(cfg.commands, cfg.slots), s.match_mode, s.match_threshold, s.block_words)
     assert m.match("fan off").command.name == "fan_off"
     assert m.match("turn on the living room lights").slots == {"room": "living room"}
+
+
+def test_speaker_commands_in_example():
+    cfg = load_config(ROOT / "config.esp32.example.yaml")
+    s = cfg.settings
+    m = Matcher(expand(cfg.commands, cfg.slots), s.match_mode, s.match_threshold, s.block_words)
+    assert m.match("play everywhere").command.action == {"backend": "music", "speaker": "all", "mode": "group"}
+    assert m.match("bedroom speaker bluetooth").slots == {"room": "bedroom"}
+    assert m.match("volume fifty percent everywhere").slots == {"level": "50"}
+    assert m.match("louder").command.name == "volume_up"

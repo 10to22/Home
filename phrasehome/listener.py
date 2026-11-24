@@ -81,6 +81,12 @@ def listen(config: Config, dry_run: bool = False) -> None:
         except queue.Full:
             pass  # drop audio rather than fall behind
 
+    from .speakers import get_hub
+
+    hubs = [get_hub(n, b, config) for n, b in config.backends.items() if b["type"] == "speakers"]
+    for h in hubs:
+        h.start()
+
     stream = server = None
     try:
         local = config.sources.get("local_mic")
@@ -96,7 +102,7 @@ def listen(config: Config, dry_run: bool = False) -> None:
                 allowed_ips=sats.get("allowed_ips"),
             )
             server.start()
-        if not stream and not server:
+        if not stream and not server and not hubs:
             raise SystemExit("no audio sources enabled (see `sources:` in config)")
 
         log.info("Listening for %d phrases (%d commands). Ctrl+C to stop.",
@@ -110,6 +116,8 @@ def listen(config: Config, dry_run: bool = False) -> None:
             stream.close()
         if server:
             server.close()
+        for h in hubs:
+            h.close()
         dispatcher.close()
 
 

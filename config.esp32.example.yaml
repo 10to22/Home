@@ -32,6 +32,19 @@ backends:
       bedroom: phrasehome-bedroom.local
       living room: phrasehome-living-room.local
 
+  music:                          # ESP32 speaker modules (firmware/speaker)
+    type: speakers
+    token_env: PHRASEHOME_TOKEN
+    latency_ms: 300               # buffer; raise to 500 if group audio stutters on busy Wi-Fi
+    speakers:                     # must match SPEAKER_NAME in each speaker's firmware
+      kitchen: phrasehome-speaker-kitchen.local
+      bedroom: phrasehome-speaker-bedroom.local
+      living room: phrasehome-speaker-living-room.local
+    # What the group plays. Default: whatever the Pi is playing, including a phone connected to
+    # the Pi over Bluetooth (deploy/setup-bluetooth-sink.sh). Any command writing raw
+    # 16-bit/44.1 kHz/stereo audio works, e.g. Spotify Connect:
+    # source: librespot --name phrasehome --backend pipe --initial-volume 100
+
   google:                         # optional: everything else goes to Google Home
     type: google_assistant
     credentials: credentials.json
@@ -75,6 +88,46 @@ commands:
   - name: everything_off
     phrases: [good night house, everything off]
     action: { node: all, channel: lights, state: off }
+
+  # ---- speakers ----
+  # Everyone together: all speakers play the hub's music in sync.
+  - name: play_everywhere
+    phrases: [play everywhere, all speakers, speakers together, party mode]
+    action: { backend: music, speaker: all, mode: group }
+
+  # Add / remove this room's speaker from the group.
+  - name: join_group
+    phrases: [join the music, add this speaker, play music here]
+    action: { backend: music, speaker: "{here}", mode: group }
+
+  # This room's speaker on its own: pair your phone with it directly.
+  - name: speaker_bluetooth
+    phrases: [bluetooth speaker, speaker on its own, leave the group]
+    action: { backend: music, speaker: "{here}", mode: bluetooth }
+
+  - name: room_speaker_group
+    phrases: ["add the {room} speaker", "play music in the {room}"]
+    action: { backend: music, speaker: "{room}", mode: group }
+
+  - name: room_speaker_bluetooth
+    phrases: ["{room} speaker bluetooth", "remove the {room} speaker"]
+    action: { backend: music, speaker: "{room}", mode: bluetooth }
+
+  - name: all_bluetooth
+    phrases: [stop playing everywhere, speakers separate]
+    action: { backend: music, speaker: all, mode: bluetooth }
+
+  - name: volume_up
+    phrases: [volume up, louder, turn it up]
+    action: { backend: music, speaker: "{here}", volume: up }
+
+  - name: volume_down
+    phrases: [volume down, quieter, turn it down]
+    action: { backend: music, speaker: "{here}", volume: down }
+
+  - name: volume_all
+    phrases: ["all speakers volume {level} percent", "volume {level} percent everywhere"]
+    action: { backend: music, speaker: all, volume: "{level}" }
 
   # Things the ESP32s can't do -> Google Home
   - name: stop_music
