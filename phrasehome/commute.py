@@ -114,19 +114,24 @@ class Commute:
 
     # ---------- nudges ----------
     def tick(self, now: datetime | None = None) -> None:
+        """Only checks traffic in the 3 hours before each person needs to arrive (every 10 min),
+        so a day costs a handful of traffic requests, not hundreds."""
         now = now or clock.now()
         for inst in self.people():
+            dest = self.destination(inst, now)  # no traffic request: config / cached calendar
+            if not dest:
+                continue
+            _, arrive = dest
+            if not (arrive - timedelta(hours=3) <= now <= arrive):
+                continue
+            if self.home.state.presence and inst.id not in self.home.state.home_people():
+                continue  # already out
             p = self.plans.get(inst.id)
-            fresh = p and p["arrive"].date() == now.date() and (now - p.get("_at", now)).total_seconds() < 600
-            if not fresh:
-                if now.hour < 4:
-                    continue
+            if not p or p["arrive"] != arrive or (now - p.get("_at", now - timedelta(hours=1))).total_seconds() >= 600:
                 p = self.plan(inst, now)
                 if not p:
                     continue
                 p["_at"] = now
-            if now > p["arrive"] or inst.id not in self.home.state.home_people() and self.home.state.presence:
-                continue
             to_go = (p["leave"] - now).total_seconds() / 60
             for mark, key in ((10, "leave_soon"), (0, "leave_now")):
                 if to_go <= mark and key not in p["nudged"] and to_go > mark - 15:

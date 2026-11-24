@@ -231,7 +231,10 @@ the AI assistant. Start from it:
 cp config.smarthome.example.yaml config.yaml
 ```
 
-- **What to buy:** [docs/BUILD_LIST.md](docs/BUILD_LIST.md), with parts, costs, a 3-room budget and a safety checklist.
+- **Before you have the place:** [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) walks through testing everything on a
+  laptop (`phrasehome simulate`, a virtual house), then on a desk, then move-in day.
+- **What to buy:** [docs/EQUIPMENT.md](docs/EQUIPMENT.md) (and [equipment.csv](docs/equipment.csv)) lists every part,
+  by phase, with quantities and costs. [docs/BUILD_LIST.md](docs/BUILD_LIST.md) has the safety checklist.
 - **What to add next:** [docs/IDEAS.md](docs/IDEAS.md), from vacuums to fingerprint unlock to a morning briefing.
 
 ### Rooms and instances

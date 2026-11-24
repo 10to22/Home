@@ -251,3 +251,13 @@ def test_ir_blaster_codes(home, tmp_path):
     assert got[1] == "/api/ir/send?protocol=SONY&code=0xA90&bits=12&repeat=2"
     with pytest.raises(ValueError, match="phrasehome ir learn"):
         be.run({"node": "living room", "ir": "soundbar"}, "")
+
+
+def test_commute_only_checks_traffic_before_leaving(home):
+    c = Commute(home)
+    calls = []
+    c.travel = lambda to, mode="drive": calls.append(1) or {"minutes": 30, "usual_minutes": 30, "traffic": "light"}
+    day = clock.now().replace(second=0, microsecond=0)
+    for hour, minute in [(4, 0), (5, 0), (6, 30), (6, 35), (6, 41), (8, 50), (9, 30), (13, 0), (20, 0)]:
+        c.tick(day.replace(hour=hour, minute=minute))
+    assert len(calls) == 3   # 6:30 (first), 6:41 (10 min later), 8:50; nothing before 6:00 or after 9:00

@@ -263,7 +263,11 @@ class DoorScanner:
     # ---------- enrollment helper ----------
     def capture_embeddings(self, count: int = 8, timeout: float = 20.0) -> tuple[list, bytes]:
         """Grab `count` face samples from the camera (for `phrasehome faces enroll --camera`)."""
-        cam = self._camera or Camera(self.cfg["camera"])
+        spec = self.cfg["camera"]
+        cams = getattr(self.home.config, "cameras", {}) or {}
+        if isinstance(spec, str) and spec.lower() in cams:  # a camera name from `cameras:`
+            spec = cams[spec.lower()].get("url", 0)
+        cam = self._camera or Camera(spec)
         embs, photo, end = [], b"", time.monotonic() + timeout
         while len(embs) < count and time.monotonic() < end:
             img = cam.read()

@@ -1,5 +1,8 @@
 # Build list: everything you need
 
+> **The complete, current list is [EQUIPMENT.md](EQUIPMENT.md)** (by phase, with quantities, costs and a
+> spreadsheet version). This page keeps the original notes on the hub, retinal/iris scanning and safety.
+
 Prices are rough (USD, late 2026) and vary a lot by store. AliExpress-type sellers are cheapest
 for ESP32 parts; Amazon/Adafruit/DigiKey are faster and more reliable.
 
