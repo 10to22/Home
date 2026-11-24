@@ -219,3 +219,19 @@ def test_capture_more_samples_with_progress(home):
     assert len(embs) == 30 and seen[-1] == 30
     p = sc.bank.enroll("Alice", embs)
     assert len(p.embeddings) == 31  # the first sample plus 30 more, all kept
+
+
+def test_auto_unlock_saved_in_face_bank(home):
+    sc = scanner(home)
+    sc.bank.set_auto_unlock("alice")
+    from phrasehome.faces import FaceBank
+
+    again = FaceBank(sc.bank.folder)  # survives a restart
+    assert again.find("alice").auto_unlock
+    home.doors._remember("front", "locked")
+    d = walk_up(sc, ALICE)
+    assert d.auto_unlock and home.doors.state("front") == "unlocked"
+    sc.bank.set_auto_unlock("alice", False)
+    home.doors._remember("front", "locked")
+    assert not walk_up(sc, ALICE, t0=100).auto_unlock
+    assert home.doors.state("front") == "locked"

@@ -92,7 +92,8 @@ def _cmd_faces(args) -> int:
             print("face bank is empty. Add someone: phrasehome faces enroll \"Your Name\" --camera")
         for p in sorted(bank.people.values(), key=lambda p: (p.kind, p.id)):
             print(f"{p.id:<16} {p.name:<18} {'ALLOWED' if p.allowed else 'not allowed':<12} "
-                  f"{p.kind:<9} seen {p.seen}x, last {p.last_seen or '-'}, {len(p.embeddings)} samples")
+                  f"{p.kind:<9} seen {p.seen}x, last {p.last_seen or '-'}, {len(p.embeddings)} samples"
+                  + ("  AUTO-UNLOCK" if p.auto_unlock else ""))
         return 0
     if a == "scans":
         from .events import EventLog
@@ -157,8 +158,15 @@ def _cmd_faces(args) -> int:
             p = bank.enroll(ref, embs, allowed=not args.deny)
             if photo:
                 bank.save_photo(p.id, photo)
-            print(f"enrolled {p.name} ({p.id}) with {len(embs)} samples, "
-                  f"{'allowed' if p.allowed else 'NOT allowed'}")
+            if args.auto_unlock and not args.deny:
+                p = bank.set_auto_unlock(p.id, True)
+            print(f"enrolled {p.name} ({p.id}) with {len(p.embeddings)} samples in total, "
+                  f"{'allowed' if p.allowed else 'NOT allowed'}"
+                  + (", their face unlocks the door by itself" if p.auto_unlock else ""))
+        elif a == "auto-unlock":
+            p = bank.set_auto_unlock(ref, not args.off)
+            print(f"{p.name} ({p.id}): " + ("their face now unlocks a locked door by itself, in any mode"
+                                           if p.auto_unlock else "needs the fingerprint again"))
         elif a == "allow":
             p = bank.set_allowed(ref, True, name=args.name, hours=args.hours)
             print(f"{p.name} ({p.id}) is now allowed" + (f" until {p.allowed_until}" if p.allowed_until else ""))
@@ -457,8 +465,10 @@ def main(argv: list[str] | None = None) -> int:
 
     fc = sub.add_parser("faces", help="manage the door face bank",
                         description="phrasehome faces list | scans | enroll NAME --camera | "
-                                    "allow ID [--name N] | deny ID | rename ID --name N | delete ID")
-    fc.add_argument("action", choices=["list", "scans", "enroll", "allow", "deny", "rename", "delete"],
+                                    "allow ID [--name N] | deny ID | rename ID --name N | delete ID | "
+                                    "auto-unlock ID [--off]")
+    fc.add_argument("action", choices=["list", "scans", "enroll", "allow", "deny", "rename", "delete",
+                                       "auto-unlock"],
                     nargs="?", default="list")
     fc.add_argument("ref", nargs="*", help="name or id")
     fc.add_argument("--camera", action="store_true", help="enroll from the door camera")
@@ -467,6 +477,9 @@ def main(argv: list[str] | None = None) -> int:
     fc.add_argument("--samples", type=int, default=20,
                     help="how many face samples to take (default 20; run enroll again to add more)")
     fc.add_argument("--deny", action="store_true", help="enroll as NOT allowed (e.g. banned)")
+    fc.add_argument("--auto-unlock", action="store_true",
+                    help="enroll: this face unlocks the door by itself (no fingerprint)")
+    fc.add_argument("--off", action="store_true", help="auto-unlock: turn it off for this person")
     fc.add_argument("--name", help="new display name")
     fc.add_argument("--hours", type=float, help="guest pass: allowed for this many hours only")
     fc.add_argument("-n", type=int, default=20, help="how many scans to show")

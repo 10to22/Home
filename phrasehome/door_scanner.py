@@ -9,7 +9,8 @@
 What happens in each case is just a list of actions (`on_allowed`, `on_denied`, `on_unknown`) in
 config.yaml, so you can add notifications, lights, music...
 
-`auto_unlock: [Finney]` (names or ids, or `true` for everyone allowed): those people's faces unlock
+`auto_unlock: [Finn]` (names or ids, or `true` for everyone allowed), or `phrasehome faces
+auto-unlock Finn`, which saves it in the face bank: those people's faces unlock
 the door on their own, with no fingerprint, in any mode (away, lockdown, vacation, alarm armed),
 even if their bank entry was set to not allowed or expired. If the door is already unlocked,
 nothing changes. If the unlock fails, it is retried. Runs `on_auto_unlock`.
@@ -203,6 +204,10 @@ class DoorScanner:
         return d
 
     def auto_unlocks(self, person) -> bool:
+        if person.kind == "visitor":
+            return False
+        if getattr(person, "auto_unlock", False):  # `phrasehome faces auto-unlock Finn`
+            return True
         who = self.cfg.get("auto_unlock")
         if who is True:
             return person.kind != "visitor" and person.is_allowed()

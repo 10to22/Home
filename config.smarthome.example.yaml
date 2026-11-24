@@ -109,8 +109,9 @@ door_scanner:
   min_face_px: 90
   match_threshold: 0.40
   remember_unknown: true
-  # These faces unlock the door by themselves (no fingerprint), in any mode, even lockdown:
-  # auto_unlock: [Sam]
+  # These faces unlock the door by themselves (no fingerprint), in any mode, even lockdown.
+  # (Or run: phrasehome faces auto-unlock Finn)
+  auto_unlock: [Finn]
   # on_auto_unlock:
   #   - { speak: retinal_scan_complete }
   on_allowed:

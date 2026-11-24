@@ -80,6 +80,7 @@ class Person:
     seen: int = 0
     fingerprints: list[int] = field(default_factory=list)  # ids stored on the fingerprint sensor
     allowed_until: str = ""  # guest pass: allowed only until this time (YYYY-MM-DD HH:MM:SS)
+    auto_unlock: bool = False  # their face alone unlocks the door, in any mode
 
     def is_allowed(self) -> bool:
         if not self.allowed:
@@ -104,8 +105,9 @@ class FaceBank:
         self._matrix: np.ndarray | None = None
         self._owners: list[str] = []
         if self.path.exists():
+            known = set(Person.__dataclass_fields__)
             for p in json.loads(self.path.read_text()).get("people", []):
-                self.people[p["id"]] = Person(**p)
+                self.people[p["id"]] = Person(**{k: v for k, v in p.items() if k in known})
 
     def save(self) -> None:
         with self._lock:
@@ -199,6 +201,15 @@ class FaceBank:
                 p.name = name
             if allowed:
                 p.kind = "enrolled"
+            self.save()
+            return p
+
+    def set_auto_unlock(self, ref: str, on: bool = True) -> Person:
+        with self._lock:
+            p = self.find(ref)
+            p.auto_unlock = on
+            if on:
+                p.allowed, p.allowed_until, p.kind = True, "", "enrolled"
             self.save()
             return p
 

@@ -41,7 +41,7 @@ instantly; lines starting "house, ..." go to the AI assistant.
 |---|---|
 | **Face scan at the door** | Allowed: "retinal scan complete" + fingerprint prompt. Denied or unknown: "retinal scan failed" + lock |
 | **Fingerprint second factor** | The same person's finger within 30 s of their face scan unlocks (`fingerprint:` + firmware/door_fingerprint) |
-| **Face-only auto-unlock** | `door_scanner: {auto_unlock: [Sam]}`: Sam's face unlocks a locked door by itself, no fingerprint, in any mode. An unlocked door is left alone. Retries if the lock doesn't respond |
+| **Face-only auto-unlock** | `phrasehome faces auto-unlock Finn` (or `door_scanner: {auto_unlock: [Finn]}`): Finn's face unlocks a locked door by itself, no fingerprint, in any mode. Everyone else still needs a fingerprint. An unlocked door is left alone. Retries if the lock doesn't respond |
 | Fingerprint lockout | 3 wrong fingers: lock + phone alert |
 | Unknown visitors remembered | Saved as visitor-N with a photo. `phrasehome faces allow visitor-3 --name Grandma` |
 | **Guest passes** | `phrasehome faces allow visitor-3 --hours 48` (dog sitter, cleaner) |
