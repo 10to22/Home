@@ -9,6 +9,11 @@
 What happens in each case is just a list of actions (`on_allowed`, `on_denied`, `on_unknown`) in
 config.yaml, so you can add notifications, lights, music...
 
+`auto_unlock: [Finney]` (names or ids, or `true` for everyone allowed): those people's faces unlock
+the door on their own, with no fingerprint, in any mode (away, lockdown, vacation, alarm armed),
+even if their bank entry was set to not allowed or expired. If the door is already unlocked,
+nothing changes. If the unlock fails, it is retried. Runs `on_auto_unlock`.
+
 A decision needs the same answer in `confirm_frames` frames in a row, and the same person isn't
 rescanned for `repeat_seconds`, so someone standing at the door doesn't trigger it every frame.
 """
@@ -43,6 +48,8 @@ DEFAULTS: dict[str, Any] = {
     "recognizer_model": "models/face/face_recognition_sface_2021dec.onnx",
     "on_allowed": [{"backend": "voice", "speak": "retinal_scan_complete"},
                    {"backend": "voice", "speak": "fingerprint_prompt"}],
+    "auto_unlock": [],
+    "on_auto_unlock": [{"backend": "voice", "speak": "retinal_scan_complete"}],  # after unlocking
     "on_denied": [{"backend": "voice", "speak": "retinal_scan_failed"},
                   {"backend": "doors", "door": "{door}", "state": "locked"}],
     "on_unknown": [{"backend": "voice", "speak": "retinal_scan_failed"},
@@ -65,6 +72,10 @@ class Camera:
         s = str(spec)
         self.snapshot = s.startswith("http") and (s.endswith("/capture") or s.endswith(".jpg"))
         self.cap = None if self.snapshot else cv2.VideoCapture(int(s) if s.isdigit() else s)
+        if self.cap is not None and not self.cap.isOpened():
+            hint = (" On a Mac: System Settings > Privacy & Security > Camera > allow Terminal, then "
+                    "quit and reopen Terminal." if s.isdigit() else "")
+            raise RuntimeError(f"can't open camera {s}.{hint}")
         self.doorbell: int | None = None  # press counter reported by the ESP32-CAM
 
     def read(self):
@@ -107,6 +118,7 @@ class Decision:
     score: float
     door: str
     photo: Path | None = None
+    auto_unlock: bool = False  # allowed, and on the auto_unlock list: unlocked with no fingerprint
 
 
 @dataclass
@@ -167,6 +179,7 @@ class DoorScanner:
         self._streak = _Streak(label=label, last_face=now)
         mean = np.mean(st.embeddings, axis=0)
         mean = mean / (np.linalg.norm(mean) + 1e-9)
+        auto = False
         if label == "unknown":
             result = "unknown"
             if self.cfg["remember_unknown"]:
@@ -180,12 +193,34 @@ class DoorScanner:
         else:
             person = self.bank.people[label]
             self.bank.seen(person, mean if person.kind == "visitor" else None)
-            result = "allowed" if person.is_allowed() else "denied"
+            auto = self.auto_unlocks(person)  # no matter what: their face opens the door
+            result = "allowed" if auto or person.is_allowed() else "denied"
 
         photo = self.bank.save_photo("scans", st.photo) if st.photo else None
-        d = Decision(result, person.id, person.name, round(st.score, 3), self.door, photo)
+        d = Decision(result, person.id, person.name, round(st.score, 3), self.door, photo,
+                     auto_unlock=label != "unknown" and auto)
         self._react(d)
         return d
+
+    def auto_unlocks(self, person) -> bool:
+        who = self.cfg.get("auto_unlock")
+        if who is True:
+            return person.kind != "visitor" and person.is_allowed()
+        if not who:
+            return False
+        names = {str(w).lower() for w in ([who] if isinstance(who, str) else who)}
+        return person.kind != "visitor" and (person.id.lower() in names or person.name.lower() in names)
+
+    def _unlock(self, d: "Decision") -> None:
+        for attempt in range(3):
+            try:
+                self.home.doors.set(d.door, "unlocked", reason=f"face: {d.name}")
+            except Exception as e:
+                log.error("auto-unlock of the %s door failed (try %d): %s", d.door, attempt + 1, e)
+            if self.home.dry_run or self.home.doors.state(d.door) != "locked":
+                return
+            time.sleep(1.0)
+        log.error("couldn't unlock the %s door for %s after 3 tries", d.door, d.name)
 
     def _crop(self, img, face) -> bytes:
         try:
@@ -196,14 +231,17 @@ class DoorScanner:
     def _react(self, d: Decision) -> None:
         log.info("door scan at %s: %s (%s, score %.2f)", d.door, d.result, d.name, d.score)
         self.home.events.log("scan", door=d.door, result=d.result, person=d.person_id,
-                             name=d.name, score=d.score, photo=str(d.photo) if d.photo else None)
-        if d.result == "allowed":
+                             name=d.name, score=d.score, photo=str(d.photo) if d.photo else None,
+                             auto_unlock=d.auto_unlock)
+        if d.result == "allowed" and not d.auto_unlock:
             self.home.events.log("scan.awaiting_fingerprint", door=d.door, person=d.person_id,
                                  name=d.name)
         values = {"name": d.name, "door": d.door, "person": d.person_id, "score": d.score,
                   "photo": str(d.photo) if d.photo else "",
                   "here": self.home.config.doors.get(d.door, {}).get("room")}
-        for step in self.cfg[f"on_{d.result}"]:
+        if d.auto_unlock:
+            self._unlock(d)  # first, before any talking
+        for step in self.cfg["on_auto_unlock" if d.auto_unlock else f"on_{d.result}"]:
             try:
                 self.home.run_action(step, values, phrase=f"door scan {d.result}")
             except Exception as e:
@@ -241,9 +279,16 @@ class DoorScanner:
         while self._running:
             try:
                 if self._camera is None:
+                    spec = self.cfg["camera"]
                     hub = getattr(self.home, "cameras", None)
-                    feed = hub.get(str(self.cfg["camera"])) if hub else None
-                    self._camera = FeedCamera(feed) if feed else Camera(self.cfg["camera"])
+                    feed = hub.get(str(spec)) if hub else None
+                    if feed:
+                        self._camera = FeedCamera(feed)
+                    elif isinstance(spec, str) and not spec.isdigit() and "://" not in spec:
+                        time.sleep(1)  # a camera name: wait for the shared camera feed to start
+                        continue
+                    else:
+                        self._camera = Camera(spec)
                 img = self._camera.read()
                 bell = getattr(self._camera, "doorbell", None)
                 if bell is not None:

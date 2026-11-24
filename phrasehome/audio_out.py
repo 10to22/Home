@@ -69,20 +69,31 @@ class AudioRouter:
             self._warned = True
         return False
 
-    def play(self, audio: Path, room: str | None, volume: float = 1.0) -> str:
-        """Play in one room (or the default place if room is None). Returns where it went."""
+    def route(self, room: str | None) -> str:
+        """Where speech for this room would go: satellite, speaker, local (the hub) or none."""
         if room and room != self.local_room and self._ffmpeg():
             sats = self.home.satellites
             if sats and sats.has_speaker(room):
-                sats.send_voice(room, convert(audio, 16000, 1, volume))
                 return "satellite"
             hub = self._hub()
             if hub and room in hub.members:
-                hub.announce(convert(audio, 44100, 2, volume), names=[room])
                 return "speaker"
             if not self.fallback_local:
-                log.info("no speaker in %s; not played", room)
                 return "none"
+        return "local"
+
+    def play(self, audio: Path, room: str | None, volume: float = 1.0, route: str | None = None) -> str:
+        """Play in one room (or the default place if room is None). Returns where it went."""
+        route = route or self.route(room)
+        if route == "satellite":
+            self.home.satellites.send_voice(room, convert(audio, 16000, 1, volume))
+            return "satellite"
+        if route == "speaker":
+            self._hub().announce(convert(audio, 44100, 2, volume), names=[room])
+            return "speaker"
+        if route == "none":
+            log.info("no speaker in %s; not played", room)
+            return "none"
         self._play_local(audio, volume)
         if room is None and self.group_backend and self._ffmpeg():
             hub = self._hub(self.group_backend)

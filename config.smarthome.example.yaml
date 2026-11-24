@@ -109,6 +109,10 @@ door_scanner:
   min_face_px: 90
   match_threshold: 0.40
   remember_unknown: true
+  # These faces unlock the door by themselves (no fingerprint), in any mode, even lockdown:
+  # auto_unlock: [Sam]
+  # on_auto_unlock:
+  #   - { speak: retinal_scan_complete }
   on_allowed:
     - { speak: retinal_scan_complete }      # "Retinal scan complete. Welcome, Sam."
     - { speak: fingerprint_prompt }
@@ -251,6 +255,8 @@ voice:
   engine: piper
   piper_model: models/piper/en_US-lessac-medium.onnx
   quiet_volume: 40
+  # style: deadpan      # a dry, sardonic house AI (smoke/weather/leak warnings stay plain)
+  # effect: synthetic   # makes any voice sound like a machine: synthetic, robot, deep, radio (ffmpeg)
   phrases:
     retinal_scan_complete:
       - "Retinal scan complete. Welcome home, {name}."
@@ -267,6 +273,7 @@ assistant:
   model: claude-opus-5-5
   effort: low
   location: ""                 # CHANGE ME e.g. "Brooklyn, New York"
+  # persona: deadpan           # dry, sardonic and still helpful (default: butler), or your own text
   web_search: true
   allow_unlock: false
   transcriber: vosk            # or whisper (pip install faster-whisper)

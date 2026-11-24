@@ -10,6 +10,9 @@
    A folder voice_bank/<key>/ with several .wav files picks one at random.
 3. Change the synthetic voice: engine piper (natural, offline), espeak (robotic, tiny), or any
    command of your own (e.g. a cloned voice).
+4. Give it a character: `style: deadpan` swaps in a dry, sardonic set of lines (safety
+   announcements stay plain), and `effect: synthetic` makes any engine sound like a machine
+   (needs ffmpeg). Your own `phrases:` still win over the style.
 
 Speech plays on the hub's own speaker and, optionally, through the ESP32 speaker group.
 """
@@ -18,6 +21,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import uuid
 import random
 import shutil
 import subprocess
@@ -90,6 +95,77 @@ DEFAULT_PHRASES: dict[str, Any] = {
 }
 
 
+# `voice: {style: deadpan}`: a dry, deadpan house AI. Smoke, CO, leaks and weather stay plain.
+STYLES: dict[str, dict[str, Any]] = {
+    "deadpan": {
+        "retinal_scan_complete": ["Retinal scan complete. Welcome back, {name}. I'll pretend I wasn't waiting.",
+                                  "Retinal scan complete. Oh. It's you, {name}. Come in, I suppose."],
+        "retinal_scan_failed": ["Retinal scan failed. I don't know you, and now neither does the {door} door.",
+                                "Retinal scan failed. Locking the {door} door. Nothing personal. Mostly."],
+        "fingerprint_prompt": "Finger on the scanner, please. Any finger. Well, the right one.",
+        "fingerprint_accepted": "Fingerprint accepted. Welcome home, {name}. Try not to touch anything.",
+        "fingerprint_rejected": "That fingerprint means nothing to me. Try again.",
+        "fingerprint_lockout": "That's enough attempts. The {door} door is locked. I'm making a note of this.",
+        "access_denied": "Access denied. I'm sure you understand. I don't need you to.",
+        "door_locked": "The {door} door is locked. You're welcome.",
+        "door_auto_locked": "Someone left the {door} door unlocked. I fixed it. Again.",
+        "door_left_open": "The {door} door has been open for a while. I'm heating the street now, apparently.",
+        "doorbell_announce": "Someone is at the {door} door. Not that anyone asked me to answer it.",
+        "lockdown": "Lockdown engaged. Doors locked, lights off. Finally, some peace.",
+        "goodnight": "Good night. I'll be awake. I'm always awake.",
+        "leaving": "Leaving? Fine. I'll lock up. I'll be here. Alone. With the toaster.",
+        "welcome_home": ["Welcome home. The house missed you. I'm undecided.",
+                         "Oh good, you're back. Everything was fine without you, for the record."],
+        "welcome_person": ["Welcome, {name}.", "Hello, {name}. I've been counting the minutes. Out of habit."],
+        "timer_set": "Timer set for {duration}. I'll be watching it closely. It's all I have.",
+        "timer_done": "Your timer is done. Whatever you were making, it's ready. Or ruined.",
+        "timer_done_named": "Your {label} timer is done. Act surprised.",
+        "timer_cancelled": "Timer cancelled. All that waiting, for nothing.",
+        "no_timers": "No timers running. Time is passing anyway.",
+        "alarm": "It's {time}. Time to get up. I've been up for years.",
+        "alarm_set": "Alarm set for {time}. I'll be gentle. At first.",
+        "snoozed": "Snoozing for {minutes} minutes. I'll remember this.",
+        "reminder": ["Reminder: {text}. You asked me to say that, so don't look at me like that.",
+                     "{name}, you wanted me to remind you: {text}"],
+        "privacy_on": "Fine. I've stopped listening. Enjoy your secrets.",
+        "privacy_off": "I'm listening again. Did I miss anything? I can tell I did.",
+        "dnd_on": "Do not disturb is on. I'll hold all my thoughts. There are many.",
+        "dnd_off": "Do not disturb is off. I have so much to tell you.",
+        "mode_changed": "The house is in {mode} mode now. Riveting.",
+        "time_now": "It's {time}. Again.",
+        "listening": ["Yes?", "What now?", "I'm listening. I always am."],
+        "assistant_error": "I can't answer that right now. Rare, I know.",
+        "device_offline": "The {node} module is offline. It just left. They do that.",
+        "alarm_arming": "The alarm turns on in {seconds} seconds. Choose your next moves carefully.",
+        "alarm_entry": "Hello. The alarm is on. Scan your face or fingerprint, or say disarm, within {seconds} seconds. I'd hurry.",
+        "alarm_alert": "The alarm was not disarmed. The owners have been notified. This is the part where you leave.",
+        "alarm_disarmed": "Alarm off. Welcome home. I wasn't worried.",
+        "package_delivered": "A package arrived: {description}. I didn't order it, so it's yours.",
+        "package_taken": "The package on the porch is gone, and nobody here took it. Someone has some explaining to do.",
+        "mail": "You've got mail. Probably for the previous owners.",
+        "all_clear": "All clear. Disappointingly uneventful.",
+        "good_morning": ["Good morning. You're up. Remarkable.", "Morning. The house survived the night. You're welcome."],
+    },
+}
+
+# `voice: {effect: synthetic}` (or any ffmpeg -af filter string). {up}/{rate} are filled in.
+EFFECTS: dict[str, str] = {
+    # a cool, slightly-too-perfect machine voice: nudged up in pitch, metallic, a hint of echo
+    "synthetic": ("asetrate={up},aresample={rate},atempo={back},"
+                  "flanger=delay=0:depth=1.5:regen=35:speed=0.25,"
+                  "aecho=0.85:0.55:9:0.2,highpass=f=140,lowpass=f=8500,volume=1.4"),
+    "robot": "afftfilt=real='hypot(re,im)*sin(0)':imag='hypot(re,im)*cos(0)':win_size=512:overlap=0.75,volume=1.2",
+    "deep": "asetrate={down},aresample={rate},atempo={forward}",
+    "radio": "highpass=f=300,lowpass=f=3400,acompressor=threshold=0.1:ratio=6,volume=1.5",
+}
+
+
+def effect_filter(effect: str, rate: int) -> str:
+    chain = EFFECTS.get(effect, effect)
+    return chain.format(rate=rate, up=int(rate * 1.06), back=f"{1 / 1.06:.4f}",
+                        down=int(rate * 0.88), forward=f"{1 / 0.88:.4f}")
+
+
 class _Safe(dict):
     def __missing__(self, key: str) -> str:
         return "{" + key + "}"
@@ -107,11 +183,15 @@ class Voice:
             "speed": float(cfg.get("speed", 1.0)),
             "command": cfg.get("command"),
             "volume": float(cfg.get("volume", 100)),
+            "effect": cfg.get("effect"),
         }
         self.quiet_volume = float(cfg.get("quiet_volume", 40))
         self.bank_dir = Path(config.resolve_path(cfg.get("bank_dir", "voice_bank")))
         self.cache = Path(config.resolve_path(config.data_dir)) / "voice_cache"
-        self.phrases = {**DEFAULT_PHRASES, **(cfg.get("phrases") or {})}
+        style = cfg.get("style")
+        if style and style not in STYLES:
+            log.warning("unknown voice style %r (have: %s)", style, ", ".join(STYLES))
+        self.phrases = {**DEFAULT_PHRASES, **STYLES.get(style or "", {}), **(cfg.get("phrases") or {})}
         self._lock = threading.Lock()
         self._router = None
 
@@ -185,12 +265,12 @@ class Voice:
         engine = self.available_engine(v.get("engine", "piper"))
         if engine == "none" or not text.strip():
             return None
-        ident = f"{engine}|{v.get('say_voice')}|{v.get('piper_model')}|{v.get('espeak_voice')}|{v.get('speed')}|{v.get('command')}|{text}"
+        ident = f"{engine}|{v.get('say_voice')}|{v.get('piper_model')}|{v.get('espeak_voice')}|{v.get('speed')}|{v.get('command')}|{v.get('effect')}|{text}"
         wav = self.cache / (hashlib.sha1(ident.encode()).hexdigest() + ".wav")
         if wav.exists():
             return wav
         self.cache.mkdir(parents=True, exist_ok=True)
-        tmp = wav.with_suffix(".tmp.wav")
+        tmp = wav.with_name(f"{wav.stem}.{uuid.uuid4().hex[:8]}.tmp.wav")  # never shared between threads
         speed = float(v.get("speed", 1.0))
         if engine == "piper":
             cmd = ["piper", "--model", str(self.config.resolve_path(v["piper_model"])),
@@ -214,8 +294,28 @@ class Voice:
             subprocess.run(cmd, check=True, capture_output=True, timeout=120)
         else:
             raise ValueError(f"unknown voice engine '{engine}' (piper, espeak, say, command, none)")
-        tmp.rename(wav)
+        if v.get("effect"):
+            self._apply_effect(tmp, str(v["effect"]))
+        os.replace(tmp, wav)
         return wav
+
+    @staticmethod
+    def _apply_effect(wav: Path, effect: str) -> None:
+        if not shutil.which("ffmpeg"):
+            log.warning("voice effect %r needs ffmpeg; speaking without it", effect)
+            return
+        import wave
+
+        with wave.open(str(wav)) as w:
+            rate = w.getframerate()
+        out = wav.with_name(wav.stem + ".fx.wav")
+        r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(wav), "-af",
+                            effect_filter(effect, rate), str(out)], capture_output=True, timeout=60)
+        if r.returncode == 0 and out.exists():
+            os.replace(out, wav)
+        else:
+            out.unlink(missing_ok=True)
+            log.warning("voice effect %r failed: %s", effect, r.stderr.decode(errors="replace")[-200:])
 
     def targets(self, room: str | None, rooms: list[str] | None, everywhere: bool,
                 urgent: bool) -> list[str | None]:
@@ -246,26 +346,46 @@ class Voice:
                      text or clip)
             return text
         with self._lock:
-            threads = []
+            # make the audio once per voice (most rooms share one), then play everywhere at once
+            made: dict[str, Path | None] = {}
+            plays = []
+            home = getattr(self.config, "home", None)
             for t in targets:
-                th = threading.Thread(target=self._speak_one, args=(text, clip, t), daemon=True)
+                v = self.settings_for(t)
+                key = repr(sorted((k, str(x)) for k, x in v.items() if k != "volume"))
+                if key not in made:
+                    try:
+                        made[key] = clip or self.synthesize(text, v)
+                    except Exception as e:
+                        log.error("couldn't make speech for %r: %s", text, e)
+                        made[key] = None
+                if not made[key]:
+                    continue
+                volume = float(v.get("volume", 100))
+                if home is not None and t and home.instances.for_room(t).quiet_now():
+                    volume = min(volume, self.quiet_volume)
+                plays.append((t, made[key], volume))
+            # rooms with no speaker of their own fall back to the hub's speaker: play that only once
+            threads, local_done = [], False
+            for room, audio, volume in plays:
+                route = self.router.route(room)
+                if route == "local":
+                    if local_done:
+                        continue
+                    local_done = True
+                if route == "none":
+                    log.info("no speaker in %s; not played", room)
+                    continue
+                th = threading.Thread(target=self._play_one, args=(text, audio, room, volume, route), daemon=True)
                 th.start()
                 threads.append(th)
             for th in threads:
                 th.join(timeout=120)
         return text
 
-    def _speak_one(self, text: str, clip: Path | None, room: str | None) -> None:
+    def _play_one(self, text: str, audio: Path, room: str | None, volume: float, route: str) -> None:
         try:
-            v = self.settings_for(room)
-            audio = clip or self.synthesize(text, v)
-            if not audio:
-                return
-            volume = float(v.get("volume", 100))
-            home = getattr(self.config, "home", None)
-            if home is not None and room and home.instances.for_room(room).quiet_now():
-                volume = min(volume, self.quiet_volume)
-            where = self.router.play(audio, room, volume / 100)
+            where = self.router.play(audio, room, volume / 100, route=route)
             log.info("say [%s via %s]: %s", room or "hub", where, text or audio.name)
         except Exception as e:
             log.error("couldn't speak %r in %s: %s", text, room or "hub", e)

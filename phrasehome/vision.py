@@ -128,6 +128,8 @@ class CameraFeed:
                 backoff = 1.0
                 time.sleep(self.interval)
             except Exception as e:
+                if not self.error:
+                    log.warning("camera %s: %s", self.name, e)
                 self.error = str(e)
                 self._cam = None
                 time.sleep(backoff)

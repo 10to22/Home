@@ -41,6 +41,7 @@ instantly; lines starting "house, ..." go to the AI assistant.
 |---|---|
 | **Face scan at the door** | Allowed: "retinal scan complete" + fingerprint prompt. Denied or unknown: "retinal scan failed" + lock |
 | **Fingerprint second factor** | The same person's finger within 30 s of their face scan unlocks (`fingerprint:` + firmware/door_fingerprint) |
+| **Face-only auto-unlock** | `door_scanner: {auto_unlock: [Sam]}`: Sam's face unlocks a locked door by itself, no fingerprint, in any mode. An unlocked door is left alone. Retries if the lock doesn't respond |
 | Fingerprint lockout | 3 wrong fingers: lock + phone alert |
 | Unknown visitors remembered | Saved as visitor-N with a photo. `phrasehome faces allow visitor-3 --name Grandma` |
 | **Guest passes** | `phrasehome faces allow visitor-3 --hours 48` (dog sitter, cleaner) |
@@ -110,6 +111,8 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Feature | How |
 |---|---|
 | Custom wording | `voice.phrases`; lists pick one at random |
+| Deadpan house AI | `voice: {style: deadpan}`: dry, sardonic versions of the lines ("Someone left the front door unlocked. I fixed it. Again."). Smoke, CO, leak and weather warnings stay plain. Pair with `assistant: {persona: deadpan}` |
+| Machine voice | `voice: {effect: synthetic}` (also robot, deep, radio, or any ffmpeg filter) on top of any engine |
 | Record your own | `phrasehome voice record retinal_scan_complete` |
 | Built-in sounds | chime, doorbell, alarm, timer, reminder, siren (generated, nothing to download) |
 | Intercom | "house, tell Sam dinner's ready", "dinner's ready" (everywhere), dashboard "Say" box |

@@ -194,6 +194,9 @@ def listen(config: Config, dry_run: bool = False) -> None:
     for h in hubs:
         h.start()
 
+    from .services import start_services
+
+    services = start_services(dispatcher)
     scanners = []
     for sc in config.door_scanners:
         try:
@@ -204,9 +207,6 @@ def listen(config: Config, dry_run: bool = False) -> None:
             log.error("door scanner for %s door not started: %s", sc.get("door", "front"), e)
     for sc in scanners:
         sc.start()
-    from .services import start_services
-
-    services = start_services(dispatcher)
 
     stream = server = None
     try:

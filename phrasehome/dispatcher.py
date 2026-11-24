@@ -162,10 +162,21 @@ class Dispatcher:
         ctx = {"time": clock.spoken_time(t), "date": t.strftime("%A, %B %-d"),
                "day": t.strftime("%A"), "mode": self.state.mode}
         ctx.update({k: str(v) for k, v in (values or {}).items() if v is not None})
+        if "{here}" in str(action) and "here" not in ctx and self.default_room():
+            ctx["here"] = self.default_room()  # e.g. a routine started from the dashboard
         action = render(action, ctx)
         if "{here}" in str(action):
             raise ValueError("this needs {here}, but the mic that heard it has no room set")
         return action
+
+    def default_room(self) -> str | None:
+        """The room things happen in when no room is known: the hub's own room, else the main
+        instance's first room."""
+        local = (self.config.sources.get("local_mic") or {}).get("room")
+        if local:
+            return str(local).lower()
+        rooms = self.instances.main.rooms
+        return rooms[0] if rooms else None
 
     def run_action(self, action: dict[str, Any], values: dict[str, Any] | None = None,
                    phrase: str = "") -> str:

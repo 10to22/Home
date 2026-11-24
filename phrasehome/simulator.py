@@ -224,6 +224,8 @@ def prepare(config, base_port: int = 9100, real_backends: bool = False, webcam: 
             if b["type"] not in SAFE_TYPES:
                 config.backends[name] = {"type": "log"}
         config.fingerprint = []
+        if "spotify" in config.extra:
+            config.extra["spotify"] = {**config.extra["spotify"], "simulated": True}
     if webcam:
         door = next((n for n, c in config.cameras.items() if "door" in (c.get("roles") or [])), None)
         for n in list(config.cameras):
@@ -266,6 +268,7 @@ def run(config, mic: bool = False, base_port: int = 9100, real_backends: bool = 
             home.assistant = Assistant(home)
         except Exception as e:
             log.warning("AI assistant off: %s", e)
+    services = start_services(home)  # first: cameras, sensors, dashboard...
     scanners = []
     for sc in config.door_scanners:
         try:
@@ -275,7 +278,6 @@ def run(config, mic: bool = False, base_port: int = 9100, real_backends: bool = 
             scanners[-1].start()
         except Exception as e:
             log.warning("door scanner off: %s", e)
-    services = start_services(home)
     try:
         while True:
             time.sleep(1)

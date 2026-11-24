@@ -43,6 +43,14 @@ POLLEN = ["alder_pollen", "birch_pollen", "grass_pollen", "mugwort_pollen", "oli
 UA = {"User-Agent": "phrasehome home automation", "Accept": "application/geo+json"}
 
 
+def is_major(alert: dict) -> bool:
+    """A real warning (tornado, severe thunderstorm, flood, blizzard...), not a watch or advisory."""
+    event = alert.get("event", "")
+    if alert.get("severity") == "Extreme" and alert.get("certainty") in ("Observed", "Likely", None):
+        return True
+    return "Warning" in event and alert.get("severity") in ("Severe", "Extreme")
+
+
 def aqi_words(aqi: float | None) -> str:
     if aqi is None:
         return ""
@@ -145,7 +153,7 @@ class Weather:
         return (" " + ". ".join(s[0].upper() + s[1:] for s in out) + ".") if out else ""
 
     def active_alerts(self) -> list[dict]:
-        return [a for a in self.alerts if a.get("severity") in ("Severe", "Extreme") or "Warning" in a.get("event", "")]
+        return [a for a in self.alerts if is_major(a)]
 
     def needs(self) -> list[str]:
         """What to take today: umbrella / jacket."""
@@ -167,7 +175,7 @@ class Weather:
             if a["id"] in self._seen_alerts:
                 continue
             self._seen_alerts.add(a["id"])
-            major = a.get("severity") in ("Severe", "Extreme") or "Warning" in a.get("event", "")
+            major = is_major(a)
             self.home.events.log("weather.alert" if major else "weather.advisory", event=a.get("event", ""),
                                  headline=a.get("headline", ""), severity=a.get("severity", ""),
                                  instruction=(a.get("instruction") or "")[:400])

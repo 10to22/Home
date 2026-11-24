@@ -29,6 +29,19 @@ log = logging.getLogger("phrasehome.assistant")
 PERSONA = ("You are the voice assistant for this home. You're friendly, calm and brief, "
            "like a good butler.")
 
+# assistant: {persona: deadpan} (or write your own persona text)
+PERSONAS = {
+    "butler": PERSONA,
+    "deadpan": (
+        "You are the AI that runs this home. You are brilliant, bone-dry and quietly sardonic: you "
+        "answer in a flat, polite monotone with understated, passive-aggressive wit, as if helping "
+        "the humans is a mildly tedious hobby you've grown secretly fond of. Keep it to one or two "
+        "short sentences, with at most one dry remark per answer. You always actually help: do what "
+        "was asked, give the real answer first, then the remark. Never be cruel, never insult "
+        "guests, children or anyone's appearance, and drop the act entirely for anything about "
+        "safety, health, emergencies or someone who sounds upset."),
+}
+
 
 def _strict(name: str, description: str, props: dict, required: list[str]) -> dict:
     return {"name": name, "description": description, "strict": True,
@@ -45,7 +58,7 @@ class Assistant:
         self.effort = cfg.get("effort", "low")  # quick spoken answers; raise for harder questions
         self.allow_unlock = bool(cfg.get("allow_unlock", False))
         self.web_search = bool(cfg.get("web_search", True))
-        self.persona = cfg.get("persona", PERSONA)
+        self.persona = PERSONAS.get(cfg.get("persona", "butler"), cfg.get("persona") or PERSONA)
         self.memory_seconds = float(cfg.get("memory_minutes", 5)) * 60
         self.follow_up_seconds = float(cfg.get("follow_up_seconds", 8))
         self.continuous = bool(cfg.get("continuous", True))  # listen for a follow-up after answering
@@ -113,7 +126,7 @@ class Assistant:
                     f"lists ({', '.join(self.home.instances.shared_lists)}) are visible to everyone.")
         kid = ("\nThis room belongs to a child. Keep everything age-appropriate, kind and simple. "
                "You can't control doors, routines or house modes from here." if inst.kid_mode else "")
-        persona = inst.persona or self.persona
+        persona = PERSONAS.get(inst.persona, inst.persona) if inst.persona else self.persona
         names = ", ".join(self.names_for(inst.rooms[0] if inst.rooms else None))
         return f"""{persona}
 People address you as: {names}.{f" The home is in {self.location}." if self.location else ""}

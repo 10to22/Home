@@ -133,6 +133,10 @@ class Spotify:
 
     def play(self, query: str = "", kind: str = "any", rooms: list[str] | None = None,
              playlist: str = "") -> str:
+        if self.cfg.get("simulated"):  # `phrasehome simulate`: pretend, don't touch the account
+            what = playlist or query
+            log.info("[spotify, simulated] play %s in %s", what or "(resume)", ", ".join(rooms or ["all"]))
+            return f"Playing {what}." if what else "Resuming."
         self._speakers(rooms)
         dev = self.device_id()
         params = {"device_id": dev} if dev else {}
@@ -149,13 +153,18 @@ class Spotify:
         if not name:
             return
         try:
-            hub = self.home.backend(name).hub
+            hub = getattr(self.home.backend(name), "hub", None)
+            if hub is None:
+                return
             for r in rooms or ["all"]:
                 hub.set_mode(r, "group")
         except Exception as e:
             log.warning("couldn't put speakers in group mode: %s", e)
 
     def simple(self, what: str, level: Any = None) -> str:
+        if self.cfg.get("simulated") and what != "resume":
+            log.info("[spotify, simulated] %s %s", what, level if level is not None else "")
+            return {"what": "Nothing's playing in the simulation.", "like": "Saved."}.get(what, "Okay.")
         if what == "pause":
             self.api("PUT", "/me/player/pause")
             return "Paused."
