@@ -1,0 +1,94 @@
+# phrasehome config. Copy to config.yaml and edit.
+# No wake word: just say a phrase below and it runs.
+
+settings:
+  model_path: models/vosk-model-small-en-us-0.15
+  # utterance = the whole thing you say must match a phrase (recommended: fewest accidental triggers)
+  # contains  = the phrase can be inside a longer sentence ("ok so turn on the lights please")
+  match_mode: utterance
+  match_threshold: 85       # 0-100; raise if it fires by accident, lower if it misses you
+  min_confidence: 0.6       # how sure speech recognition must be
+  cooldown_seconds: 3       # a command won't refire within this many seconds
+  restrict_vocabulary: true # only recognize words from your phrases (more accurate, lighter on a Pi)
+  # "don't turn on the lights" will NOT fire because of these:
+  block_words: ["don't", "dont", "do not", "not", "never"]
+  default_backend: google
+  log_heard: false          # set true while tuning to see everything it hears
+  device: null              # mic index/name from `phrasehome devices`; null = default
+
+backends:
+  # Sends the command to Google Assistant as if you'd said "Hey Google, ...".
+  # Anything in your Google Home app (lights, plugs, TV, thermostat, routines) works.
+  google:
+    type: google_assistant
+    credentials: credentials.json   # created by `phrasehome auth-google`
+    language: en-US
+
+  # Optional alternatives — uncomment what you use.
+  # home_assistant:
+  #   type: home_assistant
+  #   url: http://homeassistant.local:8123
+  #   token_env: HA_TOKEN           # long-lived access token in this env var
+  # ifttt:
+  #   type: webhook
+  #   url: https://maker.ifttt.com/trigger/EVENT/with/key/YOUR_KEY
+  # local:
+  #   type: shell
+
+# Slots let one phrase cover many variations. {room} below expands to each value.
+# Use a mapping to translate what you say into what gets sent.
+slots:
+  room: [kitchen, bedroom, living room, office, bathroom]
+  level:
+    ten: "10"
+    twenty: "20"
+    thirty: "30"
+    forty: "40"
+    fifty: "50"
+    sixty: "60"
+    seventy: "70"
+    eighty: "80"
+    ninety: "90"
+    one hundred: "100"
+
+commands:
+  # With no `action`, the phrase you said is sent to Google as-is.
+  - name: lights_on
+    phrases: [turn on the lights, lights on, turn the lights on]
+    action: { say: turn on the lights }
+
+  - name: lights_off
+    phrases: [turn off the lights, lights off, turn the lights off]
+    action: { say: turn off the lights }
+
+  - name: room_lights_on
+    phrases: ["turn on the {room} lights", "{room} lights on"]
+    action: { say: "turn on the {room} lights" }
+
+  - name: room_lights_off
+    phrases: ["turn off the {room} lights", "{room} lights off"]
+    action: { say: "turn off the {room} lights" }
+
+  - name: dim
+    phrases: ["set the lights to {level} percent", "dim the lights to {level} percent"]
+    action: { say: "set the lights to {level} percent" }
+
+  - name: movie_time
+    phrases: [movie time, it's movie time]
+    action: { say: start movie time }     # runs your Google Home routine called "movie time"
+
+  - name: goodnight
+    phrases: [good night house, goodnight house]
+    action: { say: good night }
+
+  - name: stop_music
+    phrases: [stop the music, pause the music]
+    action: { say: stop }
+
+  # Examples for other backends:
+  # - name: porch_on
+  #   phrases: [porch light on]
+  #   action: { backend: home_assistant, service: light.turn_on, data: { entity_id: light.porch } }
+  # - name: ding
+  #   phrases: [test test]
+  #   action: { backend: local, command: [aplay, /usr/share/sounds/alsa/Front_Center.wav] }

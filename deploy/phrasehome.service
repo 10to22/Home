@@ -1,0 +1,16 @@
+[Unit]
+Description=phrasehome - wake-word-free voice commands
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+User=@USER@
+SupplementaryGroups=audio
+WorkingDirectory=@DIR@
+ExecStart=@DIR@/.venv/bin/phrasehome -c @DIR@/config.yaml run
+Restart=always
+RestartSec=5
+# EnvironmentFile=@DIR@/.env   # e.g. HA_TOKEN=...
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,120 @@
+"""Turn recognized speech into a command match."""
+
+from __future__ import annotations
+
+import itertools
+import re
+from dataclasses import dataclass, field
+
+from rapidfuzz import fuzz
+
+from .config import Command
+
+_SLOT_RE = re.compile(r"\{(\w+)\}")
+
+
+def normalize(text: str) -> str:
+    text = text.lower().replace("[unk]", " unk ")
+    text = text.replace("’", "'")
+    text = re.sub(r"[^a-z0-9' ]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+@dataclass
+class Candidate:
+    text: str  # normalized, slot values filled in
+    command: Command
+    slots: dict[str, str] = field(default_factory=dict)  # slot name -> value
+
+    @property
+    def words(self) -> list[str]:
+        return self.text.split()
+
+
+@dataclass
+class Match:
+    command: Command
+    phrase: str
+    slots: dict[str, str]
+    score: float
+    heard: str
+
+
+def expand(commands: list[Command], slots: dict[str, dict[str, str]]) -> list[Candidate]:
+    """Expand every phrase template ("turn on the {room} lights") into concrete phrases."""
+    out: list[Candidate] = []
+    for cmd in commands:
+        for template in cmd.phrases:
+            names = _SLOT_RE.findall(template)
+            for n in names:
+                if n not in slots:
+                    raise ValueError(f"phrase '{template}' uses undefined slot '{{{n}}}'")
+            choices = [list(slots[n].items()) for n in names]
+            for combo in itertools.product(*choices):
+                text = template
+                values = {}
+                for n, (spoken, value) in zip(names, combo):
+                    text = text.replace("{" + n + "}", spoken, 1)
+                    values[n] = value
+                out.append(Candidate(normalize(text), cmd, values))
+    return out
+
+
+def vocabulary(candidates: list[Candidate]) -> list[str]:
+    """Grammar for Vosk: every phrase, every individual word, plus [unk] for everything else."""
+    phrases = sorted({c.text for c in candidates})
+    words = sorted({w for c in candidates for w in c.words})
+    return phrases + words + ["[unk]"]
+
+
+class Matcher:
+    def __init__(
+        self,
+        candidates: list[Candidate],
+        mode: str = "utterance",
+        threshold: float = 85.0,
+        block_words: list[str] | None = None,
+    ) -> None:
+        self.candidates = candidates
+        self.mode = mode
+        self.threshold = threshold
+        self.block = [normalize(b) for b in (block_words or []) if normalize(b)]
+
+    def _blocked(self, heard: str, phrase: str) -> bool:
+        h, p = f" {heard} ", f" {phrase} "
+        return any(f" {b} " in h and f" {b} " not in p for b in self.block)
+
+    def _score(self, heard_words: list[str], cand: Candidate) -> float:
+        heard = " ".join(heard_words)
+        if self.mode == "utterance":
+            return fuzz.ratio(heard, cand.text)
+        # contains: best-scoring window of the same word length (±1) inside the utterance
+        n = len(cand.words)
+        best = 0.0
+        for size in (n - 1, n, n + 1):
+            if size < 1 or size > len(heard_words):
+                continue
+            for i in range(len(heard_words) - size + 1):
+                window = " ".join(heard_words[i : i + size])
+                best = max(best, fuzz.ratio(window, cand.text))
+        return best
+
+    def match(self, text: str) -> Match | None:
+        heard = normalize(text)
+        words = [w for w in heard.split() if not (self.mode == "contains" and w == "unk")]
+        if not words:
+            return None
+        best: tuple[float, int, Candidate] | None = None
+        for cand in self.candidates:
+            score = self._score(words, cand)
+            if score < self.threshold:
+                continue
+            key = (score, len(cand.text), cand)
+            if best is None or key[:2] > best[:2]:
+                best = key
+        if best is None:
+            return None
+        score, _, cand = best
+        if self._blocked(heard, cand.text):
+            return None
+        return Match(cand.command, cand.text, cand.slots, score, heard)
