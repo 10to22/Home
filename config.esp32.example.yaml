@@ -1,0 +1,86 @@
+# phrasehome: whole-house setup with ESP32s.
+#   - an ESP32 mic satellite in each room streams audio to this hub (firmware/mic_satellite)
+#   - ESP32 device nodes switch relays / dim LED strips (firmware/device_node)
+#   - Google Home still handles anything the ESP32s don't (TV, music, routines...)
+# Copy to config.yaml and edit.
+
+settings:
+  model_path: models/vosk-model-small-en-us-0.15
+  match_mode: utterance
+  match_threshold: 85
+  min_confidence: 0.6
+  cooldown_seconds: 2
+  arbitration_seconds: 0.6   # two mics hear you -> only the clearest one fires
+  restrict_vocabulary: true
+  block_words: ["don't", "dont", "do not", "not", "never"]
+  default_backend: esp
+  log_heard: false
+
+sources:
+  satellites:
+    port: 7777               # must match HUB_PORT in the mic firmware
+    # allowed_ips: [192.168.1.60, 192.168.1.61]   # only accept these mics
+  local_mic:                 # the Pi's own USB mic, if it has one (delete this block if not)
+    room: living room
+
+backends:
+  esp:
+    type: esp32
+    token_env: PHRASEHOME_TOKEN   # same as TOKEN in the device firmware (optional)
+    nodes:                        # must match NODE_NAME in each device's firmware
+      kitchen: phrasehome-kitchen.local
+      bedroom: phrasehome-bedroom.local
+      living room: phrasehome-living-room.local
+
+  google:                         # optional: everything else goes to Google Home
+    type: google_assistant
+    credentials: credentials.json
+
+slots:
+  room: [kitchen, bedroom, living room]
+  level: { ten: "10", twenty: "20", thirty: "30", forty: "40", fifty: "50",
+           sixty: "60", seventy: "70", eighty: "80", ninety: "90", one hundred: "100" }
+
+commands:
+  # {here} = the room whose mic heard you. Say "lights on" in the kitchen -> kitchen lights.
+  - name: lights_on_here
+    phrases: [lights on, turn on the lights, turn the lights on]
+    action: { node: "{here}", channel: lights, state: on }
+
+  - name: lights_off_here
+    phrases: [lights off, turn off the lights, turn the lights off]
+    action: { node: "{here}", channel: lights, state: off }
+
+  # Or name the room: "turn on the bedroom lights" works from anywhere.
+  - name: room_lights_on
+    phrases: ["turn on the {room} lights", "{room} lights on"]
+    action: { node: "{room}", channel: lights, state: on }
+
+  - name: room_lights_off
+    phrases: ["turn off the {room} lights", "{room} lights off"]
+    action: { node: "{room}", channel: lights, state: off }
+
+  - name: dim_here
+    phrases: ["dim the lamp to {level} percent", "lamp {level} percent"]
+    action: { node: "{here}", channel: lamp, level: "{level}" }
+
+  - name: fan_on
+    phrases: [fan on, turn on the fan]
+    action: { node: "{here}", channel: fan, state: on }
+
+  - name: fan_off
+    phrases: [fan off, turn off the fan]
+    action: { node: "{here}", channel: fan, state: off }
+
+  - name: everything_off
+    phrases: [good night house, everything off]
+    action: { node: all, channel: lights, state: off }
+
+  # Things the ESP32s can't do -> Google Home
+  - name: stop_music
+    phrases: [stop the music, pause the music]
+    action: { backend: google, say: stop }
+
+  - name: movie_time
+    phrases: [movie time]
+    action: { backend: google, say: start movie time }

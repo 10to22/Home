@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import re
 from dataclasses import dataclass, field
+from typing import Callable
 
 from rapidfuzz import fuzz
 
@@ -38,6 +39,9 @@ class Match:
     slots: dict[str, str]
     score: float
     heard: str
+    room: str | None = None  # room of the mic that heard it
+    confidence: float = 1.0
+    notify: Callable[[str], None] | None = None  # feedback to the mic: "matched"/"done"/"failed"
 
 
 def expand(commands: list[Command], slots: dict[str, dict[str, str]]) -> list[Candidate]:

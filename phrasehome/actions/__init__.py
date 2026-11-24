@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from .base import Backend, render
+from .esp32 import Esp32Backend
 from .home_assistant import HomeAssistantBackend
 from .shell import ShellBackend
 from .webhook import WebhookBackend
@@ -13,6 +14,7 @@ from .webhook import WebhookBackend
 log = logging.getLogger(__name__)
 
 _TYPES: dict[str, type[Backend]] = {
+    "esp32": Esp32Backend,
     "home_assistant": HomeAssistantBackend,
     "webhook": WebhookBackend,
     "shell": ShellBackend,

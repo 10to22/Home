@@ -6,3 +6,5 @@ models/
 config.yaml
 credentials*.json
 client_secret*.json
+firmware/**/config.h
+.env

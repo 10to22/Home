@@ -30,6 +30,9 @@ class Settings:
     block_words: list[str] = field(
         default_factory=lambda: ["don't", "dont", "do not", "not", "never", "no"]
     )
+    # When several mics hear the same command at once, wait this long and keep only the
+    # clearest one, so "lights on" in the kitchen doesn't also fire in the next room.
+    arbitration_seconds: float = 0.6
     default_backend: str | None = None
     log_heard: bool = False  # log everything heard (handy for tuning; off for privacy)
 
@@ -48,6 +51,7 @@ class Config:
     slots: dict[str, dict[str, str]]  # slot name -> {spoken form: value}
     commands: list[Command]
     base_dir: Path
+    sources: dict[str, Any] = field(default_factory=dict)
 
     def resolve_path(self, p: str) -> Path:
         path = Path(p).expanduser()
@@ -106,4 +110,9 @@ def load_config(path: str | Path) -> Config:
     if not commands:
         raise ConfigError("no commands defined")
 
-    return Config(settings, backends, slots, commands, base_dir=path.parent)
+    sources = data.get("sources") or {"local_mic": {}}
+    for name in sources:
+        if name not in ("local_mic", "satellites"):
+            raise ConfigError(f"unknown source '{name}' (use local_mic and/or satellites)")
+
+    return Config(settings, backends, slots, commands, base_dir=path.parent, sources=sources)

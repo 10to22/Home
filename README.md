@@ -15,6 +15,8 @@ An always-on listener for Google Home with **no wake word**. Say "turn on the li
   command. "Don't turn on the lights" is blocked. Low-confidence recognitions are ignored, and a cooldown
   stops double-fires.
 - **Slots.** `turn on the {room} lights` covers every room with one line.
+- **ESP32s all over the house.** Put a $8 ESP32 mic in each room and wire ESP32 device nodes to
+  relays and LED strips. Say "lights on" and the lights *in that room* turn on. See [ESP32 setup](#esp32-setup).
 - **Other backends.** Home Assistant, webhooks (IFTTT, Node-RED…) and local scripts.
 
 ## What you need
@@ -110,6 +112,42 @@ sudo ./deploy/enable-service.sh
 journalctl -u phrasehome -f
 ```
 
+## ESP32 setup
+
+```
+ [ESP32 mic: kitchen] ─┐                          ┌─► [ESP32 device: kitchen]  relays / LED strip
+ [ESP32 mic: bedroom] ─┼─ Wi-Fi audio ─► Pi hub ──┼─► [ESP32 device: bedroom]
+ [Pi's own USB mic]   ─┘   (speech recognition)   └─► Google Home (TV, music, smart plugs, routines)
+```
+
+The ESP32s are too small to understand speech themselves, so the mics stream audio to the Pi and
+the Pi does the recognition for every room. Each mic says which room it's in, so commands can use
+`{here}`:
+
+```yaml
+- phrases: [lights on]
+  action: { backend: esp, node: "{here}", channel: lights, state: on }
+```
+
+If two mics hear the same command, only the one that heard it most clearly fires.
+
+1. Build and flash the boards: [firmware/README.md](firmware/README.md) has parts, wiring and flashing steps.
+2. Start from the ESP32 example config:
+
+   ```bash
+   cp config.esp32.example.yaml config.yaml
+   ```
+
+3. List your nodes under `backends.esp.nodes`. Use the same names as `NODE_NAME` and `ROOM` in the firmware.
+4. Run `phrasehome run --dry-run` and talk near a satellite. Its LED blinks when it hears a command.
+
+A Pi 4 should handle several rooms. Each mic uses about 32 KB/s of Wi-Fi.
+
+**Privacy note:** the mics stream audio continuously over your Wi-Fi to the Pi. It stays on your network
+and is never stored, but it isn't encrypted, so keep the mics on a Wi-Fi network you trust (and use
+`allowed_ips` so only your mics are accepted). Setting `TOKEN` on device nodes stops other devices on
+the network from switching them.
+
 ## Tuning
 
 | Problem | Fix |
@@ -154,8 +192,9 @@ pip install -e '.[dev]'
 pytest
 ```
 
-Code layout: `phrasehome/matcher.py` (phrase expansion and fuzzy matching), `listener.py` (mic and Vosk),
-`dispatcher.py` (cooldown and background execution), `actions/` (backends).
+Code layout: `phrasehome/matcher.py` (phrase expansion and fuzzy matching), `listener.py` (mics and Vosk),
+`satellites.py` (ESP32 mic receiver), `dispatcher.py` (cooldown, multi-mic arbitration, background execution),
+`actions/` (backends), `firmware/` (ESP32 sketches).
 
 ## Caveats
 
