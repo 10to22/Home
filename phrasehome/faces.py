@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-MAX_EMBEDDINGS = 24  # per person; more photos = better recognition from different angles
+MAX_EMBEDDINGS = 60  # per person; more photos = better recognition from different angles
 
 
 @dataclass

@@ -306,8 +306,12 @@ class DoorScanner:
                 backoff = min(backoff * 2, 30)
 
     # ---------- enrollment helper ----------
-    def capture_embeddings(self, count: int = 8, timeout: float = 20.0) -> tuple[list, bytes]:
-        """Grab `count` face samples from the camera (for `phrasehome faces enroll --camera`)."""
+    def capture_embeddings(self, count: int = 20, timeout: float | None = None,
+                           progress=None) -> tuple[list, bytes]:
+        """Grab `count` face samples from the camera (for `phrasehome faces enroll --camera`).
+        Gives up after `timeout` seconds (default: about 1.5 s per sample, at least 20 s).
+        `progress(n, count)` is called after each sample."""
+        timeout = max(20.0, count * 1.5) if timeout is None else timeout
         spec = self.cfg["camera"]
         cams = getattr(self.home.config, "cameras", {}) or {}
         if isinstance(spec, str) and spec.lower() in cams:  # a camera name from `cameras:`
@@ -323,5 +327,7 @@ class DoorScanner:
                 f = max(faces, key=lambda f: f.size)
                 embs.append(self.engine.embed(img, f))
                 photo = photo or self._crop(img, f)
+                if progress:
+                    progress(len(embs), count)
             time.sleep(0.4)  # small pauses so you can turn your head between samples
         return embs, photo

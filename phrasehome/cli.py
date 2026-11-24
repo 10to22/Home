@@ -127,12 +127,26 @@ def _cmd_faces(args) -> int:
             if args.camera or args.webcam:
                 from .door_scanner import DoorScanner
 
-                print("Look at the door camera. Turn your head a little and change expression...")
+                from .faces import MAX_EMBEDDINGS
+
+                print(f"Look at the camera. Taking {args.samples} samples: follow the prompts, "
+                      "slowly. Stay about an arm's length away.")
+                if args.samples > MAX_EMBEDDINGS:
+                    print(f"  (only the newest {MAX_EMBEDDINGS} samples per person are kept)")
+                tips = ["look straight at it", "turn a little to your left", "turn a little to your right",
+                        "tilt your chin up", "tilt your chin down", "smile", "neutral face",
+                        "step a bit closer", "step a bit back", "look straight again"]
+
+                def progress(n, total):
+                    tip = tips[(n * len(tips)) // max(total, 1)] if n < total else "done"
+                    print(f"  sample {n}/{total}" + (f" - now {tip}" if n < total else ""), flush=True)
 
                 class _H:  # DoorScanner only needs config here
                     config = cfg
 
-                got, ph = DoorScanner(_H, sc, engine=eng).capture_embeddings(args.samples)
+                got, ph = DoorScanner(_H, sc, engine=eng).capture_embeddings(args.samples, progress=progress)
+                if len(got) < args.samples:
+                    print(f"  got {len(got)} of {args.samples} (timed out: is your face well lit and in view?)")
                 embs += got
                 photo = photo or ph
             if not embs:
@@ -450,7 +464,8 @@ def main(argv: list[str] | None = None) -> int:
     fc.add_argument("--camera", action="store_true", help="enroll from the door camera")
     fc.add_argument("--webcam", action="store_true", help="enroll from this computer's webcam")
     fc.add_argument("--image", nargs="+", help="enroll from photo files")
-    fc.add_argument("--samples", type=int, default=8)
+    fc.add_argument("--samples", type=int, default=20,
+                    help="how many face samples to take (default 20; run enroll again to add more)")
     fc.add_argument("--deny", action="store_true", help="enroll as NOT allowed (e.g. banned)")
     fc.add_argument("--name", help="new display name")
     fc.add_argument("--hours", type=float, help="guest pass: allowed for this many hours only")

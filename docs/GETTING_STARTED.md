@@ -112,7 +112,7 @@ and the fingerprint sensor.
 3. Enroll yourself:
 
    ```bash
-   .venv/bin/phrasehome faces enroll "Your Name" --camera
+   .venv/bin/phrasehome faces enroll "Your Name" --camera --samples 30   # follow the prompts; run again to add more
    ```
 
 4. Run with the webcam:

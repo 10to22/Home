@@ -198,3 +198,24 @@ def test_persona_presets():
     from phrasehome.assistant import PERSONAS
 
     assert set(PERSONAS) >= {"butler", "deadpan"} and "safety" in PERSONAS["deadpan"]
+
+
+def test_capture_more_samples_with_progress(home):
+    class Cam:
+        def read(self):
+            return [(ALICE, 150)]
+
+    sc = scanner(home)
+    sc._camera = Cam()
+    import phrasehome.door_scanner as ds
+
+    real = ds.time.sleep
+    ds.time.sleep = lambda s: None
+    try:
+        seen = []
+        embs, _ = sc.capture_embeddings(30, progress=lambda n, t: seen.append(n))
+    finally:
+        ds.time.sleep = real
+    assert len(embs) == 30 and seen[-1] == 30
+    p = sc.bank.enroll("Alice", embs)
+    assert len(p.embeddings) == 31  # the first sample plus 30 more, all kept
