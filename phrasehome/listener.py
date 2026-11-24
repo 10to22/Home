@@ -67,6 +67,15 @@ class Engine:
             audio = bytes(buf)
             buf.clear()
             text = result.get("text", "").strip()
+            if self.dispatcher.state.is_private(room):
+                # Privacy mode: nothing is logged, matched or sent to the AI, except the
+                # command that turns privacy off (otherwise you could never say it).
+                m = self.matcher.match(text) if text else None
+                if m and m.command.action.get("backend") == "privacy" and \
+                        str(m.command.action.get("privacy")).lower() in ("off", "false"):
+                    m.room, m.notify = room, reply
+                    self.dispatcher.submit(m)
+                return
             if self.router and text and self.router.handle(source, room, text, audio, reply):
                 return
             handle_result(result, self.matcher, self.dispatcher, self.config,
@@ -96,6 +105,7 @@ def listen(config: Config, dry_run: bool = False) -> None:
             from .assistant import Assistant, AssistantRouter, Transcriber
 
             assistant = Assistant(dispatcher)
+            dispatcher.assistant = assistant
             router = AssistantRouter(assistant, Transcriber(config.assistant, model, s.sample_rate))
             log.info("AI assistant on: say \"%s, ...\"", assistant.names[0])
         except Exception as e:
@@ -125,6 +135,9 @@ def listen(config: Config, dry_run: bool = False) -> None:
             log.error("door scanner for %s door not started: %s", sc.get("door", "front"), e)
     for sc in scanners:
         sc.start()
+    from .services import start_services
+
+    services = start_services(dispatcher)
 
     stream = server = None
     try:
@@ -141,7 +154,8 @@ def listen(config: Config, dry_run: bool = False) -> None:
                 allowed_ips=sats.get("allowed_ips"),
             )
             server.start()
-        if not stream and not server and not hubs and not scanners:
+            dispatcher.satellites = server
+        if not stream and not server and not hubs and not scanners and not services:
             raise SystemExit("no audio sources enabled (see `sources:` in config)")
 
         log.info("Listening for %d phrases (%d commands). Ctrl+C to stop.",
@@ -159,6 +173,8 @@ def listen(config: Config, dry_run: bool = False) -> None:
             h.close()
         for sc in scanners:
             sc.stop()
+        for svc in services:
+            svc.stop()
         dispatcher.close()
 
 

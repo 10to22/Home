@@ -16,6 +16,7 @@ class EventLog:
         self.path = path
         self.recent: deque[dict[str, Any]] = deque(maxlen=keep)
         self._lock = threading.Lock()
+        self._subscribers: list = []
         if path and path.exists():  # reload the tail so the assistant remembers recent history
             for line in path.read_text().splitlines()[-keep:]:
                 try:
@@ -31,7 +32,16 @@ class EventLog:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 with self.path.open("a") as f:
                     f.write(json.dumps(ev) + "\n")
+        for fn in list(self._subscribers):
+            try:
+                fn(ev)
+            except Exception:
+                pass
         return ev
+
+    def subscribe(self, fn) -> None:
+        """Call fn(event) for every new event (keep it quick; hand slow work to a thread)."""
+        self._subscribers.append(fn)
 
     def query(self, kind: str | None = None, since: str | None = None, limit: int = 50) -> list[dict]:
         with self._lock:

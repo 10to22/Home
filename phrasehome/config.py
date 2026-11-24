@@ -38,10 +38,17 @@ class Settings:
 
 
 # Built-in backends, picked automatically from the action's keys:
-#   {speak: retinal_scan_complete}   -> voice bank
-#   {door: front, state: locked}     -> doors
-#   {routine: lockdown}              -> routines
-BUILTIN_BACKENDS = {"speak": "voice", "door": "doors", "routine": "routine"}
+#   {speak: retinal_scan_complete}      -> voice bank (rooms: [..] / everywhere: true)
+#   {door: front, state: locked}        -> doors
+#   {routine: lockdown}                 -> routines
+#   {timer: set, minutes: 10}           -> timers        {alarm: stop} / {alarm: snooze}
+#   {mode: away}                        -> home mode     {presence: away}
+#   {ask: "brief me on today"}          -> AI assistant, answer spoken
+#   {privacy: on, minutes: 60}          -> pause the mics {dnd: on} -> do not disturb
+#   {if: {mode: away}, then: [...], else: [...]}
+BUILTIN_BACKENDS = {"speak": "voice", "door": "doors", "routine": "routine", "timer": "timer",
+                    "alarm": "alarm", "mode": "mode", "presence": "presence", "ask": "assistant",
+                    "privacy": "privacy", "dnd": "dnd", "if": "logic"}
 RESERVED = set(BUILTIN_BACKENDS.values())
 
 
@@ -66,6 +73,16 @@ class Config:
     door_scanners: list[dict[str, Any]] = field(default_factory=list)
     assistant: dict[str, Any] = field(default_factory=dict)
     data_dir: str = "data"
+    instances: list = field(default_factory=list)
+    shared_lists: list[str] = field(default_factory=list)
+    location: dict[str, float] = field(default_factory=dict)
+    schedules: list[dict[str, Any]] = field(default_factory=list)
+    automations: list[dict[str, Any]] = field(default_factory=list)
+    vacation: dict[str, Any] = field(default_factory=dict)
+    fingerprint: list[dict[str, Any]] = field(default_factory=list)
+    web: dict[str, Any] = field(default_factory=dict)
+    presence: dict[str, Any] = field(default_factory=dict)
+    sensors: dict[str, Any] = field(default_factory=dict)
 
     def resolve_path(self, p: str) -> Path:
         path = Path(p).expanduser()
@@ -73,9 +90,17 @@ class Config:
 
 
 def _normalize_slots(raw: dict[str, Any]) -> dict[str, dict[str, str]]:
+    from .clock import number_words
+
     slots: dict[str, dict[str, str]] = {}
     for name, values in (raw or {}).items():
-        if isinstance(values, list):
+        if isinstance(values, dict) and set(values) == {"numbers"}:
+            # {numbers: [1, 120]} -> "one": "1", ... "one hundred twenty": "120"
+            lo, hi = (int(x) for x in values["numbers"])
+            slots[name] = {number_words(n): str(n) for n in range(lo, hi + 1)}
+            if lo <= 1 <= hi:
+                slots[name]["a"] = "1"  # "a minute"
+        elif isinstance(values, list):
             slots[name] = {str(v): str(v) for v in values}
         elif isinstance(values, dict):
             slots[name] = {str(k): str(v) for k, v in values.items()}
@@ -90,6 +115,12 @@ def normalize_action(action: dict[str, Any], default_backend: str | None,
     action = dict(action or {})
     if "wait" in action and len(action) == 1:
         return action  # routine pause step
+    if "if" in action:  # conditional step: normalize both branches
+        for branch in ("then", "else"):
+            raw = action.get(branch) or []
+            raw = [raw] if isinstance(raw, dict) else raw
+            action[branch] = [normalize_action(a, default_backend, backends, f"{where} {branch}")
+                              for a in raw]
     if not action.get("backend"):
         builtin = next((b for k, b in BUILTIN_BACKENDS.items() if k in action), None)
         action["backend"] = builtin or default_backend
@@ -147,6 +178,18 @@ def load_config(path: str | Path) -> Config:
         return [normalize_action(st, settings.default_backend, backends, f"{where} step {i + 1}")
                 for i, st in enumerate(raw or [])]
 
+    def rules(key, where):
+        out = []
+        for i, r in enumerate(data.get(key) or []):
+            r = dict(r)
+            name = r.get("name") or f"{where} {i + 1}"
+            r["name"] = name
+            if "do" not in r:
+                raise ConfigError(f"{where} '{name}' has no `do:` steps")
+            r["do"] = steps(r["do"], f"{where} '{name}'")
+            out.append(r)
+        return out
+
     for name in backends:
         if name in RESERVED:
             raise ConfigError(f"backend name '{name}' is reserved; pick another")
@@ -175,9 +218,44 @@ def load_config(path: str | Path) -> Config:
             raise ConfigError(f"door_scanner {i + 1}: door '{sc.get('door', 'front')}' isn't in `doors:`")
         scanners.append(sc)
 
+    from .instances import parse_instances
+
+    instances = parse_instances(data.get("instances"))
+    room_owner: dict[str, str] = {}
+    for inst in instances:
+        for r in inst.rooms:
+            if r in room_owner:
+                raise ConfigError(f"room '{r}' is in two instances ({room_owner[r]}, {inst.id})")
+            room_owner[r] = inst.id
+
+    schedules = rules("schedules", "schedule")
+    for sc in schedules:
+        if "at" not in sc:
+            raise ConfigError(f"schedule '{sc['name']}' needs `at:` (e.g. \"07:00\" or sunset)")
+    automations = rules("automations", "automation")
+    for a in automations:
+        if not isinstance(a.get("when"), dict) or "event" not in a["when"]:
+            raise ConfigError(f"automation '{a['name']}' needs `when: {{event: ...}}`")
+
+    fingerprint = []
+    for i, fp in enumerate(data.get("fingerprint") or []):
+        fp = dict(fp)
+        for k in ("on_accepted", "on_rejected", "on_lockout"):
+            if k in fp:
+                fp[k] = steps(fp[k], f"fingerprint {i + 1} {k}")
+        fingerprint.append(fp)
+
+    vacation = dict(data.get("vacation") or {})
+    if "lights" in vacation:
+        vacation["lights"] = steps(vacation["lights"], "vacation lights")
+
     return Config(
         settings, backends, slots, commands, base_dir=path.parent, sources=sources,
         routines=routines, doors=doors, voice=dict(data.get("voice") or {}),
         door_scanners=scanners, assistant=dict(data.get("assistant") or {}),
         data_dir=str(data.get("data_dir", "data")),
+        instances=instances, shared_lists=list(data.get("shared_lists") or []),
+        location=dict(data.get("location") or {}), schedules=schedules, automations=automations,
+        vacation=vacation, fingerprint=fingerprint, web=dict(data.get("web") or {}),
+        presence=dict(data.get("presence") or {}), sensors=dict(data.get("sensors") or {}),
     )

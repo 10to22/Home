@@ -30,6 +30,18 @@ class Dispatcher:
         self.dry_run = dry_run
         data = Path(config.resolve_path(config.data_dir))
         self.events = EventLog(data / "events.jsonl")
+        from .automation import Automations, Scheduler, Timeline
+        from .instances import Instances
+        from .state import HomeState
+
+        self.state = HomeState(data / "state.json", self.events)
+        self.instances = Instances(config.instances, data / "instances", self.events,
+                                   config.shared_lists or None)
+        self.timeline = Timeline()
+        self.scheduler = Scheduler(self)
+        self.sensors = None      # set by the sensor watcher when it runs
+        self.satellites = None   # set by the listener when mic satellites are enabled
+        self.assistant = None    # set when the AI assistant is enabled
         self.backends: dict[str, Backend] = {}
         self._backend_errors: dict[str, Exception] = {}
         self._backend_lock = threading.Lock()
@@ -47,6 +59,7 @@ class Dispatcher:
         self._stop = False
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
+        self.automations = Automations(self)
 
     def submit(self, m: Match) -> bool:
         """Queue a match. Returns False if it was dropped by cooldown or lost arbitration."""
@@ -113,9 +126,12 @@ class Dispatcher:
                 return self.backends[name]
             if name in self._backend_errors:
                 raise RuntimeError(f"backend {name} unavailable: {self._backend_errors[name]}")
-            from .actions.builtin import DoorsBackend, RoutineBackend, VoiceBackend
+            from .actions import builtin as b
 
-            builtin = {"voice": VoiceBackend, "doors": DoorsBackend, "routine": RoutineBackend}
+            builtin = {"voice": b.VoiceBackend, "doors": b.DoorsBackend, "routine": b.RoutineBackend,
+                       "timer": b.TimerBackend, "alarm": b.AlarmBackend, "mode": b.ModeBackend,
+                       "presence": b.PresenceBackend, "assistant": b.AskBackend,
+                       "privacy": b.PrivacyBackend, "dnd": b.DndBackend, "logic": b.LogicBackend}
             try:
                 if name in builtin:
                     b = builtin[name](name, {}, self.config)
@@ -130,7 +146,13 @@ class Dispatcher:
             return b
 
     def render(self, action: dict[str, Any], values: dict[str, Any] | None = None) -> dict:
-        action = render(action, {k: str(v) for k, v in (values or {}).items()})
+        from . import clock
+
+        t = clock.now()
+        ctx = {"time": clock.spoken_time(t), "date": t.strftime("%A, %B %-d"),
+               "day": t.strftime("%A"), "mode": self.state.mode}
+        ctx.update({k: str(v) for k, v in (values or {}).items() if v is not None})
+        action = render(action, ctx)
         if "{here}" in str(action):
             raise ValueError("this needs {here}, but the mic that heard it has no room set")
         return action
@@ -139,15 +161,59 @@ class Dispatcher:
                    phrase: str = "") -> str:
         """Run one action now, on the calling thread. Used by commands, routines, doors,
         the door scanner and the AI assistant."""
-        action = self.render(action, values)
+        if "if" in action and action.get("backend") == "logic":
+            action = {**action}  # conditions are evaluated as written, not rendered
+        else:
+            action = self.render(action, values)
         name = action["backend"]
-        if name in ("routine", "doors", "voice"):
+        if name in BUILTIN_NAMES:
             # built-ins also get the context ({name}, {door}, {room}...) for their own templates
             action["_context"] = {k: v for k, v in (values or {}).items()}
         elif self.dry_run:
             log.info("DRY RUN %s", action)
             return "dry run"
         return self.backend(name).run(action, phrase)
+
+    def run_steps(self, steps: list[dict[str, Any]], values: dict[str, Any] | None = None,
+                  phrase: str = "", _depth: int = 0) -> int:
+        """Run steps in order (routines, automations, schedules). Handles {wait: s} and {if: ...}.
+        A failing step is logged and the rest carry on. Returns how many failed."""
+        if _depth > 6:
+            raise RuntimeError("steps nest too deeply (a routine calling itself?)")
+        failed = 0
+        for st in steps:
+            try:
+                if "wait" in st and len(st) == 1:
+                    time.sleep(float(st["wait"]))
+                elif st.get("backend") == "logic":
+                    from .automation import check
+
+                    branch = st["then"] if check(st["if"], self, values) else st.get("else", [])
+                    failed += self.run_steps(branch, values, phrase, _depth + 1)
+                elif st.get("backend") == "routine":
+                    name = self.render(st, values)["routine"]
+                    extra = {k: v for k, v in st.items() if k not in ("routine", "backend")}
+                    failed += self.run_steps(self.config.routines[name],
+                                             {**(values or {}), **extra}, phrase, _depth + 1)
+                else:
+                    self.run_action(st, values, phrase)
+            except Exception as e:
+                failed += 1
+                log.error("step %s failed: %s", st, e)
+        return failed
+
+    def notify_person(self, inst, message: str, title: str = "") -> None:
+        """Push to an instance's phone (ntfy topic), if it has one and an ntfy backend exists."""
+        if not inst.phone:
+            return
+        ntfy = next((n for n, b in self.config.backends.items() if b["type"] == "ntfy"), None)
+        if not ntfy:
+            return
+        try:
+            self.run_action({"backend": ntfy, "topic": inst.phone, "message": message,
+                             "title": title or inst.name})
+        except Exception as e:
+            log.warning("phone notification failed: %s", e)
 
     def _execute(self, m: Match) -> None:
         values = dict(m.slots)
@@ -166,12 +232,18 @@ class Dispatcher:
             _notify(m, "failed")
 
     def close(self) -> None:
+        self.automations.close()
+        self.scheduler.stop()
         self._stop = True
         self._flush(force=True)
         self._q.put(None)
         self._thread.join(timeout=15)
         for b in self.backends.values():
             b.close()
+
+
+BUILTIN_NAMES = {"routine", "doors", "voice", "timer", "alarm", "mode", "presence", "assistant",
+                 "privacy", "dnd", "logic"}
 
 
 def _quality(m: Match) -> float:

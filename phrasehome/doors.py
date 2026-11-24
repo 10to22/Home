@@ -7,6 +7,9 @@ doors:
     lock:   { backend: esp, node: front door, channel: lock, state: on }
     unlock: { backend: esp, node: front door, channel: lock, state: off }
     sensor: { backend: esp, node: front door, channel: lock, locked_when: on }   # optional
+    auto_lock_minutes: 3                       # relock if left unlocked (optional)
+    contact: { node: front door, input: contact }   # door-closed sensor: only relock when shut
+    room: front door                           # where door announcements are spoken
 """
 
 from __future__ import annotations
@@ -94,4 +97,28 @@ class Doors:
             self._remember(d, want)
             self.home.events.log(f"door.{want}", door=d, reason=reason)
             out.append(f"{d} {want}")
+            minutes = self.doors[d].get("auto_lock_minutes")
+            if want == UNLOCKED and minutes:
+                self.home.timeline.call_in(float(minutes) * 60, lambda d=d: self._auto_lock(d))
         return "; ".join(out)
+
+    def is_open(self, door: str) -> bool | None:
+        """From the door's contact sensor, if it has one (True = standing open)."""
+        c = self.doors.get(door, {}).get("contact")
+        if not c or not self.home.sensors:
+            return None
+        cur = self.home.sensors.current(c["node"], c["input"])
+        if cur is None:
+            return None
+        closed_when = str(c.get("closed_when", "on")).lower()
+        return cur.get("state") != closed_when
+
+    def _auto_lock(self, door: str) -> None:
+        if self.state(door) != UNLOCKED:
+            return
+        if self.is_open(door):
+            self.home.timeline.call_in(60, lambda: self._auto_lock(door))  # wait until it's shut
+            return
+        log.info("auto-locking the %s door", door)
+        self.set(door, LOCKED, reason="auto-lock")
+        self.home.voice.speak("door_auto_locked", room=self.doors[door].get("room"), door=door)

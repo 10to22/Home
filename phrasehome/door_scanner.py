@@ -154,7 +154,7 @@ class DoorScanner:
         else:
             person = self.bank.people[label]
             self.bank.seen(person, mean if person.kind == "visitor" else None)
-            result = "allowed" if person.allowed else "denied"
+            result = "allowed" if person.is_allowed() else "denied"
 
         photo = self.bank.save_photo("scans", st.photo) if st.photo else None
         d = Decision(result, person.id, person.name, round(st.score, 3), self.door, photo)
@@ -172,8 +172,11 @@ class DoorScanner:
         self.home.events.log("scan", door=d.door, result=d.result, person=d.person_id,
                              name=d.name, score=d.score, photo=str(d.photo) if d.photo else None)
         if d.result == "allowed":
-            self.home.events.log("scan.awaiting_fingerprint", door=d.door, person=d.person_id)
-        values = {"name": d.name, "door": d.door, "person": d.person_id, "score": d.score}
+            self.home.events.log("scan.awaiting_fingerprint", door=d.door, person=d.person_id,
+                                 name=d.name)
+        values = {"name": d.name, "door": d.door, "person": d.person_id, "score": d.score,
+                  "photo": str(d.photo) if d.photo else "",
+                  "here": self.home.config.doors.get(d.door, {}).get("room")}
         for step in self.cfg[f"on_{d.result}"]:
             try:
                 self.home.run_action(step, values, phrase=f"door scan {d.result}")

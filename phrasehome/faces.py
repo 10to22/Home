@@ -78,6 +78,13 @@ class Person:
     first_seen: str = ""
     last_seen: str = ""
     seen: int = 0
+    fingerprints: list[int] = field(default_factory=list)  # ids stored on the fingerprint sensor
+    allowed_until: str = ""  # guest pass: allowed only until this time (YYYY-MM-DD HH:MM:SS)
+
+    def is_allowed(self) -> bool:
+        if not self.allowed:
+            return False
+        return not self.allowed_until or time.strftime("%Y-%m-%d %H:%M:%S") < self.allowed_until
 
 
 def _now() -> str:
@@ -181,10 +188,13 @@ class FaceBank:
         f.write_bytes(photo)
         return f
 
-    def set_allowed(self, ref: str, allowed: bool, name: str | None = None) -> Person:
+    def set_allowed(self, ref: str, allowed: bool, name: str | None = None,
+                    hours: float | None = None) -> Person:
         with self._lock:
             p = self.find(ref)
             p.allowed = allowed
+            p.allowed_until = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + hours * 3600)) \
+                if (allowed and hours) else ""
             if name:
                 p.name = name
             if allowed:
@@ -198,6 +208,21 @@ class FaceBank:
             p.name = name
             self.save()
             return p
+
+    def by_fingerprint(self, fid: int) -> Person | None:
+        return next((p for p in self.people.values() if fid in p.fingerprints), None)
+
+    def add_fingerprint(self, ref: str, fid: int) -> Person:
+        with self._lock:
+            p = self.find(ref)
+            if fid not in p.fingerprints:
+                p.fingerprints.append(fid)
+            self.save()
+            return p
+
+    def next_fingerprint_id(self) -> int:
+        used = {f for p in self.people.values() for f in p.fingerprints}
+        return next(i for i in range(1, 1000) if i not in used)
 
     def delete(self, ref: str) -> Person:
         with self._lock:

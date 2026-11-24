@@ -79,7 +79,7 @@ class SpeakerHub:
         self._wake = threading.Event()
         self._running = False
         self._proc: subprocess.Popen | None = None
-        self._announce = bytearray()  # speech waiting to be played on the group
+        self._announce: dict[str, bytearray] = {}  # speaker ip -> speech waiting to play there
 
     # ---------- speaker control (HTTP) ----------
     def _targets(self, speaker: str) -> list[tuple[str, str]]:
@@ -137,19 +137,22 @@ class SpeakerHub:
             log.warning("speaker %s", e)
         return ok
 
-    def announce(self, pcm: bytes) -> None:
-        """Play speech (44.1 kHz 16-bit stereo) on every group speaker, in place of the music."""
+    def announce(self, pcm: bytes, names: list[str] | None = None) -> list[str]:
+        """Play speech (44.1 kHz 16-bit stereo) on group speakers, in place of the music: all of
+        them, or just `names` (the other speakers keep playing music). Returns who got it."""
         with self._lock:
-            if not self.members:
-                return
-            self._announce += pcm
+            targets = {n: ip for n, ip in self.members.items() if names is None or n in names}
+            for ip in targets.values():
+                self._announce.setdefault(ip, bytearray()).extend(pcm)
+        return list(targets)
 
-    def _next_announcement(self) -> bytes | None:
+    def _next_announcement(self, ip: str) -> bytes | None:
         with self._lock:
-            if not self._announce:
+            buf = self._announce.get(ip)
+            if not buf:
                 return None
-            chunk = bytes(self._announce[:BYTES_PER_PACKET])
-            del self._announce[:BYTES_PER_PACKET]
+            chunk = bytes(buf[:BYTES_PER_PACKET])
+            del buf[:BYTES_PER_PACKET]
         return chunk.ljust(BYTES_PER_PACKET, b"\0")
 
     # ---------- streaming ----------
@@ -250,11 +253,10 @@ class SpeakerHub:
                 anchor, n, due = now, 0, now
             elif due > now:  # source faster than real time (e.g. a file): pace it
                 time.sleep((due - now) / 1e6)
-            speech = self._next_announcement()
-            if speech is not None:
-                pcm = speech  # speech replaces the music for its duration
-            pkt = audio_packet(seq, due + self.latency_us, pcm)
+            music = audio_packet(seq, due + self.latency_us, pcm)
             for ip in targets:
+                speech = self._next_announcement(ip)  # speech replaces the music while it plays
+                pkt = music if speech is None else audio_packet(seq, due + self.latency_us, speech)
                 try:
                     self.audio_sock.sendto(pkt, (ip, self.audio_port))
                 except OSError:
