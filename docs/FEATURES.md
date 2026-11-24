@@ -144,3 +144,96 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Wall tablet / phone dashboard | `http://<pi>:8800`: doors, mode, who's home, every room's reminders and lists, activity with door photos, devices, routine buttons, Say and Ask boxes |
 | Token protected | `PHRASEHOME_TOKEN` in `.env` |
 | Phone shortcuts | `POST /api/ask` ("Hey Siri, ask the house..."), `/api/routine`, `/api/mode`, `/api/list`, `/api/say`, `/api/event` |
+
+---
+
+# Round 3 additions
+
+## Cameras and security
+| Feature | How |
+|---|---|
+| **Security cameras around the house** | `cameras:` (ESP32-CAMs or any RTSP/IP camera), live on the dashboard |
+| **Person / vehicle / animal detection** | On the Pi, no cloud: `camera` events with a snapshot, and a per-camera cooldown so one visit means one alert |
+| **"What's at the door?"** | Say "who's at the door", or ask the AI about any camera; it looks at the live picture |
+| **Package watch** | After someone leaves the porch, the AI checks for a package: `package.delivered` (photo to phone), `package.taken` if it vanishes and nobody from home picked it up |
+| **Welcome by name** | "Retinal scan complete. Welcome, Sam." (`welcome_person` phrase too) |
+| **Gentle alarm** | Arms itself in away mode after 90 s; on entry it says "the alarm is on" and gives 60 s to disarm by face, finger, voice ("disarm"), the dashboard, or someone arriving. Then a warning plus a phone alert, with no siren |
+| **Night camera alerts** | A person on camera at night while away or asleep: porch light on, photo to phone |
+| **Smoke and CO alarm listener** | The room mics recognize the standard smoke (T3) and CO (T4) beep patterns and trigger fire mode |
+| **Fire mode** | Lights and blinds up, HVAC off so smoke isn't spread, music off, priority phone alert (unlocking for firefighters is optional) |
+| **Is everything closed?** | Say "is everything closed": lists any open windows and doors and unlocked locks. Good night warns before locking up |
+| **Mailbox** | A battery ESP32 in the mailbox says "you've got mail" (and warns when its battery is low) |
+
+## Weather, traffic and info
+| Feature | How |
+|---|---|
+| **Morning weather** | 6:45 report in the kitchen and on your phone, with air quality and pollen |
+| **Severe weather mode** | Official warnings (weather.gov) are announced everywhere with the lights on; big forecast events (storms, heavy rain or snow, strong wind, heat or cold) send a heads-up |
+| **Umbrella / jacket at the door** | When you open the front door in the morning: "Take an umbrella: 80 percent chance of rain" |
+| **Traffic per person** | Each person's commute (work or school, or their first calendar event with a location) with live traffic |
+| **Leave-now nudges** | "Sam, leave in 10 minutes for work. Traffic is heavy." Then "time to go", in whatever room they're in |
+| **Car pre-heat hook** | `commute.leave_soon` automation (via Home Assistant's integration for your car) |
+| **Package tracking** | Tracking numbers from any carrier (17TRACK): "out for delivery" announcements, status on the dashboard |
+| **Countdowns** | "house, add a countdown to the beach trip on July 3rd", "how many days until…", dashboard card |
+
+## Comfort
+| Feature | How |
+|---|---|
+| **Temperature and humidity per room** | SHT40 on a device node: "what's the temperature", "which room is coldest", shown on the floor plan |
+| **Sunrise wake-up** | The bedroom lamp fades up over 20 minutes before your alarm |
+| **Coffee before the alarm** | `agenda.alarm_soon` turns the coffee plug on 10 minutes before a weekday alarm. Also say "make coffee" |
+| **Motorized blinds** | "open the blinds", "blinds 40 percent"; open at sunrise and close at sunset; close for movies |
+| **Lights follow you** | mmWave presence per room: lights on when you walk in (after dark), off when you leave |
+| **Bed sensors** | When everyone's in bed, good night runs; plus a sleep log ("how did I sleep?") |
+| **IR blaster** | Control old TVs, ACs and fans: learn buttons with `phrasehome ir learn tv_power --node "living room"` |
+| **TV on means movie time** | The TV's power plug starts drawing power after dark: blinds close and lights dim |
+| **Mood: "I'm stressed"** | Soft light, calm playlist, a one-minute guided breathing session |
+
+## Kitchen, energy and appliances
+| Feature | How |
+|---|---|
+| **Meal planner page** | `/meals` on the dashboard: an editable week, ingredients per meal, AI planning ("two vegetarian nights") |
+| **Ingredients synced to shopping** | The week's ingredients, minus the pantry and staples, kept in the shopping list automatically; ticking an item moves it to the pantry |
+| **Pantry** | "what can I make with what we have?" |
+| **Allergies and dislikes** | Per person (`diet:` or "Mia is allergic to peanuts"); the planner respects them |
+| **"What's for dinner?"** | Offline, from the plan |
+| **Appliance done alerts** | "The washer is done" (power-monitoring plugs) |
+| **Run when power is cheap** | "run the dishwasher when power is cheap" (time-of-use prices) |
+| **Energy report with names** | "who used the most power?": by device and by person (plug owner, room owner, or who was in the room) |
+
+## Music
+| Feature | How |
+|---|---|
+| **Spotify on the house speakers** | "house, play some jazz in the kitchen", "dinner music"; or pick "House" in the Spotify app |
+| **What song is this / like it** | "what song is this", "like this song" (saves it to your Liked Songs) |
+
+## Pets, car and where things are
+| Feature | How |
+|---|---|
+| **Pet cam** | "house, what's the dog doing?" (the AI looks at the living room camera) |
+| **Pet door** | RFID collar tags open the flap only for your pets, logs who went in or out, and has locked/open modes |
+| **Water bowl** | Water level sensor: "Luna's water bowl is almost empty" |
+| **Feeding log** | Say "I fed the dog" / "did anyone feed the dog?" (who and when, meals today) |
+| **Pet locator** | A Bluetooth collar tag: "where's Luna?" |
+| **Where are my keys?** | Bluetooth tags; device nodes report which room hears them strongest |
+| **Room-level presence** | Who is in which room (voice, carried tags, beds, door scans, presence sensors) on the floor plan |
+| **Parking assistant** | Green, yellow, red as you pull in; tells the hub the car is home; closes the garage door after 5 minutes |
+
+## AI
+| Feature | How |
+|---|---|
+| **Make routines and commands by voice** | "house, every weekday at 7 turn on the coffee maker", "house, when I say 'cozy', dim the lights and play jazz" |
+| **Continuous conversation** | After an answer, ask a follow-up without saying "house" |
+| **Daily diary** | Written at 9:30 pm, on the dashboard; "house, what happened yesterday?" |
+| **Proactive watcher** | Every hour it looks over the house and only speaks up when something's worth mentioning |
+| **Welcome-back summary** | The first person home hears what happened while the house was empty |
+| **Recognizes voices** | Say "this is Sam" a few times; then "remind me" in the living room goes to Sam's reminders (for personal touches, not security) |
+| **Other languages** | Per room: its own speech model, phrases, voice lines and AI replies in that language |
+
+## Dashboard
+| Feature | How |
+|---|---|
+| Live cameras | Grid of every camera, about 2 pictures a second |
+| Floor plan | Rooms with who's there, temperatures, and tags; drag and resize to match your house ("edit layout") |
+| Cards | Alarm, weather, energy by person, packages (add tracking numbers), countdowns, sleep, pets, today's diary |
+| Meal planner | `/meals` |

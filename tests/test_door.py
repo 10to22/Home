@@ -204,11 +204,22 @@ def test_smarthome_example_routines_dry_run(tmp_path):
 
     cfg = load_config(Path(__file__).resolve().parents[1] / "config.smarthome.example.yaml")
     cfg.data_dir = str(tmp_path)
-    cfg.routines["leaving"] = [s for s in cfg.routines["leaving"] if "wait" not in s]
+    for name in cfg.routines:  # skip the pauses (leaving, the breathing session...)
+        cfg.routines[name] = [s for s in cfg.routines[name] if "wait" not in s]
     h = Dispatcher(cfg, dry_run=True)
+    from phrasehome.alarm import AlarmSystem
+    from phrasehome.energy import Energy
+    from phrasehome.meals import Meals
+    from phrasehome.pets import Pets
+    from phrasehome.rooms import RoomTracker
+
+    from phrasehome.voiceid import VoiceID
+
+    for service in (AlarmSystem, Energy, Meals, Pets, RoomTracker, VoiceID):
+        service(h)  # created but not started: nothing touches the network
     try:
         for name in cfg.routines:
-            assert "failed" not in h.run_action({"backend": "routine", "routine": name}), name
+            assert "failed" not in h.run_action({"backend": "routine", "routine": name}, {"here": "kitchen"}), name
         sc = cfg.door_scanners[0]
         steps = [st for k in ("on_allowed", "on_denied", "on_unknown", "on_doorbell") for st in sc.get(k, [])]
         for fp in cfg.fingerprint:
@@ -219,7 +230,10 @@ def test_smarthome_example_routines_dry_run(tmp_path):
                                      "photo": "", "here": "kitchen"})
         assert failed == 0
         for c in cfg.commands:  # every command's action renders and runs (dry)
-            if c.action["backend"] != "routine":
+            if c.action["backend"] == "voiceid":
+                with pytest.raises(ValueError, match="say a couple of sentences first"):
+                    h.run_action(c.action, {"here": "kitchen", "person": "sam"})
+            elif c.action["backend"] != "routine":
                 h.run_action(c.action, {"here": "kitchen", **{k: next(iter(v.values()))
                                                               for k, v in cfg.slots.items()}})
     finally:

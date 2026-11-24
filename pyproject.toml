@@ -11,6 +11,7 @@ dependencies = [
     "pyyaml>=6",
     "rapidfuzz>=3",
     "requests>=2.28",
+    "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
@@ -19,7 +20,8 @@ google = ["gassist-text>=0.1.0", "google-auth-oauthlib>=1.0"]
 vision = ["opencv-python-headless>=4.8", "numpy>=1.24"]
 ai = ["anthropic>=0.100"]
 voice = ["piper-tts>=1.2"]
-all = ["phrasehome[audio,google,vision,ai,voice]"]
+calendar = ["icalendar>=5", "recurring-ical-events>=2"]
+all = ["phrasehome[audio,google,vision,ai,voice,calendar]"]
 dev = ["pytest>=7", "numpy>=1.24"]
 
 [project.scripts]

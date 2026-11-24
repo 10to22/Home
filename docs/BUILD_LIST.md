@@ -69,6 +69,23 @@ for ESP32 parts; Amazon/Adafruit/DigiKey are faster and more reliable.
 - **What this project does:** face recognition with OpenCV. It is fast, contactless and works from a
   normal camera, and it keeps the "retinal scan" voice lines. Pair it with the fingerprint stage for real security.
 
+## 3c. Round 3 parts (pick what you want)
+
+| Item | For | ~Cost |
+|---|---|---|
+| More ESP32-CAMs (or any RTSP IP camera) + weatherproof boxes | Perimeter cameras, pet cam | $12–35 each |
+| SHT40 temperature/humidity board | Per-room climate | $4 |
+| LD2410 mmWave presence sensor | Lights follow you, room presence (detects people sitting still) | $4 |
+| Bed pressure mat (or load cells + HX711) | Bed sensor, sleep log | $10–15 |
+| Curtain motor with dry-contact inputs, or a tubular blind motor + 2 relays | Motorized blinds | $40–120 |
+| IR LED + 2N2222 transistor + TSOP38238 receiver | IR blaster and learner | $3 |
+| Shelly Plug S / Plus Plug (or Tasmota plugs) | Appliance alerts, cheap-power runs, energy per person, coffee maker | $15–25 each |
+| ESP32 + reed switch + 18650 + holder (mailbox) | "You've got mail" | $10 |
+| HC-SR04P ultrasonic sensor + traffic-light LED module | Parking assistant | $5 |
+| RDM6300 125 kHz reader + EM4100 collar tags + SG90 servo or solenoid | Pet door (fits a standard pet flap) | $15 |
+| Water level sensor (or a load cell under the bowl) | Water bowl alert | $3 |
+| Bluetooth tags (iTag / NUT / iBeacon keyfobs) | Where are my keys, pet locator | $2–5 each |
+
 ## 4. Accounts and services
 
 | Service | For | Cost |
@@ -76,6 +93,10 @@ for ESP32 parts; Amazon/Adafruit/DigiKey are faster and more reliable.
 | Anthropic API key (console.anthropic.com) | The AI assistant | Pay per use (a few cents for a typical question at `effort: low`; web searches cost extra) |
 | Google Cloud project + Google Assistant API | Sending commands to Google Home devices | Free |
 | ntfy app (ntfy.sh) | Push alerts to your phone (unknown visitor, panic) | Free |
+| Google Maps Platform key (Routes API) | Traffic and leave-now nudges | Free monthly allowance, then pay per use |
+| 17TRACK API key | Package tracking | Free tier |
+| Spotify Premium + a free Spotify developer app | Music by voice on the house speakers | Premium subscription |
+| Open-Meteo, weather.gov | Weather, air quality, alerts | Free, no key |
 
 ## 5. Tools and supplies
 

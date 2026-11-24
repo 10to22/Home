@@ -7,6 +7,9 @@ Two sketches, one per board:
 | `mic_satellite/` | **Room module**: mic + optional speaker. Streams audio to the hub, plays that room's replies, reminders and timers. Mute button | ESP32 dev board + INMP441 mic + MAX98357A amp + small speaker (~$14) |
 | `device_node/` | Switches relays and dims LED strips on command. Has its own web page with buttons | ESP32 dev board + relay module and/or MOSFET module (~$6–10) |
 | `door_fingerprint/` | Fingerprint sensor at the door (stage 2 after the face scan) | ESP32 + R503 fingerprint sensor (~$25) |
+| `mailbox/` | Battery mailbox sensor: "you've got mail" | ESP32 + reed switch + 18650 (~$10) |
+| `parking/` | Parking assistant (green/yellow/red) and "car is home" | ESP32 + HC-SR04P + LEDs (~$8) |
+| `pet_door/` | RFID pet door latch | ESP32 + RDM6300 + servo/solenoid (~$15) |
 | `door_cam/` | Door camera for the face scanner. Serves photos to the hub | AI-Thinker ESP32-CAM + ESP32-CAM-MB flasher (~$12) |
 | `speaker/` | Bluetooth speaker on its own, or one of a synced multi-room group | **Classic** ESP32 dev board + MAX98357A amp + 3 W speaker (~$10) |
 
@@ -192,6 +195,47 @@ Three blue flashes mean it's saved.
 **At the door:** a face scan of an allowed person makes the LED breathe blue. The same person's finger
 within 30 seconds unlocks the door (purple flash). A wrong finger flashes red, and three in a row lock
 the door and alert your phone.
+
+## Device node extras (`extras.h`)
+
+Switch each on in the node's `config.h`:
+
+| Extra | Wiring | config.h |
+|---|---|---|
+| Temperature + humidity | SHT40 board: VCC 3V3, GND, SDA → GPIO 32, SCL → GPIO 33 | `#define CLIMATE_SENSOR 4` (or 3 for an SHT31) |
+| Blinds / curtains | Two relays to the motor's open/close inputs (or the motor's up/down wires, through an interlocked relay pair) | `#define COVER_LIST { "blinds", 13, 14, 18.0, true },` (pins, seconds for a full open, active-low) |
+| IR blaster | IR LED (940 nm) via a 2N2222 transistor and 100 Ω resistor on GPIO 4, pointed at the TV | `#define IR_SEND_PIN 4` + the **IRremoteESP8266** library |
+| IR learning | TSOP38238 receiver: OUT → GPIO 15, VCC 3V3, GND | `#define IR_RECV_PIN 15`, then `phrasehome ir learn tv_power --node "living room"` |
+| Bluetooth tags | none (built in) | `#define ENABLE_BLE_SCAN` + Partition Scheme **Huge APP** |
+| mmWave presence | LD2410: VCC 5 V, GND, OUT → any input pin | an `INPUT_LIST` line: `{ "presence", 26, DIGITAL, false },` |
+| Bed sensor | Pressure mat switch between a pin and GND | `{ "bed", 27, DIGITAL, true },` |
+| Water bowl | Water level sensor S → GPIO 34 | `{ "water bowl", 34, ANALOG, false },` |
+
+Blinds have no position sensor, so the node estimates the position from the travel time. Fully opening
+or closing re-syncs it at the end stop.
+
+If IRremoteESP8266 doesn't compile on the 3.x ESP32 core, install core **2.0.17** in Boards Manager.
+
+## Mailbox sensor
+
+ESP32 (a low-power board such as a FireBeetle or a bare WROOM saves battery) + 18650 cell, with a
+100k/100k divider from the battery to GPIO 35. A reed switch on the lid → GPIO 33 and GND, magnet on the
+lid. It sleeps between openings, so a battery lasts months. Set `HUB_HOST` to the Pi's IP.
+
+## Parking assistant
+
+HC-SR04**P** (the 3.3 V version) on the garage wall at bumper height: TRIG → GPIO 5, ECHO → GPIO 18.
+LEDs on GPIO 25/26/27 through 220 Ω resistors (or a traffic-light module). Set `STOP_CM` by parking where
+you want to stop and reading `distance` at `http://phrasehome-garage.local/api/status`. Add the node to
+the hub's `esp` nodes, and its `car` input works in automations.
+
+## Pet door
+
+RDM6300 reader (5 V; its TX → GPIO 16) with its antenna coil around the flap's tunnel, outside. Optionally
+a second reader inside → GPIO 17 (`INSIDE_READER_RX`) for in/out direction. SG90 servo signal → GPIO 13
+moving a latch bar (or a 12 V solenoid bolt through a MOSFET). Hold each collar tag to the reader with
+Serial Monitor open to read its id into `PET_TAGS`. Add `door: phrasehome-petdoor.local` to the pet in
+config.yaml.
 
 ## Protocol (if you want to build your own)
 

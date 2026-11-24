@@ -31,7 +31,10 @@ An always-on listener for Google Home with **no wake word**. Say "turn on the li
   everyone's. See [Rooms and instances](#rooms-and-instances).
 - **And much more:** timers, ringing alarms, sensors, fingerprint unlock, auto-relock, doorbell,
   away/vacation modes, presence, sunset schedules, automations, intercom, a dashboard, and phone alerts.
-  **The full list is in [docs/FEATURES.md](docs/FEATURES.md).**
+  Plus security cameras with person and package detection, a gentle alarm, smoke-alarm listening,
+  weather and traffic, a meal planner synced to the shopping list, Spotify, energy by person, pets,
+  "where are my keys?", room-level presence, voice recognition, other languages, a daily diary and a
+  proactive AI. **The full list is in [docs/FEATURES.md](docs/FEATURES.md).**
 - **Other backends.** Home Assistant, webhooks (IFTTT, Node-RED…) and local scripts.
 
 ## What you need
@@ -255,6 +258,20 @@ instances:
 .venv/bin/phrasehome agenda          # everyone's reminders, alarms, timers and lists
 ```
 
+### Keys for the online extras
+
+Put these in `.env` (the installer creates it). Each one is optional and only switches on its feature:
+
+| Key | Feature | Where to get it |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | AI assistant, camera questions, package watch, meal planning, diary | console.anthropic.com |
+| `PHRASEHOME_TOKEN` | Protects the dashboard and ESP32s (make up a long random string) | you |
+| `GOOGLE_MAPS_KEY` | Traffic and leave-now nudges (Routes API) | console.cloud.google.com |
+| `TRACK17_KEY` | Package tracking | api.17track.net |
+| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | Spotify by voice | developer.spotify.com (create an app with redirect URI `http://127.0.0.1:8888/callback`), then `phrasehome auth-spotify` |
+
+Weather (Open-Meteo, weather.gov) needs no key, just `location:`.
+
 ### Dashboard
 
 Open `http://<your pi>:8800` on a phone or a wall tablet. It shows doors, the house mode, who's home,
@@ -263,6 +280,10 @@ buttons, and boxes to make the house say something or ask the AI. Set `PHRASEHOM
 the first visit asks for it.
 
 ![Dashboard](docs/img/dashboard.png)
+
+The meal planner page (`/meals`):
+
+![Meal planner](docs/img/meals.png)
 
 ### Door scanner
 

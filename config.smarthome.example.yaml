@@ -41,6 +41,9 @@ instances:
     persona: "You are Sam's laid-back, slightly witty room assistant."
     quiet_hours: "22:30-07:00"           # announcements skip this room, replies are quieter
     phone: CHANGE-ME-sam-xk29            # Sam's ntfy topic for reminders
+    sunrise: { minutes: 20, light: { node: bedroom, channel: lamp } }   # light fades up before alarms
+    pre_alarm_minutes: 10                # "alarm soon" event (starts the coffee machine below)
+    commute: { to: "CHANGE ME work address", arrive_by: "09:00", days: weekdays, mode: drive, label: work, from_calendar: true }
     # phone_ip: 192.168.1.50             # optional presence by pinging Sam's phone
     # calendar: https://calendar.google.com/calendar/ical/.../basic.ics   # "Secret address in iCal format"
   mia:
@@ -48,6 +51,13 @@ instances:
     rooms: [kids room]
     kid_mode: true                       # age-appropriate AI, can't touch doors or modes
     quiet_hours: "20:00-07:00"
+    diet: { allergies: [peanuts] }       # the meal planner respects this
+    commute: { to: "CHANGE ME school address", arrive_by: "08:15", days: weekdays, mode: walk, minutes: 15, label: school }
+  # abuela:                              # a Spanish-speaking room: its own model, phrases and voice
+  #   name: Abuela
+  #   rooms: [abuela room]
+  #   language: es
+  #   voice: { piper_model: models/piper/es_ES-davefx-medium.onnx }
 shared_lists: [shopping, groceries, household]
 
 backends:
@@ -61,14 +71,18 @@ backends:
       hallway: phrasehome-hallway.local
       porch: phrasehome-porch.local
       front door: phrasehome-front-door.local
-      garage: phrasehome-garage.local
+      garage: phrasehome-garage.local     # parking assistant (firmware/parking) + opener relay
       garden: phrasehome-garden.local
+    ir_codes:                          # or learn them: phrasehome ir learn tv_power --node "living room"
+      tv_power: { protocol: NEC, code: "0x20DF10EF", bits: 32 }
   music:                             # ESP32 speakers (firmware/speaker)
     type: speakers
     token_env: PHRASEHOME_TOKEN
     speakers:
       kitchen: phrasehome-speaker-kitchen.local
       living room: phrasehome-speaker-living-room.local
+    # Spotify Connect: pick "House" in the Spotify app (needs librespot; see README)
+    source: librespot --name House --backend pipe --bitrate 320 --initial-volume 100
   google:                            # Google Home: TV, vacuum, thermostat, smart plugs...
     type: google_assistant
     credentials: credentials.json
@@ -91,12 +105,12 @@ doors:
 
 door_scanner:
   door: front
-  camera: http://phrasehome-doorcam-front.local/capture
+  camera: front door                 # one of `cameras:` below (shared feed)
   min_face_px: 90
   match_threshold: 0.40
   remember_unknown: true
   on_allowed:
-    - { speak: retinal_scan_complete }
+    - { speak: retinal_scan_complete }      # "Retinal scan complete. Welcome, Sam."
     - { speak: fingerprint_prompt }
   on_denied:
     - { speak: retinal_scan_failed }
@@ -126,6 +140,111 @@ fingerprint:
       - { speak: fingerprint_lockout }
       - { door: "{door}", state: locked }
       - { backend: phone, title: Door, priority: 5, message: "Too many failed fingerprints at the {door} door" }
+
+
+# ---------------------------------------------------------------- cameras
+cameras:
+  front door: { url: "http://phrasehome-doorcam-front.local/capture", roles: [door, porch], room: front door }
+  driveway:   { url: "http://phrasehome-cam-driveway.local/capture", roles: [perimeter] }
+  back yard:  { url: "http://phrasehome-cam-backyard.local/capture", roles: [perimeter] }
+  side gate:  { url: "rtsp://user:pass@192.168.1.60/stream1", roles: [perimeter] }   # any IP camera works
+  living room: { url: "http://phrasehome-cam-living.local/capture", roles: [pet, indoor], detect_groups: [animal, person] }
+camera_settings: { detect_seconds: 1, cooldown_seconds: 60, min_confidence: 0.55, package_recheck_minutes: 15 }
+
+# ---------------------------------------------------------------- gentle alarm
+alarm:
+  arm_on_modes: [away, vacation]
+  exit_delay: 90
+  entry_delay: 60
+  rearm_minutes: 5
+  watch:
+    - { node: front door, input: contact, state: off }
+    - { node: hallway, input: motion, state: on }
+  perimeter_people: false
+  openings:                           # for "is everything closed?"
+    - { name: the back window, node: bedroom, input: window }
+    - { name: the garage door, node: garage, input: closed }
+
+# ---------------------------------------------------------------- weather, smoke
+weather:
+  units: fahrenheit
+  umbrella_percent: 50
+  jacket_below: 50
+  reminder_window: "06:00-13:00"
+  door_contact: { node: front door, input: contact }
+smoke: { enabled: true }
+
+# ---------------------------------------------------------------- energy (Shelly / Tasmota plugs)
+energy:
+  currency: "$"
+  price: 0.20
+  time_of_use:
+    - { window: "23:00-07:00", price: 0.10, cheap: true }
+    - { window: "16:00-21:00", price: 0.38 }
+  plugs:
+    washer:     { host: 192.168.1.71, kind: shelly, room: laundry, appliance: { done_below: 3, done_after: 120 } }
+    dryer:      { host: 192.168.1.72, kind: shelly, room: laundry, appliance: {} }
+    dishwasher: { host: 192.168.1.73, kind: shelly, room: kitchen, appliance: {} }
+    tv:         { host: 192.168.1.74, kind: shelly, room: living room, appliance: { running_above: 30, start_after: 5, done_after: 30 } }
+    coffee:     { host: 192.168.1.75, kind: tasmota, room: kitchen }
+    sam pc:     { host: 192.168.1.76, kind: shelly, owner: sam }
+
+# ---------------------------------------------------------------- packages, meals, music
+packages: { api_key_env: TRACK17_KEY, refresh_minutes: 30 }
+meals:
+  slots: [dinner]
+  staples: [salt, pepper, water, olive oil]
+  auto_sync: true
+spotify:
+  client_id_env: SPOTIFY_CLIENT_ID
+  client_secret_env: SPOTIFY_CLIENT_SECRET
+  device: House
+  speakers: music
+  playlists:
+    dinner: spotify:playlist:37i9dQZF1DX4xuWVBs4FgJ
+    calm: spotify:playlist:37i9dQZF1DWZqd5JICZI0u
+    focus: spotify:playlist:37i9dQZF1DWZeKCadgRdKQ
+
+# ---------------------------------------------------------------- traffic
+commute:
+  api_key_env: GOOGLE_MAPS_KEY
+  home: "CHANGE ME your home address"
+  buffer_minutes: 5
+
+# ---------------------------------------------------------------- rooms, beds, tags, pets
+rooms:
+  occupancy:                       # LD2410 mmWave presence sensors on device nodes
+    kitchen: { node: kitchen, input: presence }
+    living room: { node: living room, input: presence }
+    hallway: { node: hallway, input: motion }
+    bedroom: { node: bedroom, input: presence }
+  empty_after: 120
+follow_lights:
+  kitchen: { light: { node: kitchen, channel: lights }, only_dark: true, off_after: 180 }
+  hallway: { light: { node: hallway, channel: lamp }, level: 30, only_dark: true, off_after: 60 }
+  living room: { light: { node: living room, channel: lamp }, level: 60, only_dark: true, off_after: 600 }
+beds:
+  sam: { node: bedroom, input: bed }
+tags:                              # Bluetooth tags; device nodes with ENABLE_BLE_SCAN hear them
+  keys:   { mac: "CHANGE:ME:00:00:00:01", owner: sam, name: "Sam's keys" }
+  wallet: { mac: "CHANGE:ME:00:00:00:02", owner: sam, carried: true, name: "Sam's wallet" }
+  luna:   { mac: "CHANGE:ME:00:00:00:03", name: Luna }
+pets:
+  luna:
+    kind: dog
+    meals_per_day: 2
+    feeder: { node: kitchen, channel: feeder, for: 2 }
+    door: phrasehome-petdoor.local
+    tag: luna
+
+# ---------------------------------------------------------------- voice ID, languages, AI extras
+voice_id: { model_path: models/vosk-model-spk-0.4, threshold: 0.55 }
+# languages:
+#   es: { model_path: models/vosk-model-small-es-0.42 }
+diary: { time: "21:30" }
+watcher: { every_minutes: 60, quiet_hours: "22:30-07:00" }
+# floorplan:                       # or arrange the rooms on the dashboard (House -> edit layout)
+#   rooms: { kitchen: [2, 2, 30, 20], living room: [34, 2, 40, 20] }
 
 # ---------------------------------------------------------------- voice
 voice:
@@ -171,6 +290,7 @@ routines:
     - { node: porch, channel: lights, state: on }
     - { speak: lockdown }
   goodnight:
+    - { report: closed, only_problems: true }     # "Heads up: the back window is open."
     - { routine: lockdown }
     - { mode: night }
     - { backend: music, speaker: all, mode: bluetooth }
@@ -188,10 +308,12 @@ routines:
   good_morning:
     - { mode: home }
     - { node: kitchen, channel: lights, state: on }
+    - { node: living room, channel: blinds, state: on }
     - { backend: google, say: set the thermostat to 70 }
     - { speak: good_morning }
     - { ask: "Give me a 3 sentence morning briefing: today's weather, my reminders and calendar today, and anything that happened overnight at the door." }
   movie_time:
+    - { node: living room, channel: blinds, state: off }
     - { node: living room, channel: lights, state: off }
     - { node: living room, channel: lamp, level: 15 }
     - { backend: google, say: turn on the TV }
@@ -208,6 +330,33 @@ routines:
     - { mode: home }
     - { node: hallway, channel: siren, state: off }
     - { speak: all_clear, everywhere: true }
+  calm:                        # "I'm stressed": soft light, calm music, a short breathing session
+    - { node: "{here}", channel: lamp, level: 25 }
+    - { spotify: play, playlist: calm, rooms: here }
+    - { speak: "Let's take a minute. Breathe in slowly through your nose." }
+    - { wait: 4 }
+    - { speak: "Hold." }
+    - { wait: 4 }
+    - { speak: "And breathe out slowly." }
+    - { wait: 6 }
+    - { speak: "Again. Breathe in." }
+    - { wait: 4 }
+    - { speak: "Hold." }
+    - { wait: 4 }
+    - { speak: "And out. Nice and slow." }
+    - { wait: 6 }
+    - { speak: "Well done. I'm here if you need anything." }
+  fire_mode:                   # smoke or CO alarm heard
+    - { speak: siren, everywhere: true, urgent: true }
+    - { node: all, channel: lights, state: on }
+    - { node: all, channel: blinds, state: on }
+    - { backend: google, say: turn off the thermostat }     # stop the HVAC fan spreading smoke
+    - { backend: music, speaker: all, mode: bluetooth }
+    - { backend: phone, title: SMOKE ALARM, priority: 5, tags: fire, message: "A smoke or CO alarm is going off at home ({room})" }
+    # Unlocking for firefighters is your choice:  - { door: all, state: unlocked }
+  storm_mode:                  # severe weather warning
+    - { node: all, channel: lights, state: on }
+    - { node: all, channel: blinds, state: off }
   garage_toggle:               # garage opener button wired to a relay; reed switch says if it's shut
     - if: { sensor: { node: garage, input: closed, state: on } }
       then: [ { node: garage, channel: opener, state: on, for: 0.5 }, { speak: "Opening the garage." } ]
@@ -282,6 +431,52 @@ commands:
   - { name: water_plants, phrases: [water the plants, water the garden], action: { node: garden, channel: pump, state: on, for: 15 } }
   - { name: feed_pet, phrases: [feed the cat, feed the dog, feed the pets], action: { node: kitchen, channel: feeder, state: on, for: 2 } }
 
+  # ---- cameras, doors, home checks
+  - { name: whos_at_door, phrases: ["who's at the door", "what's at the door", "who is at the door"], action: { ask: "Look at the front door camera and tell me who or what is there, in one sentence." } }
+  - { name: closed_check, phrases: [is everything closed, are the doors locked, is everything locked], action: { report: closed } }
+  - { name: arm, phrases: [arm the alarm, alarm on], action: { security: arm } }
+  - { name: disarm, phrases: [disarm, disarm the alarm, alarm off now], action: { security: disarm } }
+
+  # ---- climate, blinds, IR
+  - { name: temp_here, phrases: ["what's the temperature", "how warm is it in here", "temperature in here"], action: { report: climate } }
+  - { name: coldest_room, phrases: [which room is coldest, "what's the temperature in the house"], action: { report: climate, room: all } }
+  - { name: blinds_open, phrases: [open the blinds, blinds up], action: { node: "{here}", channel: blinds, state: on } }
+  - { name: blinds_close, phrases: [close the blinds, blinds down], action: { node: "{here}", channel: blinds, state: off } }
+  - { name: blinds_level, phrases: ["blinds {level} percent", "open the blinds {level} percent"], action: { node: "{here}", channel: blinds, level: "{level}" } }
+  - { name: tv_power_ir, phrases: [tv power, power the tv], action: { node: living room, ir: tv_power } }
+
+  # ---- where, sleep, voice
+  - { name: where_keys, phrases: ["where are my keys", "where are the keys"], action: { report: where, what: keys } }
+  - { name: where_wallet, phrases: ["where's my wallet", "where is my wallet"], action: { report: where, what: wallet } }
+  - { name: where_dog, phrases: ["where's luna", "where is the dog"], action: { report: where, what: luna } }
+  - { name: how_slept, phrases: ["how did i sleep", "how much did i sleep"], action: { report: sleep } }
+  - { name: this_is, phrases: ["this is {person}", "i'm {person}"], action: { voiceid: enroll, person: "{person}" } }
+
+  # ---- pets
+  - { name: fed_dog, phrases: [i fed the dog, i fed luna, the dog is fed], action: { pet: luna, do: fed } }
+  - { name: fed_check, phrases: ["did anyone feed the dog", "has the dog eaten"], action: { pet: luna, do: status } }
+
+  # ---- food, coffee, energy, info
+  - { name: whats_for_dinner, phrases: ["what's for dinner", "what's for dinner tonight"], action: { report: dinner } }
+  - { name: coffee, phrases: [make coffee, coffee time, start the coffee], action: { plug: coffee, state: on } }
+  - { name: dishwasher_cheap, phrases: [run the dishwasher when power is cheap, run the dishwasher later], action: { plug: dishwasher, run: cheap, hours: 3 } }
+  - { name: energy_report, phrases: [how much power did we use, energy report, "who used the most power"], action: { report: energy, period: month } }
+  - { name: power_price, phrases: [is power cheap right now, "what's the power price"], action: { report: price } }
+  - { name: weather_now, phrases: ["what's the weather", "weather today"], action: { report: weather } }
+  - { name: weather_tomorrow, phrases: [weather tomorrow, "what's the weather tomorrow"], action: { report: weather, day: tomorrow } }
+  - { name: traffic, phrases: ["how's traffic", "how is traffic", "when should i leave"], action: { report: commute } }
+  - { name: packages, phrases: [any packages, "where's my package", package status], action: { report: packages } }
+  - { name: countdowns, phrases: [countdowns, how many days until], action: { report: countdowns } }
+
+  # ---- music (Spotify) and mood
+  - { name: music_pause, phrases: [pause the music, stop the music], action: { spotify: pause } }
+  - { name: music_resume, phrases: [resume the music, play the music], action: { spotify: resume } }
+  - { name: music_next, phrases: [next song, skip this song], action: { spotify: next } }
+  - { name: music_what, phrases: [what song is this, "what's playing"], action: { spotify: what } }
+  - { name: music_like, phrases: [like this song, i like this song], action: { spotify: like } }
+  - { name: dinner_music, phrases: [dinner music, play dinner music], action: { spotify: play, playlist: dinner } }
+  - { name: calm_down, phrases: ["i'm stressed", help me relax, calm mode], action: { routine: calm } }
+
   # ---- Google Home devices
   - { name: vacuum_start, phrases: [start the vacuum, vacuum the house, start cleaning], action: { backend: google, say: start the vacuum } }
   - { name: vacuum_stop, phrases: [stop the vacuum, vacuum go home], action: { backend: google, say: send the vacuum home } }
@@ -343,12 +538,108 @@ automations:
     do: [ { backend: phone, title: Device offline, message: "{node} stopped responding" } ]
     cooldown: 3600
 
-  - name: package delivered          # e.g. from a phone shortcut or another system: POST /api/event
+  - name: smoke alarm heard
+    when: { event: smoke.alarm }
+    do: [ { routine: fire_mode } ]
+    cooldown: 300
+
+  - name: severe weather
+    when: { event: weather.alert }
+    do:
+      - { speak: weather_alert, everywhere: true, urgent: true }
+      - { routine: storm_mode }
+      - { backend: phone, title: Weather alert, priority: 4, message: "{headline}" }
+
+  - name: big weather heads up
+    when: { event: weather.warning, day: tomorrow }
+    do: [ { backend: phone, title: Weather tomorrow, message: "{detail}" } ]
+
+  - name: package on the porch
+    when: { event: package.delivered }
+    do:
+      - { speak: package_delivered, rooms: [living room, kitchen] }
+      - { backend: phone, title: Package delivered, message: "{description}", attach: "{photo}" }
+      - { if: { sun: down }, then: [ { node: porch, channel: lights, state: on, for: 600 } ] }
+
+  - name: package taken
+    when: { event: package.taken }
+    do: [ { backend: phone, title: Package gone, priority: 5, message: "The package on the porch disappeared and nobody from home picked it up." } ]
+
+  - name: out for delivery
+    when: { event: package.out_for_delivery }
+    do: [ { speak: "Your {name} is out for delivery today.", rooms: [kitchen] } ]
+
+  - name: person at night
+    when: { event: camera, detected: person }
+    if: { sun: down, mode: [night, away, vacation] }
+    do:
+      - { node: porch, channel: lights, state: on, for: 300 }
+      - { backend: phone, title: "Person on camera", message: "Someone is on the {camera} camera", attach: "{photo}" }
+    cooldown: 300
+
+  - name: mail
+    when: { event: external.mailbox }
+    do:
+      - { speak: mail, rooms: [kitchen, living room] }
+      - { backend: phone, title: Mailbox, message: "You've got mail." }
+
+  - name: appliance finished
+    when: { event: appliance.done, appliance: [washer, dryer, dishwasher] }
+    do:
+      - { speak: "The {appliance} is done.", rooms: [kitchen, living room] }
+      - { backend: phone, title: Laundry, message: "The {appliance} is done." }
+
+  - name: tv on means movie time
+    when: { event: appliance.started, appliance: tv }
+    if: { sun: down }
+    do: [ { routine: movie_time } ]
+
+  - name: coffee before the alarm
+    when: { event: agenda.alarm_soon, instance: sam }
+    if: { days: weekdays }
+    do: [ { plug: coffee, state: on } ]
+
+  - name: car pre-heat
+    when: { event: commute.leave_soon, person: sam }
+    if: { sensor: { node: garage, input: car, state: on } }
+    do: [ { backend: phone, title: Car, message: "Leave in {minutes} minutes. Pre-heat the car from its app." } ]
+    # With Home Assistant's integration for your car:  - { backend: home_assistant, service: climate.turn_on, data: { entity_id: climate.my_car } }
+
+  - name: dog bowl low
+    when: { event: sensor, node: kitchen, input: water bowl, below: 20 }
+    do: [ { speak: "Luna's water bowl is almost empty.", rooms: [kitchen] } ]
+
+  - name: pet door
+    when: { event: petdoor.used }
+    do: [ { if: { time: "21:00-06:00" }, then: [ { backend: phone, title: Pet door, message: "{pet} went {direction} at night" } ] } ]
+
+  - name: everyone in bed
+    when: { event: bed.all_in }
+    if: { time: "21:00-03:00" }
+    do: [ { routine: goodnight } ]
+
+  - name: low batteries
+    when: { event: device.battery_low }
+    do: [ { backend: phone, title: Battery low, message: "{node} battery is at {value}%" } ]
+
+  - name: car home, close the garage
+    when: { event: sensor, node: garage, input: car, state: on }
+    for: 300
+    if: { sensor: { node: garage, input: closed, state: off } }
+    do: [ { routine: garage_toggle } ]
+
+  - name: package delivered (external)  # e.g. from a phone shortcut or another system: POST /api/event
     when: { event: external.package }
     do: [ { speak: "A package was delivered.", everywhere: true } ]
 
 # ---------------------------------------------------------------- schedules
 schedules:
+  - name: morning weather
+    at: "06:45"
+    do:
+      - { report: weather, room: kitchen, notify: phone }
+  - { name: blinds open at sunrise, at: sunrise, offset: 15, do: [ { node: living room, channel: blinds, state: on } ] }
+  - { name: blinds close at sunset, at: sunset, do: [ { node: living room, channel: blinds, state: off } ] }
   - { name: porch on at sunset, at: sunset, offset: -10, do: [ { node: porch, channel: lights, state: on } ] }
   - { name: porch off at sunrise, at: sunrise, do: [ { node: porch, channel: lights, state: off } ] }
   - name: lock up at 11

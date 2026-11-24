@@ -53,7 +53,7 @@ class Doors:
     def state(self, door: str) -> str:
         door = door.lower()
         sensor = self.doors.get(door, {}).get("sensor")
-        if sensor:
+        if sensor and not self.home.dry_run:
             try:
                 be = self.home.backend(sensor["backend"])
                 ch = be.get_state(sensor["node"], sensor["channel"])

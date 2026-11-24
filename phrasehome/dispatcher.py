@@ -176,6 +176,9 @@ class Dispatcher:
         else:
             action = self.render(action, values)
         name = action["backend"]
+        if self.dry_run and name in ("energy", "spotify"):  # these talk to real devices/services
+            log.info("DRY RUN %s", action)
+            return "dry run"
         if name in BUILTIN_NAMES:
             # built-ins also get the context ({name}, {door}, {room}...) for their own templates
             action["_context"] = {k: v for k, v in (values or {}).items()}
