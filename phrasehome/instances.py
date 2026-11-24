@@ -202,7 +202,7 @@ class Instances:
         with self._lock:
             for inst in self.all.values():
                 for item in self._load(inst.id)["agenda"]:
-                    if datetime.fromisoformat(item["due"]) <= now:
+                    if not item.get("off") and datetime.fromisoformat(item["due"]) <= now:
                         out.append((inst, item))
         return out
 
@@ -226,10 +226,51 @@ class Instances:
             self._save(inst.id)
             return nxt
 
-    def snooze(self, inst: Instance, item: dict, minutes: float = 9) -> dict:
+    def snooze(self, inst: Instance, item: dict, minutes: float = 9, wake: dict | None = None) -> dict:
         due = clock.now() + timedelta(minutes=minutes)
-        return self.add(inst, item["kind"], due, item["text"], "none", item["room"], item["action"],
-                        item["label"])
+        new = self.add(inst, item["kind"], due, item["text"], "none", item["room"], item["action"],
+                       item["label"])
+        if wake or item.get("wake"):
+            new = self.update_item(inst, new["id"], wake={**(item.get("wake") or {}), **(wake or {})},
+                                   snoozed=True)
+        return new
+
+    @staticmethod
+    def next_time(hhmm: str, repeat: str, after: datetime | None = None) -> datetime:
+        """The next time `hhmm` comes round on a day `repeat` allows."""
+        t = clock.parse_hhmm(hhmm)
+        now = after or clock.now()
+        due = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+        for _ in range(15):
+            if due > now and (repeat in ("none", "weekly") or clock.day_matches(repeat, due.date())):
+                return due
+            due += timedelta(days=1)
+        return due
+
+    def update_item(self, inst: Instance, item_id: str, **fields: Any) -> dict:
+        """Change an agenda item (e.g. an alarm edited on the dashboard). `time` ("7:30") and
+        `repeat` move it to its next matching time; `off: true` pauses it."""
+        with self._lock:
+            agenda = self._load(inst.id)["agenda"]
+            item = next((i for i in agenda if i["id"] == item_id), None)
+            if item is None:
+                raise KeyError(f"no agenda item {item_id}")
+            new = dict(item)
+            if "repeat" in fields:
+                repeat = (str(fields.pop("repeat")) or "none").lower().replace(" ", "")
+                days = [d[:3] for d in repeat.split(",")]
+                if repeat not in REPEATS and not all(d in clock.DAY_NAMES for d in days):
+                    raise ValueError(f"repeat must be one of {', '.join(REPEATS)} or days like mon,wed")
+                new["repeat"] = repeat
+            hhmm = fields.pop("time", None)
+            was_off = bool(item.get("off"))
+            new.update({k: v for k, v in fields.items() if k in ("label", "text", "room", "wake", "off", "snoozed")})
+            if hhmm or "repeat" in fields or (was_off and not new.get("off")) or new["repeat"] != item["repeat"]:
+                cur = datetime.fromisoformat(item["due"])
+                new["due"] = self.next_time(hhmm or cur.strftime("%H:%M"), new["repeat"]).isoformat(timespec="seconds")
+            agenda[agenda.index(item)] = new
+            self._save(inst.id)
+        return new
 
     # ---------- lists ----------
     def _list_owner(self, inst: Instance, name: str) -> Instance:

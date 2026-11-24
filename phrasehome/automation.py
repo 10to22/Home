@@ -218,25 +218,32 @@ class Automations:
 class Ringer:
     """An alarm or timer that keeps ringing until stopped (or gives up)."""
 
-    def __init__(self, home, inst, item: dict, times: int, every: float) -> None:
+    def __init__(self, home, inst, item: dict, times: int, every: float, say: str | None = None) -> None:
         self.home, self.inst, self.item = home, inst, item
         self.left, self.every = times, every
         self.stopped = False
         self.room = item.get("room")
+        self.say = say  # what to say on repeats (the first ring says "alarm" / "timer_done")
+        self.count = 0
 
-    def ring(self) -> None:
+    def ring(self, first: bool = True) -> None:
         if self.stopped or self.left <= 0:
-            self.home.scheduler.ringers.pop(self.room, None)
+            if self.home.scheduler.ringers.get(self.room) is self:
+                self.home.scheduler.ringers.pop(self.room, None)
             return
         self.left -= 1
+        self.count += 1
         kind = self.item["kind"]
         label = self.item.get("label") or self.item.get("text") or ""
-        key = "alarm" if kind == "alarm" else "timer_done"
+        key = "alarm" if kind == "alarm" else "timer_done_named" if label and kind == "timer" else "timer_done"
+        if self.say and not (first and self.count == 1):
+            key = self.say
         self.home.voice.speak("alarm_sound" if kind == "alarm" else "timer_sound", room=self.room,
                               urgent=True)
         self.home.voice.speak(key, room=self.room, urgent=True, label=label, name=self.inst.name,
-                              text=self.item.get("text", ""))
-        self.home.timeline.call_in(self.every, self.ring)
+                              text=self.item.get("text", ""), time=clock.spoken_time(clock.now()),
+                              count=self.count)
+        self.home.timeline.call_in(self.every, lambda: self.ring(first=False))
 
     def stop(self) -> None:
         self.stopped = True
@@ -299,6 +306,8 @@ class Scheduler:
                        every=30 if kind == "alarm" else 15)
             self.ringers[room] = r
             r.ring()
+            if kind == "alarm" and getattr(self.home, "wake", None):
+                self.home.wake.alarm_fired(inst, item)  # make sure they actually get up
         elif kind == "action":
             values = {"here": room} if room else {}
             try:
@@ -314,6 +323,8 @@ class Scheduler:
             sunrise = inst.extra.get("sunrise") or {}
             pre = float(inst.extra.get("pre_alarm_minutes", 10))
             for item in self.home.instances.items(inst, ("alarm",)):
+                if item.get("off"):
+                    continue
                 due = datetime.fromisoformat(item["due"])
                 left = (due - now).total_seconds() / 60
                 key = f"{item['id']}:{item['due']}"

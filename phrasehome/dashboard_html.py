@@ -31,7 +31,7 @@ svg.plan rect.handle{fill:var(--acc)}
 .diary{white-space:pre-wrap}
 </style>
 <header><h1>Home</h1><div class="chips">
-<a href="/meals" class="pill" style="padding:6px 10px">Meal planner</a>
+<a href="/meals" class="pill" style="padding:6px 10px">Meal planner</a> <a href="/alarms" class="pill" style="padding:6px 10px">Alarms</a>
 <span id="alarmTop"></span>
 <select id="mode" onchange="post('/api/mode',{mode:this.value})"></select>
 <button id="priv" onclick="post('/api/privacy',{on:!S.private,minutes:60})"></button></div></header>

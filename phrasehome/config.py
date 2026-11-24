@@ -146,7 +146,7 @@ def normalize_action(action: dict[str, Any], default_backend: str | None,
 
 EXTRA_SECTIONS = ("weather", "alarm", "energy", "packages", "meals", "spotify", "commute", "rooms",
                   "tags", "beds", "pets", "voice_id", "languages", "diary", "watcher", "floorplan",
-                  "follow_lights", "smoke")
+                  "follow_lights", "smoke", "wake")
 
 
 def load_config(path: str | Path) -> Config:
@@ -240,6 +240,12 @@ def load_config(path: str | Path) -> Config:
         if str(sc.get("door", "front")).lower() not in doors:
             raise ConfigError(f"door_scanner {i + 1}: door '{sc.get('door', 'front')}' isn't in `doors:`")
         scanners.append(sc)
+
+    if isinstance(data.get("wake"), dict):  # make-sure-I'm-up alarm steps
+        data["wake"] = dict(data["wake"])
+        for k in ("escalate", "on_up"):
+            if k in data["wake"]:
+                data["wake"][k] = steps(data["wake"][k], f"wake {k}")
 
     from .instances import parse_instances
 

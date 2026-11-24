@@ -133,6 +133,18 @@ and the fingerprint sensor.
 - AI: put `ANTHROPIC_API_KEY=...` in `.env`, then `.venv/bin/phrasehome ask "what can you do?"`, or type
   `house, plan dinners for next week` in the dashboard during `simulate`.
 
+### 0.7 The morning alarm (make sure you're up)
+
+During `simulate`:
+
+1. Open the simulated **bedroom** module's page (its link is printed when simulate starts) and turn
+   the `bed` input **on**: Sam is now "in bed".
+2. Open http://localhost:8800/alarms, add an alarm for Sam (or use an existing one) and press **Ring now**.
+3. Type `stop the alarm` in the dashboard with the room set to bedroom: it goes quiet but warns it's
+  coming back. A few minutes later it rings again.
+4. Turn the `bed` input **off** and wait about 45 seconds: "you're up", with how long it took. Turn it
+   back on within 10 minutes and it starts again.
+
 ---
 
 ## Stage 1: Accounts and keys

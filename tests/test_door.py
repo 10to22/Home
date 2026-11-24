@@ -50,7 +50,7 @@ settings: { default_backend: dev }
 sources: { satellites: {} }
 backends:
   dev: { type: record }
-voice: { engine: none }
+voice: { engine: none, style: plain }
 doors:
   front:
     lock:   { node: front, channel: lock, state: on }

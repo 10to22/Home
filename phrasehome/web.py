@@ -226,6 +226,82 @@ class WebServer:
             raise KeyError(f"/api/meals/{what}")
         return self.meals_get(wk)
 
+    # ---------- the alarms page ----------
+    def alarms_get(self) -> dict:
+        from datetime import datetime
+
+        from .wake import EDITABLE
+
+        h = self.home
+        out, insts = [], []
+        for inst in h.instances.all.values():
+            sensor = "bed" if h.wake.bed_person(inst) else ("motion" if h.wake.motion else "none")
+            insts.append({"id": inst.id, "name": inst.name, "rooms": inst.rooms, "main": inst.main, "sensor": sensor})
+            for it in h.instances.items(inst, ("alarm",)):
+                due = datetime.fromisoformat(it["due"])
+                out.append({"instance": inst.id, "name": inst.name, "id": it["id"], "time": due.strftime("%H:%M"),
+                            "due": it["due"], "next": due.strftime("%a %b %d, %I:%M %p").replace(" 0", " "),
+                            "repeat": it["repeat"], "label": it.get("label") or "", "room": it.get("room"),
+                            "off": bool(it.get("off")), "snoozed": bool(it.get("snoozed")),
+                            "wake": h.wake.settings(it), "sensor": sensor})
+        out.sort(key=lambda a: (a["off"], a["due"]))
+        return {"alarms": out, "sessions": h.wake.status(), "recent": h.wake.recent(),
+                "instances": insts, "defaults": {k: h.wake.defaults[k] for k in EDITABLE}}
+
+    def alarms_post(self, what: str, body: dict) -> dict:
+        from .instances import Instances
+        from .wake import EDITABLE
+
+        h = self.home
+        if what in ("stop", "snooze"):  # the same as saying it in that room
+            return {"result": h.run_action({"backend": "alarm", "alarm": what}, {"here": body.get("room")})}
+        inst = h.instances.all.get(str(body.get("instance", "")).lower())
+        if inst is None:
+            raise KeyError(f"no one called {body.get('instance')!r}")
+        if what == "delete":
+            return {"deleted": len(h.instances.cancel(inst, str(body["id"]), kinds=("alarm",)))}
+        if what == "ring":  # test it: a one-off copy that goes off right away
+            item = next(i for i in h.instances.items(inst, ("alarm",)) if i["id"] == body["id"])
+            from . import clock
+
+            new = h.instances.add(inst, "alarm", clock.now(), label=item.get("label") or "test", room=item.get("room"))
+            if item.get("wake"):
+                h.instances.update_item(inst, new["id"], wake=dict(item["wake"]))
+            return {"ok": True}
+        if what != "save":
+            raise KeyError(f"/api/alarms/{what}")
+        limits = {"recheck_minutes": (0.5, 30), "snooze_limit": (0, 10), "snooze_minutes": (1, 30),
+                  "up_seconds": (5, 600), "back_to_bed_minutes": (0, 60), "give_up_minutes": (5, 180)}
+        wake_in = body.get("wake") or {}
+        wake = {}
+        for k in EDITABLE:
+            if k not in wake_in:
+                continue
+            if k == "make_sure_up":
+                wake[k] = bool(wake_in[k])
+            else:
+                lo, hi = limits[k]
+                wake[k] = min(hi, max(lo, float(wake_in[k])))
+                if k == "snooze_limit":
+                    wake[k] = int(wake[k])
+        fields = {k: body[k] for k in ("time", "repeat", "label", "room") if body.get(k) is not None}
+        if "off" in body:
+            fields["off"] = bool(body["off"])
+        if body.get("id"):
+            old = next((i for i in h.instances.items(inst, ("alarm",)) if i["id"] == body["id"]), None)
+            if old is None:
+                raise KeyError("that alarm is gone")
+            if wake:
+                fields["wake"] = {**(old.get("wake") or {}), **wake}
+            item = h.instances.update_item(inst, body["id"], **fields)
+        else:
+            repeat = str(fields.get("repeat", "none"))
+            item = h.instances.add(inst, "alarm", Instances.next_time(str(fields.get("time", "07:00")), repeat),
+                                   label=str(fields.get("label", "")), repeat=repeat, room=fields.get("room"))
+            if wake:
+                item = h.instances.update_item(inst, item["id"], wake=wake)
+        return {"item": item}
+
     def handle_post(self, path: str, body: dict) -> dict:
         h = self.home
         if path == "/api/routine":
@@ -292,6 +368,8 @@ class WebServer:
             return {"floorplan": self.save_floorplan(body.get("rooms") or {})}
         if path.startswith("/api/meals/"):
             return self.meals_post(path.rsplit("/", 1)[1], body)
+        if path.startswith("/api/alarms/"):
+            return self.alarms_post(path.rsplit("/", 1)[1], body)
         if path == "/api/event":
             kind = "".join(ch for ch in str(body.get("kind", "event")) if ch.isalnum() or ch in "_-")
             data = {k: v for k, v in body.items() if k not in ("kind", "token") and isinstance(v, (str, int, float, bool))}
@@ -336,10 +414,16 @@ class _Handler(BaseHTTPRequestHandler):
             from .dashboard_meals import MEALS_PAGE
 
             return self._send(200, MEALS_PAGE, "text/html; charset=utf-8")
+        if u.path == "/alarms":
+            from .dashboard_alarms import ALARMS_PAGE
+
+            return self._send(200, ALARMS_PAGE, "text/html; charset=utf-8")
         if not self._authorized(q):
             return self._send(401, {"error": "token required"})
         if u.path == "/api/status":
             return self._send(200, self.web.status())
+        if u.path == "/api/alarms":
+            return self._send(200, self.web.alarms_get())
         if u.path == "/api/meals":
             if not getattr(self.web.home, "meals", None):
                 return self._send(404, {"error": "meal planner isn't running"})

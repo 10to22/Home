@@ -111,7 +111,7 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Feature | How |
 |---|---|
 | Custom wording | `voice.phrases`; lists pick one at random |
-| Deadpan house AI | `voice: {style: deadpan}`: dry, sardonic versions of the lines ("Someone left the front door unlocked. I fixed it. Again."). Smoke, CO, leak and weather warnings stay plain. Pair with `assistant: {persona: deadpan}` |
+| Mean by default | The house is satirical and mean out of the box ("Somebody left the front door unlocked again. I won't say who. It was you."), and so is the AI (`persona: mean`). `style: deadpan` is drier, `style: plain` / `persona: butler` are polite. Smoke, CO, leak and weather warnings always stay plain |
 | Find a voice like a recording | `phrasehome voice match clip.mp3`: compares every voice on the computer (Mac voices, Piper, espeak), with and without effects, on pitch, flatness, brightness and pace, and prints the closest with its config lines. Picks among voices you have; doesn't clone |
 | Machine voice | `voice: {effect: synthetic}` (also robot, deep, radio, or any ffmpeg filter) on top of any engine |
 | Record your own | `phrasehome voice record retinal_scan_complete` |
@@ -119,6 +119,17 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Intercom | "house, tell Sam dinner's ready", "dinner's ready" (everywhere), dashboard "Say" box |
 | Time and date | "what time is it", "what's the date" |
 | Echo-proof | A room module ignores its own mic while it's talking |
+
+## Morning alarms that make sure you're up
+
+| Feature | How |
+|---|---|
+| "Stop" from bed doesn't count | It goes quiet, then rings again after `recheck_minutes` unless the bed sensor says you got up (or, with no bed sensor, there's motion in another room) |
+| Limited snoozes | `snooze_limit` per alarm; after that: "No. You've snoozed 2 times. That's not resting, that's a lifestyle." |
+| No sneaking back to bed | Back in bed within `back_to_bed_minutes` and it starts again |
+| Escalates | From the second nag: `escalate` steps (bedroom lights on full). After `give_up_minutes` it texts your phone |
+| Rewards getting up | Says how long you took and runs `on_up` (coffee on, good morning routine) |
+| Alarms page | `/alarms` on the dashboard: add, edit (time, days, room, label, all the wake settings), pause, "Ring now" to test, live status while it's going, and a log of how long everyone took |
 
 ## AI assistant
 

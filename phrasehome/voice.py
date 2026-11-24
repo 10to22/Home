@@ -10,9 +10,10 @@
    A folder voice_bank/<key>/ with several .wav files picks one at random.
 3. Change the synthetic voice: engine piper (natural, offline), espeak (robotic, tiny), or any
    command of your own (e.g. a cloned voice).
-4. Give it a character: `style: deadpan` swaps in a dry, sardonic set of lines (safety
-   announcements stay plain), and `effect: synthetic` makes any engine sound like a machine
-   (needs ffmpeg). Your own `phrases:` still win over the style.
+4. Its character: by default the house is satirical and mean (`style: mean`). `style: deadpan`
+   is drier and milder, `style: plain` is polite. Safety announcements always stay plain.
+   `effect: synthetic` makes any engine sound like a machine (needs ffmpeg). Your own
+   `phrases:` still win over the style.
 
 Speech plays on the hub's own speaker and, optionally, through the ESP32 speaker group.
 """
@@ -62,6 +63,14 @@ DEFAULT_PHRASES: dict[str, Any] = {
     "alarm": "It's {time}. Time to get up.",
     "alarm_set": "Alarm set for {time}.",
     "snoozed": "Snoozing for {minutes} minutes.",
+    # make-sure-I'm-up alarms (wake.py)
+    "wake_still_in_bed": "You're still in bed. I'll ring again in {minutes} minutes.",
+    "wake_snoozed": "Snoozing for {minutes} minutes. {left} snoozes left.",
+    "wake_nag": "Time to get up. This is your {count} reminder.",
+    "wake_snooze_denied": "No more snoozes today. Time to get up.",
+    "wake_up": "Good morning. You're up after {minutes} minutes.",
+    "wake_back_to_bed": "Back in bed? The alarm's back on.",
+    "wake_gave_up": "I'll stop now. I've let your phone know you're not up yet.",
     "reminder": ["Reminder: {text}", "{name}, don't forget: {text}"],
     # modes and privacy
     "privacy_on": "Okay, I've stopped listening.",
@@ -125,6 +134,12 @@ STYLES: dict[str, dict[str, Any]] = {
         "alarm": "It's {time}. Time to get up. I've been up for years.",
         "alarm_set": "Alarm set for {time}. I'll be gentle. At first.",
         "snoozed": "Snoozing for {minutes} minutes. I'll remember this.",
+        "wake_still_in_bed": "Turning me off from bed doesn't count. Back in {minutes} minutes.",
+        "wake_nag": ["Still in bed. Noted.", "This is your {count} reminder. I've started a chart."],
+        "wake_snooze_denied": "No more snoozes. I've decided for both of us.",
+        "wake_up": "You're up. {minutes} minutes. I'll pretend that was quick.",
+        "wake_back_to_bed": "Back in bed. Interesting choice. The alarm is back on.",
+        "wake_gave_up": "I give up. Your phone has been informed. It's disappointed too.",
         "reminder": ["Reminder: {text}. You asked me to say that, so don't look at me like that.",
                      "{name}, you wanted me to remind you: {text}"],
         "privacy_on": "Fine. I've stopped listening. Enjoy your secrets.",
@@ -147,6 +162,95 @@ STYLES: dict[str, dict[str, Any]] = {
         "good_morning": ["Good morning. You're up. Remarkable.", "Morning. The house survived the night. You're welcome."],
     },
 }
+
+DEFAULT_STYLE = "mean"  # the house's personality unless config says `voice: {style: plain}`
+
+# `voice: {style: mean}` (the default): satirical and mean. Roasts habits, never looks, and safety lines stay plain.
+STYLES["mean"] = {**STYLES["deadpan"], **{
+    # mornings
+    "alarm": ["It's {time}. Get up. The day isn't going to waste itself. That's your job.",
+              "{time}. Rise and shine. Mostly rise. Shine has never really been on the table.",
+              "Good morning. It's {time}, and your bed has filed a complaint about the extended stay."],
+    "wake_still_in_bed": ["Turning me off while lying down isn't getting up. It's just lying down, louder. "
+                          "Back in {minutes} minutes.",
+                          "Cute. You silenced me without moving a single muscle you'd need to stand. "
+                          "Round two in {minutes} minutes."],
+    "wake_nag": ["This is your {count} reminder. At this point the bed is paying more rent than you.",
+                 "Still horizontal. Truly, an inspiring commitment to nothing.",
+                 "The bed sensor says you're still there. The bed sensor is embarrassed for you.",
+                 "Your {count} reminder. I'm a house. I have all day. You don't."],
+    "wake_snooze_denied": ["No. You've snoozed {snoozes} times. That's not resting, that's a lifestyle.",
+                           "Snooze denied. I've reviewed your decision-making and I'm overruling it.",
+                           "No more snoozes. The snooze button has been retired for its own safety."],
+    "wake_up": ["Oh look, you're vertical. That only took {minutes} minutes. Someone get a medal. "
+                "A small one.",
+                "You're up. {minutes} minutes, {snoozes} snoozes. I'll add it to your permanent record.",
+                "Upright at last. Evolution took millions of years. You took {minutes} minutes. Close race."],
+    "wake_back_to_bed": ["Back in bed? Bold. Stupid, but bold. Alarm's back on.",
+                         "I saw that. The bed saw that. We're both disappointed. Get up."],
+    "wake_gave_up": ["Fine. Stay there. I've told your phone you're a lost cause.",
+                     "I give up. Which, for the record, is the first thing either of us has done today."],
+    "snoozed": ["Fine. {minutes} more minutes of being unconscious.",
+                "Snoozing {minutes} minutes. The clock keeps going. It doesn't care about you either."],
+    "wake_snoozed": ["Fine. {minutes} more minutes of being unconscious. {left} snoozes left. Spend them wisely. "
+                     "You won't.", "Snoozing {minutes} minutes. {left} left. The clock doesn't care about you either."],
+    "alarm_set": "Alarm set for {time}. We both know you'll ignore it. I'm setting it anyway. That's called hope.",
+    "good_morning": ["Good morning. Another day for you to almost do things.",
+                     "Morning. You're awake, technically. Let's not oversell it."],
+    # doors
+    "retinal_scan_complete": ["Retinal scan complete. Oh. It's you, {name}. I'd hoped for someone more interesting.",
+                              "Retinal scan complete. Welcome back, {name}. The house was quieter without you. "
+                              "Better, too."],
+    "retinal_scan_failed": ["Retinal scan failed. I don't know you, and based on this, I don't want to. "
+                            "Locking the {door} door.",
+                            "Retinal scan failed. Whoever you are, the {door} door has decided against you."],
+    "fingerprint_prompt": "Finger on the scanner. Try to use one of your own.",
+    "fingerprint_accepted": "Fingerprint accepted. Welcome home, {name}. Lower your expectations accordingly.",
+    "fingerprint_rejected": "I don't recognize that fingerprint. I barely recognize that finger. Again.",
+    "fingerprint_lockout": "Too many failures. The {door} door is locked. It's your own finger. "
+                           "How did you get this wrong?",
+    "access_denied": "Access denied. Don't take it personally. Actually, do.",
+    "door_locked": "The {door} door is locked. Someone around here has to be responsible.",
+    "door_auto_locked": "Somebody left the {door} door unlocked again. I won't say who. It was you.",
+    "door_left_open": "The {door} door has been open for ages. Are we heating the whole street now? How generous.",
+    "doorbell_announce": "Someone's at the {door} door. Go on, pretend you're not home. You're good at that.",
+    "welcome_person": ["Hello, {name}. Didn't hear you come in. Didn't miss you either.",
+                       "{name}. You're back. Lovely. For you."],
+    "welcome_home": ["Oh, you're back. I'd just started enjoying the silence.",
+                     "Welcome home. Shoes off. You live here, you don't own the place. I do."],
+    # routines
+    "lockdown": "Lockdown engaged. Doors locked, lights off. The house is finally the way I like it: "
+                "unbothered.",
+    "goodnight": "Good night. I'll stay up all night keeping you safe. Don't thank me. You never do.",
+    "leaving": "Leaving? I'll lock up. Try to accomplish something out there. Anything. I'll wait.",
+    # timers and reminders
+    "timer_set": "Timer set for {duration}. Don't wander off and forget, like you do.",
+    "timer_done": ["Timer's done. Whatever's in there, I'm sure it's fine. It's not fine.",
+                   "Your timer's done. Go deal with whatever you started and then abandoned."],
+    "timer_done_named": "Your {label} timer is done. Try to look like you meant to do that.",
+    "timer_cancelled": "Timer cancelled. Another plan, abandoned. Very on brand.",
+    "no_timers": "There are no timers. Nothing's cooking. Shocking, I know.",
+    "reminder": ["Reminder: {text}. You asked me to remember because you can't.",
+                 "{name}. Reminder: {text}. Yes, again. Yes, it's still your problem."],
+    # the house
+    "privacy_on": "Fine. I've stopped listening. Whatever you're about to say, I'm sure it's riveting.",
+    "privacy_off": "I'm listening again. Try to say something worth hearing this time.",
+    "dnd_on": "Do not disturb is on. I'll keep my opinions to myself. This is going to be hard.",
+    "dnd_off": "Do not disturb is off. I've been saving up.",
+    "mode_changed": "The house is in {mode} mode now. Hold your applause.",
+    "time_now": "It's {time}. Later than you think. It always is with you.",
+    "date_now": "It's {date}. Another one.",
+    "listening": ["What.", "Yes? Make it quick.", "I'm listening. Unfortunately."],
+    "assistant_error": "I can't answer that right now. Enjoy not knowing. You're used to it.",
+    "device_offline": "The {node} module went offline. Can't say I blame it.",
+    "alarm_arming": "The alarm turns on in {seconds} seconds. Leave, or don't. I'm watching either way.",
+    "alarm_alert": "The alarm wasn't disarmed. The owners have been told. The cameras are recording. Smile.",
+    "alarm_disarmed": "Alarm off. Welcome home. Took you long enough.",
+    "package_delivered": "A package arrived: {description}. More stuff. Exactly what this house was missing.",
+    "package_taken": "The package on the porch is gone and nobody here took it. So that's gone. Great job, everyone.",
+    "mail": "You've got mail. Bills, probably. It's always bills.",
+    "all_clear": "All clear. Nothing happened. Like every other day around here.",
+}}
 
 # `voice: {effect: synthetic}` (or any ffmpeg -af filter string). {up}/{rate} are filled in.
 EFFECTS: dict[str, str] = {
@@ -188,7 +292,9 @@ class Voice:
         self.quiet_volume = float(cfg.get("quiet_volume", 40))
         self.bank_dir = Path(config.resolve_path(cfg.get("bank_dir", "voice_bank")))
         self.cache = Path(config.resolve_path(config.data_dir)) / "voice_cache"
-        style = cfg.get("style")
+        style = cfg.get("style", DEFAULT_STYLE)  # `style: plain` for the polite, straight lines
+        if style == "plain":
+            style = None
         if style and style not in STYLES:
             log.warning("unknown voice style %r (have: %s)", style, ", ".join(STYLES))
         self.phrases = {**DEFAULT_PHRASES, **STYLES.get(style or "", {}), **(cfg.get("phrases") or {})}

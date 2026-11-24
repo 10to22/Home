@@ -46,6 +46,9 @@ class Dispatcher:
         self.cameras = self.weather = self.alarm = self.smoke = self.energy = None
         self.rooms = self.locator = self.spotify = self.meals = self.packages = None
         self.commute = self.voice_id = self.pets = self.diary = self.engine = None
+        from .wake import Wake
+
+        self.wake = Wake(self)  # morning alarms that make sure you're up
         self.backends: dict[str, Backend] = {}
         self._backend_errors: dict[str, Exception] = {}
         self._backend_lock = threading.Lock()

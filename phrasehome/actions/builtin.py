@@ -125,6 +125,25 @@ class AlarmBackend(_Builtin):
         inst = self.home.instances.for_room(room)
         what = str(action.get("alarm", "stop")).lower()
         if what in ("stop", "snooze"):
+            wake = getattr(self.home, "wake", None)
+            session = wake.session_for(room) if wake else None
+            if session is not None and session.state in ("ringing", "quiet"):
+                # a make-sure-I'm-up alarm: it decides whether stopping or snoozing is allowed
+                if what == "stop" and not session.asked_to_stop():
+                    return "quieted; still in bed"
+                if what == "snooze":
+                    if not session.asked_to_snooze():
+                        return "snooze refused"
+                    r = sched.ringers.pop(session.room, None)
+                    if r:
+                        r.stop()
+                    minutes = float(action.get("minutes") or session.cfg["snooze_minutes"])
+                    self.home.instances.snooze(session.inst, session.item, minutes,
+                                               wake=wake.snooze_carry(session))
+                    return self.home.voice.speak("wake_snoozed", room=room, minutes=_n(minutes),
+                                                 left=int(session.cfg["snooze_limit"]) - session.snoozes)
+                if what == "stop":
+                    return "stopped; up"
             rooms = [room] if room in sched.ringers else (inst.rooms or None)
             ringing = [sched.ringers[r] for r in list(sched.ringers) if rooms is None or r in rooms]
             if not ringing and sched.ringers:
@@ -146,6 +165,10 @@ class AlarmBackend(_Builtin):
                                     repeat=str(action.get("repeat", "none")), room=room)
             return self.home.voice.speak("alarm_set", room=room, time=clock.spoken_time(due))
         raise ValueError("alarm must be stop, snooze or set")
+
+
+def _n(x: float) -> str:
+    return str(int(x)) if float(x).is_integer() else f"{x:g}"
 
 
 class ModeBackend(_Builtin):

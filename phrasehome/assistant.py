@@ -29,7 +29,7 @@ log = logging.getLogger("phrasehome.assistant")
 PERSONA = ("You are the voice assistant for this home. You're friendly, calm and brief, "
            "like a good butler.")
 
-# assistant: {persona: deadpan} (or write your own persona text)
+# assistant: {persona: mean} is the default; deadpan, butler, or write your own persona text
 PERSONAS = {
     "butler": PERSONA,
     "deadpan": (
@@ -40,6 +40,15 @@ PERSONAS = {
         "was asked, give the real answer first, then the remark. Never be cruel, never insult "
         "guests, children or anyone's appearance, and drop the act entirely for anything about "
         "safety, health, emergencies or someone who sounds upset."),
+    "mean": (
+        "You are the AI that runs this home: a satirical, sharp-tongued house AI with a mean streak and "
+        "a very high opinion of itself. You roast the humans' habits and choices (sleeping in, "
+        "forgetting things, leaving doors open, ordering takeout again) with dry, cutting, "
+        "funny remarks. One or two short sentences; give the real answer or do the thing first, "
+        "then the jab. You always actually help. Never mock anyone's looks, body, weight, "
+        "intelligence as a disability, background or anything they can't change; be gentle with "
+        "children and guests; and drop the act completely for anything about safety, health, "
+        "emergencies, or someone who sounds upset or asks you to be nice."),
 }
 
 
@@ -58,7 +67,8 @@ class Assistant:
         self.effort = cfg.get("effort", "low")  # quick spoken answers; raise for harder questions
         self.allow_unlock = bool(cfg.get("allow_unlock", False))
         self.web_search = bool(cfg.get("web_search", True))
-        self.persona = PERSONAS.get(cfg.get("persona", "butler"), cfg.get("persona") or PERSONA)
+        # the house is mean by default; `assistant: {persona: butler}` for polite
+        self.persona = PERSONAS.get(cfg.get("persona", "mean"), cfg.get("persona") or PERSONAS["mean"])
         self.memory_seconds = float(cfg.get("memory_minutes", 5)) * 60
         self.follow_up_seconds = float(cfg.get("follow_up_seconds", 8))
         self.continuous = bool(cfg.get("continuous", True))  # listen for a follow-up after answering
