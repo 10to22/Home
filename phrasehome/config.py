@@ -122,6 +122,31 @@ def _normalize_slots(raw: dict[str, Any]) -> dict[str, dict[str, str]]:
     return slots
 
 
+# Commands for built-in features, so they work without editing config.yaml. Skipped when your
+# config already has a command with the same name or the same action. `settings:
+# builtin_commands: false` turns them all off.
+BUILTIN_COMMANDS = [
+    ("freak_on", ["freak mode", "freak mode on", "we're getting freaky"], {"backend": "freak", "freak": "on"}),
+    ("freak_off", ["freak mode off", "end freak mode", "freak mode over"], {"backend": "freak", "freak": "off"}),
+]
+
+
+def _is_on(v: Any) -> bool:
+    return str(v).lower() in ("on", "true", "start", "yes")
+
+
+def missing_builtin_commands(commands: list["Command"]) -> list["Command"]:
+    have_names = {c.name for c in commands}
+    have_actions = {(c.action.get("backend"), _is_on(c.action.get(c.action.get("backend"), "")))
+                    for c in commands}
+    out = []
+    for name, phrases, action in BUILTIN_COMMANDS:
+        key = (action["backend"], _is_on(action[action["backend"]]))
+        if name not in have_names and key not in have_actions:
+            out.append(Command(name=name, phrases=list(phrases), action=dict(action)))
+    return out
+
+
 def normalize_action(action: dict[str, Any], default_backend: str | None,
                      backends: dict[str, Any], where: str) -> dict[str, Any]:
     """Fill in `backend` and check it exists. Raises ConfigError with `where` for context."""
@@ -189,6 +214,8 @@ def load_config(path: str | Path) -> Config:
                                 by_language=by_lang))
     if not commands:
         raise ConfigError("no commands defined")
+    if data.get("settings", {}).get("builtin_commands", True) is not False:
+        commands += missing_builtin_commands(commands)
 
     sources = data.get("sources") or {"local_mic": {}}
     for name in sources:

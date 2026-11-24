@@ -95,19 +95,17 @@ def test_appliance_done(home):
     assert home.events.query("appliance.done")[0]["appliance"] == "washer"
 
 
-def test_cheap_power(home):
+def test_cheap_power(home, monkeypatch):
     e = Energy(home)
     noon = clock.now().replace(hour=12, minute=0, second=0, microsecond=0)
     assert e.price_at(noon) == (0.20, False)
     assert e.price_at(noon.replace(hour=23, minute=30)) == (0.10, True)
     assert e.next_cheap(noon).hour == 23
+    monkeypatch.setattr(clock, "now", lambda: noon)  # whatever time the tests run
     msg = e.run_when_cheap("washer", hours=2)
     items = home.instances.items(home.instances.main, ("action",))
-    if "now" in msg:  # running the test at night
-        assert len(items) == 1
-    else:
-        assert "11:00 PM" in msg and len(items) == 2
-        assert items[0]["action"] == {"backend": "energy", "plug": "washer", "state": "on"}
+    assert "11:00 PM" in msg and len(items) == 2
+    assert items[0]["action"] == {"backend": "energy", "plug": "washer", "state": "on"}
 
 
 def test_shelly_and_tasmota_plugs():

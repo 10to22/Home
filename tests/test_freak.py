@@ -108,3 +108,30 @@ def test_uncut_actually_swears_and_safety_stays_plain():
     lines = " ".join(str(v) for v in STYLES["aussie_uncut"].values()).lower()
     assert any(w in lines for w in ("fuck", "shit", "bastard"))
     assert "smoke_alarm" not in STYLES["aussie_uncut"]
+
+
+def test_freak_commands_work_without_editing_config(tmp_path):
+    from phrasehome.matcher import Matcher, expand
+
+    (tmp_path / "c.yaml").write_text("""
+backends: { dev: { type: log } }
+settings: { default_backend: dev }
+commands:
+  - { phrases: [lights on], action: { backend: dev } }
+""")
+    cfg = load_config(tmp_path / "c.yaml")
+    m = Matcher(expand(cfg.commands, cfg.slots), cfg.settings.match_mode, cfg.settings.match_threshold,
+                cfg.settings.block_words)
+    assert m.match("freak mode").command.name == "freak_on"
+    assert m.match("freak mode off").command.name == "freak_off"
+
+
+def test_builtin_commands_dont_duplicate_yours(tmp_path):
+    (tmp_path / "c.yaml").write_text("""
+backends: { dev: { type: log } }
+settings: { default_backend: dev }
+commands:
+  - { name: sock_on, phrases: [sock on the door], action: { freak: on } }
+""")
+    names = [c.name for c in load_config(tmp_path / "c.yaml").commands]
+    assert "sock_on" in names and "freak_on" not in names and "freak_off" in names
