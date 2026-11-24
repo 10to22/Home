@@ -132,7 +132,9 @@ and the fingerprint sensor.
   with `phrasehome voice record <name>`.
 - AI: get a key at console.anthropic.com (API keys), put `ANTHROPIC_API_KEY=your-key` in the `.env` file in
   the phrasehome folder (every `phrasehome` command reads it), then run `.venv/bin/phrasehome ai-check`.
-  It sends one tiny question and tells you exactly what's wrong if anything is. Then
+  It sends one tiny question and tells you exactly what's wrong if anything is.
+  Free and local instead: install Ollama (ollama.com), run `ollama pull qwen3:8b`, and set
+  `assistant: {provider: local, local: {model: qwen3:8b}}`; `ai-check` tests that too. Then
   `.venv/bin/phrasehome ask "what can you do?"`, or type `house, plan dinners for next week` in the
   dashboard during `simulate`.
 

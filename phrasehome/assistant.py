@@ -80,7 +80,10 @@ class Assistant:
         self.model = cfg.get("model", "claude-opus-5-5")
         self.effort = cfg.get("effort", "low")  # quick spoken answers; raise for harder questions
         self.allow_unlock = bool(cfg.get("allow_unlock", False))
-        self.web_search = bool(cfg.get("web_search", True))
+        from .local_ai import is_local, make_client
+
+        self.local = is_local(cfg)
+        self.web_search = bool(cfg.get("web_search", True)) and not self.local  # no web search locally
         # the house is mean by default; `assistant: {persona: butler}` for polite
         self.persona = PERSONAS.get(cfg.get("persona", "mean"), cfg.get("persona") or PERSONAS["mean"])
         self.memory_seconds = float(cfg.get("memory_minutes", 5)) * 60
@@ -88,9 +91,7 @@ class Assistant:
         self.continuous = bool(cfg.get("continuous", True))  # listen for a follow-up after answering
         self.location = cfg.get("location", "")
         if client is None:
-            import anthropic
-
-            client = anthropic.Anthropic()
+            client = make_client(cfg)  # Claude, or a local model (provider: local)
         self.client = client
         self._convos: dict[str, tuple[float, list]] = {}
         self._lock = threading.Lock()

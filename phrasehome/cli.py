@@ -637,12 +637,47 @@ def load_env(*folders) -> list[str]:
     return done
 
 
+def _ai_check_local(a: dict) -> int:
+    from .local_ai import LocalAIError, LocalClient
+
+    c = LocalClient(a.get("local") or {})
+    print(f"AI: local (Ollama at {c.url})\nModel: {c.model}" + (f"   camera model: {c.vision_model}" if c.vision_model else ""))
+    try:
+        have = c.installed_models()
+    except LocalAIError as e:
+        print(f"PROBLEM: {e}\nInstall Ollama from ollama.com (or: brew install ollama), open it, then run this again.")
+        return 1
+    print("Downloaded models:", ", ".join(have) or "none")
+    missing = [m for m in (c.model, c.vision_model) if m and m not in have and f"{m}:latest" not in have]
+    for m in missing:
+        print(f"PROBLEM: {m} isn't downloaded. Run:  ollama pull {m}")
+    if c.model in missing:
+        return 1
+    print("Asking it something (the first answer can take a while as the model loads)...")
+    try:
+        resp = c.messages.create(messages=[{"role": "user", "content": "Reply with just the word: linked"}],
+                                 max_tokens=50)
+    except LocalAIError as e:
+        print(f"PROBLEM: {e}")
+        return 1
+    text = " ".join(b.text for b in resp.content if b.type == "text").strip()
+    print(f"{c.model} says: {text!r}\nThe local AI is linked: free and private. 'house, ...' questions, meal planning, "
+          "the diary and the watcher use it" + (", and the cameras use " + c.vision_model if c.vision_model else
+                                                ". Add a vision_model for camera questions") + ".")
+    print("It can't search the web, and it picks the right house tool less reliably than Claude.")
+    return 1 if missing else 0
+
+
 def _cmd_ai_check(args) -> int:
     """Is the AI linked? Sends one tiny question and explains any problem."""
     import os
 
     cfg = load_config(args.config)
     a = cfg.assistant
+    from .local_ai import is_local
+
+    if is_local(a):
+        return _ai_check_local(a)
     model = a.get("model", "claude-opus-5-5")
     print(f"AI section in config: {'yes' if a else 'NO: add an assistant: section'}")
     print(f"Model: {model}   effort: {a.get('effort', 'low')}   persona: {a.get('persona', 'mean')}")

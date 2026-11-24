@@ -285,6 +285,11 @@ voice:
 # ---------------------------------------------------------------- AI assistant
 assistant:
   names: [house]
+  # provider: local              # free + private: a model running in Ollama (ollama.com) instead of Claude
+  # local:
+  #   url: http://localhost:11434   # on the Pi: a laptop/desktop on your Wi-Fi running Ollama
+  #   model: qwen3:8b               # qwen3:4b for slower computers
+  #   vision_model: qwen2.5vl:7b    # for camera questions (optional)
   model: claude-opus-5-5
   effort: low
   location: ""                 # CHANGE ME e.g. "Brooklyn, New York"

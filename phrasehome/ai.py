@@ -21,9 +21,9 @@ def _client(home):
         return home.assistant.client
     if getattr(home, "_ai_client", None) is None:
         try:
-            import anthropic
+            from .local_ai import make_client
 
-            home._ai_client = anthropic.Anthropic()
+            home._ai_client = make_client(home.config.assistant)  # Claude, or local (provider: local)
         except Exception as e:
             raise AIUnavailable(f"AI not available: {e}")
     return home._ai_client
@@ -51,7 +51,14 @@ def ask(home, prompt: str, images: list[bytes] | None = None, system: str = "",
         output_config=output_config, betas=["server-side-fallback-2026-07-01"], fallbacks="default")
     if system:
         kwargs["system"] = system
-    resp = _client(home).beta.messages.create(**kwargs)
+    try:
+        resp = _client(home).beta.messages.create(**kwargs)
+    except Exception as e:
+        from .local_ai import LocalAIError
+
+        if isinstance(e, LocalAIError):
+            raise AIUnavailable(str(e)) from None
+        raise
     if resp.stop_reason == "refusal":
         raise AIUnavailable("the AI declined this request")
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
