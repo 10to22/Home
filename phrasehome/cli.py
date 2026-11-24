@@ -271,6 +271,13 @@ def _cmd_voice(args) -> int:
             print(f"{key:<24} {'[recorded clip] ' if clip else ''}{shown}")
     elif args.action == "say":
         print(v.speak(text or "Hello. This is your house speaking."))
+    elif args.action == "demo":
+        from pathlib import Path
+
+        save = Path(args.save).expanduser() if args.save else None
+        out = v.demo(save, every_variant=not args.short)
+        if out:
+            print(f"\nsaved {out}  (open it: open \"{out}\")")
     elif args.action == "record":
         if not text:
             print("usage: phrasehome voice record <phrase_key> [--seconds 4]", file=sys.stderr)
@@ -584,12 +591,14 @@ def main(argv: list[str] | None = None) -> int:
 
     vo = sub.add_parser("voice", help="test and customize the voice bank",
                         description="phrasehome voice list | say <key or text> | record <key> | "
-                                    "match <recording>")
-    vo.add_argument("action", choices=["list", "say", "record", "match"], nargs="?", default="list")
+                                    "match <recording> | demo [--save demo.mp3] [--short]")
+    vo.add_argument("action", choices=["list", "say", "record", "match", "demo"], nargs="?", default="list")
     vo.add_argument("text", nargs="*")
     vo.add_argument("--seconds", type=float, default=4.0)
     vo.add_argument("--top", type=int, default=8, help="match: how many voices to show")
     vo.add_argument("--no-effects", action="store_true", help="match: don't try the voice effects")
+    vo.add_argument("--save", help="demo: write everything to one audio file (.wav or .mp3) instead of playing it")
+    vo.add_argument("--short", action="store_true", help="demo: one version of each line, not every variant")
     vo.add_argument("--novelty", action="store_true", help="match: include the Mac's joke voices (Bahh, Bubbles...)")
     vo.set_defaults(fn=_cmd_voice)
 

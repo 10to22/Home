@@ -270,6 +270,41 @@ def effect_filter(effect: str, rate: int) -> str:
                         down=int(rate * 0.88), forward=f"{1 / 0.88:.4f}")
 
 
+# `phrasehome voice demo`: a long sample of what the house says, with example values filled in
+DEMO: list[tuple[str, dict]] = [
+    ("alarm", {"time": "6:45 AM"}),
+    ("wake_still_in_bed", {"minutes": "3"}),
+    ("wake_nag", {"count": "second"}),
+    ("wake_snoozed", {"minutes": "9", "left": "1"}),
+    ("wake_snooze_denied", {"snoozes": "2"}),
+    ("wake_back_to_bed", {}),
+    ("wake_up", {"minutes": "14", "snoozes": "2", "nags": "3"}),
+    ("good_morning", {}),
+    ("retinal_scan_complete", {"name": "Finn"}),
+    ("retinal_scan_failed", {"door": "front"}),
+    ("fingerprint_prompt", {}),
+    ("fingerprint_rejected", {}),
+    ("door_auto_locked", {"door": "front"}),
+    ("door_left_open", {"door": "back"}),
+    ("doorbell_announce", {"door": "front"}),
+    ("welcome_home", {}),
+    ("leaving", {}),
+    ("timer_set", {"duration": "10 minutes"}),
+    ("timer_done", {}),
+    ("timer_done_named", {"label": "pizza"}),
+    ("reminder", {"name": "Finn", "text": "take the trash out"}),
+    ("listening", {}),
+    ("privacy_on", {}),
+    ("package_delivered", {"description": "a box from the hardware store"}),
+    ("package_taken", {}),
+    ("mail", {}),
+    ("device_offline", {"node": "garage"}),
+    ("lockdown", {}),
+    ("goodnight", {}),
+    ("smoke_alarm", {"room": "kitchen"}),  # safety lines stay plain in every style
+]
+
+
 class _Safe(dict):
     def __missing__(self, key: str) -> str:
         return "{" + key + "}"
@@ -495,6 +530,57 @@ class Voice:
             log.info("say [%s via %s]: %s", room or "hub", where, text or audio.name)
         except Exception as e:
             log.error("couldn't speak %r in %s: %s", text, room or "hub", e)
+
+    def demo_lines(self, every_variant: bool = True) -> list[tuple[str, str]]:
+        """(key, text) for the demo: each sample line, every variant of it."""
+        out = []
+        for key, values in DEMO:
+            entry = self.phrases.get(key)
+            if entry is None:
+                continue
+            if isinstance(entry, dict) and not ({"text", "file"} & set(entry)):
+                entry = next(iter(entry.values()))
+            variants = entry if isinstance(entry, list) else [entry]
+            for e in variants if every_variant else variants[:1]:
+                text = e.get("text", key) if isinstance(e, dict) else str(e)
+                out.append((key, text.format_map(_Safe(values))))
+        return out
+
+    def demo(self, save: Path | None = None, every_variant: bool = True, gap: float = 0.7,
+             show=print) -> Path | None:
+        """Say the demo lines one after another, or write them all to one audio file."""
+        from .audio_out import convert
+
+        lines = self.demo_lines(every_variant)
+        if save is None:
+            for key, text in lines:
+                show(f"[{key}] {text}")
+                self.speak(text)
+            return None
+        rate, pcm = 22050, bytearray()
+        silence = b"\x00\x00" * int(rate * gap)
+        for key, text in lines:
+            show(f"[{key}] {text}")
+            wav = self.synthesize(text, self.base)
+            if wav:
+                pcm += convert(wav, rate, 1) + silence
+        save = Path(save)
+        save.parent.mkdir(parents=True, exist_ok=True)
+        import wave
+
+        tmp = save.with_suffix(".tmp.wav")
+        with wave.open(str(tmp), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(bytes(pcm))
+        if save.suffix.lower() == ".wav":
+            os.replace(tmp, save)
+        else:  # .mp3, .m4a...
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(tmp), str(save)],
+                           check=True, capture_output=True, timeout=120)
+            tmp.unlink(missing_ok=True)
+        return save
 
     def record(self, key: str, seconds: float = 4.0) -> Path:
         self.bank_dir.mkdir(parents=True, exist_ok=True)

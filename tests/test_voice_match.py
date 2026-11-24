@@ -88,3 +88,39 @@ Zarvox              en_US    # That looks like a peaceful planet.
     monkeypatch.setattr(vm.subprocess, "run", lambda *a, **k: type("R", (), {"stdout": listing})())
     assert vm.say_voices() == ["Samantha"]
     assert vm.say_voices(novelty=True) == ["Bahh", "Samantha", "Zarvox"]
+
+
+@pytest.mark.parametrize("style", ["mean", "deadpan", "plain"])
+def test_demo_lines_have_every_blank_filled(tmp_path, style):
+    from phrasehome.config import load_config
+    from phrasehome.voice import Voice
+
+    (tmp_path / "c.yaml").write_text(f"""
+data_dir: {tmp_path}/data
+backends: {{ dev: {{ type: log }} }}
+settings: {{ default_backend: dev }}
+voice: {{ engine: none, style: {style} }}
+commands:
+  - {{ phrases: [hello], action: {{ backend: dev }} }}
+""")
+    lines = Voice(load_config(tmp_path / "c.yaml")).demo_lines()
+    assert len(lines) >= 30
+    assert not [t for _, t in lines if "{" in t]
+
+
+@pytest.mark.skipif(not (shutil.which("espeak-ng") and shutil.which("ffmpeg")), reason="needs espeak-ng and ffmpeg")
+def test_demo_saves_one_file(tmp_path):
+    from phrasehome.config import load_config
+    from phrasehome.voice import Voice
+
+    (tmp_path / "c.yaml").write_text(f"""
+data_dir: {tmp_path}/data
+backends: {{ dev: {{ type: log }} }}
+settings: {{ default_backend: dev }}
+voice: {{ engine: espeak, effect: deep }}
+commands:
+  - {{ phrases: [hello], action: {{ backend: dev }} }}
+""")
+    out = Voice(load_config(tmp_path / "c.yaml")).demo(tmp_path / "demo.wav", every_variant=False, show=lambda s: None)
+    with wave.open(str(out)) as w:
+        assert w.getnframes() / w.getframerate() > 60  # over a minute of speech
