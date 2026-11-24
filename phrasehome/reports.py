@@ -179,3 +179,26 @@ def report_pet(home, action) -> str:
     if p is None:
         return "No pets are set up."
     return p.status(str(action.get("pet", "")))
+
+
+@register("climate")
+def report_climate(home, action) -> str:
+    """{report: climate, room: "{here}"} or all rooms: temperature and humidity."""
+    from .web import climate
+
+    c = climate(home)
+    if not c:
+        return "I don't have temperature sensors yet."
+    room = str(action.get("room") or action.get("_context", {}).get("here") or "").lower()
+    if room and room in c:
+        v = c[room]
+        parts = [f"{v['temperature']:.0f} degrees"] if "temperature" in v else []
+        if "humidity" in v:
+            parts.append(f"{v['humidity']} percent humidity")
+        return f"It's {' and '.join(parts)} in the {room}."
+    temps = {r: v["temperature"] for r, v in c.items() if "temperature" in v}
+    if not temps:
+        return "I don't have temperature readings."
+    cold, warm = min(temps, key=temps.get), max(temps, key=temps.get)
+    return (f"The coldest room is the {cold} at {temps[cold]:.0f} degrees, and the warmest is the "
+            f"{warm} at {temps[warm]:.0f}.")

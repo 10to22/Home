@@ -149,3 +149,43 @@ def test_welcome_back_summary(home, monkeypatch):
     home.events.log("package.delivered", description="a box")
     home.state.set_presence("sam", "home")              # first one home
     assert wait_for(lambda: any("package arrived" in k for k, *_ in home.said))
+
+
+def test_dashboard_new_endpoints(home):
+    import urllib.request
+
+    from phrasehome.web import WebServer
+
+    Meals(home)
+    hub = CameraHub(home)
+    hub.feeds["front door"].set_frame(np.zeros((30, 40, 3), np.uint8))
+    home.config.web = {"port": 0, "host": "127.0.0.1"}
+    web = WebServer(home)
+    web.start()
+    base = f"http://127.0.0.1:{web.port}"
+
+    def call(path, body=None):
+        req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = r.read()
+            return json.loads(data) if r.headers.get_content_type() == "application/json" else data
+    try:
+        m = call("/api/meals/set", {"day": "thu", "slot": "dinner", "meal": {"name": "Soup", "ingredients": "2 cans tomatoes\n1 onion"}})
+        assert m["plan"]["thu"]["dinner"]["name"] == "Soup"
+        assert "tomatoes (2 cans)" in m["shopping"]
+        m = call("/api/meals/pantry", {"add": ["onion"]})
+        assert not any(s.startswith("onion") for s in m["shopping"])
+        call("/api/list/bought", {"item": "tomatoes (2 cans)"})
+        assert "tomatoes" in home.instances.list_get(home.instances.main, "pantry")
+        fp = call("/api/floorplan", {"rooms": {"kitchen": [1, 2, 30, 20]}})["floorplan"]
+        st = call("/api/status")
+        assert st["floorplan"]["kitchen"] == [1, 2, 30, 20] == fp["kitchen"] and "bedroom" in st["floorplan"]
+        assert st["cameras"][0]["name"] == "front door"
+        call("/api/countdown", {"name": "Holiday", "date": "2099-01-01"})
+        assert call("/api/status")["countdowns"][0]["name"] == "Holiday"
+        assert call("/api/camera?name=front%20door")[:2] == b"\xff\xd8"
+        with urllib.request.urlopen(base + "/meals", timeout=5) as r:
+            assert b"Meal planner" in r.read()
+    finally:
+        web.stop()

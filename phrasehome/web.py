@@ -30,6 +30,24 @@ from urllib.parse import parse_qs, urlparse
 log = logging.getLogger("phrasehome.web")
 
 
+def climate(home) -> dict:
+    """Temperature/humidity per room from device-node sensors (inputs named temperature/humidity)."""
+    out: dict[str, dict] = {}
+    if not home.sensors:
+        return out
+    f = str((home.config.extra.get("weather") or {}).get("units", "fahrenheit")).startswith("f")
+    rooms = getattr(home, "rooms", None)
+    for (node, inp), v in list(home.sensors.values.items()):
+        if "value" not in v:
+            continue
+        room = rooms.room_of_node(node) if rooms else node
+        if inp.startswith("temp"):
+            out.setdefault(room, {})["temperature"] = round(v["value"] * 9 / 5 + 32 if f else v["value"], 1)
+        elif inp.startswith("humid"):
+            out.setdefault(room, {})["humidity"] = round(v["value"])
+    return out
+
+
 class WebServer:
     def __init__(self, home) -> None:
         self.home = home
@@ -73,7 +91,37 @@ class WebServer:
                              "speaker": bool(m["flags"] & 1), "muted": bool(m["flags"] & 2)})
         from .state import MODES
 
-        return {
+        extra: dict = {}
+        if getattr(h, "cameras", None):
+            extra["cameras"] = [{"name": n, "online": f.online(), "roles": sorted(f.roles)}
+                                for n, f in h.cameras.feeds.items()]
+        if getattr(h, "weather", None) and h.weather.data:
+            extra["weather"] = {"today": h.weather.summary(0), "tomorrow": h.weather.summary(1),
+                                "needs": h.weather.needs()}
+        if getattr(h, "energy", None) and h.energy.plugs:
+            t = h.energy.totals(7)
+            extra["energy"] = {"kwh": round(t["kwh"], 1), "cost": round(t["cost"], 2), "currency": h.energy.currency,
+                               "devices": {k: round(v, 1) for k, v in list(t["devices"].items())[:6]},
+                               "people": {h.energy.person_name(k): round(v, 1) for k, v in t["people"].items()},
+                               "plugs": {n: {"watts": round(p.power), "state": p.state, "on": p.on}
+                                         for n, p in h.energy.plugs.items()}}
+        if getattr(h, "packages", None):
+            from .packages import STATUS_WORDS
+
+            extra["packages"] = [{**i, "words": STATUS_WORDS.get(i["status"], i["status"])} for i in h.packages.items]
+        extra["countdowns"] = h.instances.countdowns(h.instances.main)
+        if getattr(h, "alarm", None):
+            extra["alarm"] = h.alarm.state
+        if getattr(h, "rooms", None):
+            extra["rooms"] = h.rooms.snapshot()
+            extra["sleep"] = {p: (v[-1] if v else None) for p, v in h.rooms.sleep_log.items()}
+        if getattr(h, "pets", None):
+            extra["pets"] = {p: h.pets.status(p) for p in h.pets.pets}
+        if getattr(h, "diary", None):
+            extra["diary"] = {"today": h.diary.read(), "days": h.diary.days()[:14]}
+        extra["climate"] = climate(h)
+        extra["floorplan"] = self.floorplan()
+        return {**extra,
             "mode": h.state.mode, "modes": MODES, "people_home": h.state.home_people(),
             "presence": h.state.presence, "private": h.state.is_private(None),
             "doors": h.doors.states(), "routines": list(h.config.routines),
@@ -82,6 +130,72 @@ class WebServer:
             "events": list(reversed(h.events.query(limit=40))),
             "assistant": h.assistant is not None,
         }
+
+    # ---------- floor plan ----------
+    def _fp_path(self) -> Path:
+        c = self.home.config
+        return Path(c.resolve_path(c.data_dir)) / "floorplan.json"
+
+    def floorplan(self) -> dict:
+        """Room boxes (x, y, w, h in a 100x60 grid): config `floorplan:`, edits from the dashboard,
+        and an automatic layout for any other known room."""
+        fp = dict((self.home.config.extra.get("floorplan") or {}).get("rooms") or {})
+        try:
+            fp.update(json.loads(self._fp_path().read_text()))
+        except (OSError, ValueError):
+            pass
+        rooms = {r for i in self.home.instances.all.values() for r in i.rooms}
+        if getattr(self.home, "rooms", None):
+            rooms |= set(self.home.rooms.occupancy_inputs) | set(self.home.rooms.follow)
+        missing = sorted(r for r in rooms if r not in fp)
+        for i, r in enumerate(missing):
+            fp[r] = [2 + (i % 4) * 24.5, 2 + (i // 4) * 19, 23, 17]
+        return fp
+
+    def save_floorplan(self, rooms: dict) -> dict:
+        clean = {str(k).lower(): [round(float(x), 1) for x in v][:4] for k, v in rooms.items() if len(v) >= 4}
+        p = self._fp_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(clean))
+        return clean
+
+    # ---------- meals ----------
+    def meals_get(self, week: str | None) -> dict:
+        from .meals import DAYS, week_of
+
+        m = self.home.meals
+        wk = week or week_of()
+        w = m.week(wk)
+        return {"week": wk, "days": DAYS, "slots": m.slots, "plan": w["days"],
+                "ingredients": m.ingredients(wk), "pantry": m.pantry(),
+                "shopping": self.home.instances.list_get(self.home.instances.main, "shopping"),
+                "diets": m.diets(), "ai": self.home.assistant is not None or bool(self.home.config.assistant)}
+
+    def meals_post(self, what: str, body: dict) -> dict:
+        m = self.home.meals
+        wk = body.get("week")
+        if what == "set":
+            meal = body.get("meal")
+            if meal and isinstance(meal.get("ingredients"), str):
+                meal["ingredients"] = [x for x in meal["ingredients"].splitlines() if x.strip()]
+            m.set_meal(body["day"], body["slot"], meal, wk)
+        elif what == "plan":
+            m.plan_week(body.get("request", ""), wk, keep_existing=not body.get("replace"))
+        elif what == "suggest":
+            return {"ideas": m.suggest(body.get("request", ""))}
+        elif what == "sync":
+            m.sync(wk)
+        elif what == "pantry":
+            insts = self.home.instances
+            if body.get("add"):
+                insts.list_add(insts.main, "pantry", list(body["add"]))
+            if body.get("remove"):
+                insts.list_remove(insts.main, "pantry", list(body["remove"]))
+            if m.cfg.get("auto_sync", True):
+                m.sync(wk)
+        else:
+            raise KeyError(f"/api/meals/{what}")
+        return self.meals_get(wk)
 
     def handle_post(self, path: str, body: dict) -> dict:
         h = self.home
@@ -124,10 +238,35 @@ class WebServer:
         if path == "/api/agenda/cancel":
             inst = h.instances.get(body.get("person"), asker=h.instances.main)
             return {"cancelled": len(h.instances.cancel(inst, body["id"]))}
+        if path == "/api/alarm":
+            return {"result": h.run_action({"backend": "security", "security": body["action"]})}
+        if path == "/api/package":
+            if not getattr(h, "packages", None):
+                raise RuntimeError("package tracking isn't set up")
+            if body.get("action") == "remove":
+                return {"removed": h.packages.remove(body["number"])}
+            return {"item": h.packages.add(body["number"], body.get("name", ""))}
+        if path == "/api/countdown":
+            inst = h.instances.get(body.get("person"), asker=h.instances.main)
+            if body.get("action") == "remove":
+                return {"removed": h.instances.countdown_remove(inst, body["name"])}
+            return {"item": h.instances.countdown_add(inst, body["name"], body["date"])}
+        if path == "/api/list/bought":
+            if getattr(h, "meals", None):
+                h.meals.bought(body["item"])
+            else:
+                h.instances.list_remove(h.instances.main, "shopping", [body["item"]])
+            return {"ok": True}
+        if path == "/api/floorplan":
+            return {"floorplan": self.save_floorplan(body.get("rooms") or {})}
+        if path.startswith("/api/meals/"):
+            return self.meals_post(path.rsplit("/", 1)[1], body)
         if path == "/api/event":
             kind = "".join(ch for ch in str(body.get("kind", "event")) if ch.isalnum() or ch in "_-")
-            data = {k: v for k, v in body.items() if k != "kind" and isinstance(v, (str, int, float, bool))}
+            data = {k: v for k, v in body.items() if k not in ("kind", "token") and isinstance(v, (str, int, float, bool))}
             h.events.log(f"external.{kind}", **data)
+            if "battery" in data and h.sensors:
+                h.sensors.battery(kind, float(data["battery"]))
             return {"result": "ok"}
         raise KeyError(path)
 
@@ -162,10 +301,26 @@ class _Handler(BaseHTTPRequestHandler):
         q = parse_qs(u.query)
         if u.path == "/":
             return self._send(200, DASHBOARD, "text/html; charset=utf-8")
+        if u.path == "/meals":
+            from .dashboard_meals import MEALS_PAGE
+
+            return self._send(200, MEALS_PAGE, "text/html; charset=utf-8")
         if not self._authorized(q):
             return self._send(401, {"error": "token required"})
         if u.path == "/api/status":
             return self._send(200, self.web.status())
+        if u.path == "/api/meals":
+            if not getattr(self.web.home, "meals", None):
+                return self._send(404, {"error": "meal planner isn't running"})
+            return self._send(200, self.web.meals_get(q.get("week", [None])[0]))
+        if u.path in ("/api/camera", "/api/camera/stream"):
+            cams = getattr(self.web.home, "cameras", None)
+            feed = cams.get(q.get("name", [""])[0]) if cams else None
+            if feed is None:
+                return self._send(404, {"error": "no such camera"})
+            if u.path == "/api/camera":
+                return self._send(200, feed.jpeg or b"", "image/jpeg")
+            return self._mjpeg(feed)
         if u.path == "/api/photo":
             c = self.web.home.config
             root = (Path(c.resolve_path(c.data_dir)) / "faces").resolve()
@@ -174,6 +329,28 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._send(200, f.read_bytes(), "image/jpeg")
             return self._send(404, {"error": "not found"})
         self._send(404, {"error": "not found"})
+
+    def _mjpeg(self, feed) -> None:
+        """Live view: a multipart JPEG stream (works in any browser <img>), for up to 10 minutes."""
+        import time as _t
+
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        end, last = _t.monotonic() + 600, 0.0
+        try:
+            self.wfile.write(b"--frame\r\n")
+            while _t.monotonic() < end:
+                _, jpeg, t = feed.latest()
+                if jpeg and t != last:
+                    last = t
+                    # the boundary right after each picture tells the browser it's complete
+                    self.wfile.write(b"Content-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode()
+                                     + b"\r\n\r\n" + jpeg + b"\r\n--frame\r\n")
+                _t.sleep(0.2)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_POST(self) -> None:
         u = urlparse(self.path)
@@ -194,76 +371,4 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": str(e)})
 
 
-DASHBOARD = r"""<!doctype html>
-<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Home</title>
-<style>
-:root{--bg:#f4f4f1;--card:#fff;--ink:#1d1d1b;--mute:#6b6b66;--line:#e2e2dc;--ok:#2f7d4f;--warn:#b3541e;--acc:#2a5db0}
-@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1f1f1d;--ink:#ecebe6;--mute:#9b9a94;--line:#33332f;--ok:#5cb27f;--warn:#e08a52;--acc:#7aa5ee}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
-header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:16px 20px}
-h1{font-size:20px;margin:0}h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:0 0 10px}
-main{display:grid;gap:14px;padding:0 20px 24px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
-.row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)}
-.row:last-child{border-bottom:0}.mute{color:var(--mute);font-size:13px}
-button,select,input{font:inherit;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:6px 10px}
-button{cursor:pointer}button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
-.pill{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line)}
-.locked{color:var(--ok)}.unlocked,.bad{color:var(--warn)}
-.chips{display:flex;flex-wrap:wrap;gap:6px}.x{border:0;background:none;color:var(--mute);padding:0 4px}
-img.scan{width:44px;height:44px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:8px}
-form{display:flex;gap:6px;margin-top:8px}form input{flex:1;min-width:0}
-#answer{margin-top:8px}
-</style>
-<header><h1>Home</h1><div class="chips">
-<select id="mode" onchange="post('/api/mode',{mode:this.value})"></select>
-<button id="priv" onclick="post('/api/privacy',{on:!S.private,minutes:60})"></button></div></header>
-<main>
-<section class="card"><h2>Doors</h2><div id="doors"></div></section>
-<section class="card"><h2>Routines</h2><div class="chips" id="routines"></div></section>
-<section class="card"><h2>Say or ask</h2>
-<form onsubmit="say(event)"><input id="sayText" placeholder="Dinner's ready!"><select id="sayRoom"></select><button>Say</button></form>
-<form id="askForm" onsubmit="ask(event)"><input id="askText" placeholder="Ask the house..."><button class="primary">Ask</button></form>
-<div id="answer" class="mute"></div></section>
-<section class="card"><h2>Who's home</h2><div id="people"></div></section>
-<div id="rooms" style="display:contents"></div>
-<section class="card"><h2>Devices</h2><div id="devices"></div></section>
-<section class="card" style="grid-column:1/-1"><h2>Recent activity</h2><div id="events"></div></section>
-</main>
-<script>
-let S={},A=[];const qs=new URLSearchParams(location.search);
-// buttons call closures by index, so no data from the house is ever written into JS code
-const btn=(label,fn,cls='')=>{A.push(fn);return `<button class="${cls}" onclick="A[${A.length-1}]()">${label}</button>`};
-if(qs.get('token')){document.cookie='ph_token='+encodeURIComponent(qs.get('token'))+';max-age=31536000;path=/';history.replaceState(null,'','/')}
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-async function post(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)alert(j.error||r.status);load();return j}
-function say(e){e.preventDefault();const t=sayText.value.trim();if(!t)return;const room=sayRoom.value;post('/api/say',room?{text:t,room}:{text:t,everywhere:true});sayText.value=''}
-async function ask(e){e.preventDefault();const q=askText.value.trim();if(!q)return;answer.textContent='Thinking...';const j=await post('/api/ask',{question:q});answer.textContent=j.answer||j.error||'';askText.value=''}
-function addItem(e,f){e.preventDefault();const i=S.instances[+f.dataset.i],v=f.item.value.trim();if(v)post('/api/list',{person:i.id,list:f.list.value||(i.main?'shopping':'todo'),add:[v]});f.item.value=''}
-function when(iso){const d=new Date(iso);return d.toLocaleString([], {weekday:'short',hour:'numeric',minute:'2-digit'})}
-async function load(){
- const r=await fetch('/api/status');
- if(r.status==401){const t=prompt('Dashboard token');if(t){document.cookie='ph_token='+encodeURIComponent(t)+';max-age=31536000;path=/';load()}return}
- S=await r.json();A=[];
- mode.innerHTML=S.modes.map(m=>`<option ${m==S.mode?'selected':''}>${m}</option>`).join('');
- priv.textContent=S.private?'Mics paused - resume':'Pause mics 1h';
- doors.innerHTML=Object.entries(S.doors).map(([d,s])=>`<div class="row"><span>${esc(d)} <span class="pill ${s}">${s}</span></span><span>
-  ${btn('Lock',()=>post('/api/door',{door:d,state:'locked'}))}
-  ${S.api_unlock?btn('Unlock',()=>post('/api/door',{door:d,state:'unlocked'})):''}</span></div>`).join('')||'<span class=mute>No doors configured</span>';
- routines.innerHTML=S.routines.map(n=>btn(esc(n.replace(/_/g,' ')),()=>post('/api/routine',{name:n}))).join('')||'<span class=mute>None yet</span>';
- const rooms=[...new Set(S.instances.flatMap(i=>i.rooms))];
- sayRoom.innerHTML='<option value="">Everywhere</option>'+rooms.map(r=>`<option>${esc(r)}</option>`).join('');
- askForm.style.display=S.assistant?'flex':'none';
- people.innerHTML=Object.entries(S.presence).map(([p,v])=>`<div class="row"><span>${esc(p)}</span><span class="pill ${v.state=='home'?'locked':''}">${v.state} since ${esc(v.since.slice(5,16))}</span></div>`).join('')||'<span class=mute>No presence info yet</span>';
- document.getElementById('rooms').innerHTML=S.instances.map(i=>`<section class="card"><h2>${esc(i.name)}${i.main?' (main)':''}${i.dnd?' · do not disturb':''}${i.quiet?' · quiet hours':''}</h2>
-  ${i.agenda.length?i.agenda.map(a=>`<div class="row"><span>${a.kind=='alarm'?'⏰':a.kind=='timer'?'⏱':a.kind=='action'?'⚙':'🔔'} ${esc(a.text||a.label||a.kind)}${a.repeat!='none'?` <span class=mute>(${esc(a.repeat)})</span>`:''}</span><span class=mute>${when(a.due)} ${btn('✕',()=>post('/api/agenda/cancel',{person:i.id,id:a.id}),'x')}</span></div>`).join(''):'<div class=mute>No reminders</div>'}
-  ${Object.entries(i.lists).map(([n,items])=>`<div style="margin-top:10px"><b>${esc(n)}</b><div class=chips style="margin-top:4px">${items.map(it=>`<span class=pill>${esc(it)} ${btn('✕',()=>post('/api/list',{person:i.id,list:n,remove:[it]}),'x')}</span>`).join('')||'<span class=mute>empty</span>'}</div></div>`).join('')}
-  <form data-i="${S.instances.indexOf(i)}" onsubmit="addItem(event,this)">
-  <input name="item" placeholder="Add to list"><input name="list" placeholder="${i.main?'shopping':'todo'}" style="max-width:90px"><button>Add</button></form></section>`).join('');
- const devs=S.satellites.map(s=>`<div class="row"><span>mic: ${esc(s.room)}</span><span class="pill ${s.online?'':'bad'}">${s.online?(s.muted?'muted':'online'):'offline'}${s.speaker?' · speaker':''}</span></div>`);
- devices.innerHTML=(S.offline.length?`<div class="row bad">Offline: ${S.offline.map(esc).join(', ')}</div>`:'')+devs.join('')||'<span class=mute>All good</span>';
- events.innerHTML=S.events.map(e=>`<div class="row"><span>${e.photo?`<img class=scan src="/api/photo?f=${encodeURIComponent(e.photo)}">`:''}<b>${esc(e.kind)}</b> ${esc(e.name||e.result||e.door||e.node||e.person||e.mode||e.text||e.question||'')} ${e.result&&e.name?esc(e.result):''}</span><span class=mute>${esc(e.time.slice(5,16))}</span></div>`).join('');
-}
-load();setInterval(load,5000);
-</script></html>"""
+from .dashboard_html import DASHBOARD  # noqa: E402

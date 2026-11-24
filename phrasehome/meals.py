@@ -33,7 +33,10 @@ UNITS = {"lb": "lb", "lbs": "lb", "pound": "lb", "pounds": "lb", "oz": "oz", "ou
          "g": "g", "gram": "g", "grams": "g", "kg": "kg", "cup": "cup", "cups": "cup", "tbsp": "tbsp",
          "tablespoon": "tbsp", "tablespoons": "tbsp", "tsp": "tsp", "teaspoon": "tsp", "teaspoons": "tsp",
          "can": "can", "cans": "can", "clove": "clove", "cloves": "clove", "ml": "ml", "l": "l",
-         "pack": "pack", "packs": "pack", "bunch": "bunch", "slice": "slice", "slices": "slice"}
+         "pack": "pack", "packs": "pack", "bunch": "bunch", "slice": "slice", "slices": "slice",
+         "jar": "jar", "jars": "jar", "bottle": "bottle", "bottles": "bottle", "box": "box", "boxes": "box",
+         "bag": "bag", "bags": "bag", "head": "head", "heads": "head", "dozen": "dozen", "pinch": "pinch",
+         "stick": "stick", "sticks": "stick", "piece": "piece", "pieces": "piece", "loaf": "loaf"}
 
 
 def week_of(d: date | None = None) -> str:
@@ -71,7 +74,14 @@ def parse_qty(q: str) -> tuple[Fraction | None, str]:
     return total, UNITS.get(m.group(3), m.group(3))
 
 
+PLURAL = {"cup": "cups", "can": "cans", "clove": "cloves", "pack": "packs", "slice": "slices",
+          "bunch": "bunches", "jar": "jars", "bottle": "bottles", "box": "boxes", "bag": "bags",
+          "head": "heads", "stick": "sticks", "piece": "pieces", "loaf": "loaves"}
+
+
 def fmt_qty(n: Fraction, unit: str) -> str:
+    if n > 1 and unit in PLURAL:
+        unit = PLURAL[unit]
     whole, rest = divmod(n.numerator, n.denominator)
     if rest == 0:
         s = str(whole)
