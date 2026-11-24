@@ -142,8 +142,8 @@ def _cmd_faces(args) -> int:
             print(f"enrolled {p.name} ({p.id}) with {len(embs)} samples, "
                   f"{'allowed' if p.allowed else 'NOT allowed'}")
         elif a == "allow":
-            p = bank.set_allowed(ref, True, name=args.name)
-            print(f"{p.name} ({p.id}) is now allowed")
+            p = bank.set_allowed(ref, True, name=args.name, hours=args.hours)
+            print(f"{p.name} ({p.id}) is now allowed" + (f" until {p.allowed_until}" if p.allowed_until else ""))
         elif a == "deny":
             p = bank.set_allowed(ref, False)
             print(f"{p.name} ({p.id}) is now NOT allowed")
@@ -165,15 +165,10 @@ def _cmd_faces(args) -> int:
 def _cmd_voice(args) -> int:
     from .voice import Voice
 
+    from .dispatcher import Dispatcher
+
     cfg = load_config(args.config)
-
-    class _Home:
-        def backend(self, name):
-            from .actions import build_backend
-
-            return build_backend(name, cfg.backends[name], cfg)
-
-    cfg.home = _Home()
+    home = Dispatcher(cfg)
     v = Voice(cfg)
     text = " ".join(args.text)
     if args.action == "list":
@@ -217,6 +212,84 @@ def _cmd_ask(args) -> int:
                     home.voice.speak(answer)
     finally:
         home.close()
+    return 0
+
+
+def _cmd_agenda(args) -> int:
+    """Everyone's reminders, alarms, timers and lists (what the main room sees)."""
+    from .dispatcher import Dispatcher
+
+    home = Dispatcher(load_config(args.config), dry_run=True)
+    try:
+        insts = home.instances
+        for i in insts.all.values():
+            if args.person and not i.matches_person(args.person):
+                continue
+            print(f"== {i.name}{' (main)' if i.main else ''}  rooms: {', '.join(i.rooms) or '-'}"
+                  f"{'  [do not disturb]' if insts.dnd(i) else ''}")
+            for it in insts.items(i):
+                print(f"  {it['due'][:16].replace('T', ' ')}  {it['kind']:<8} {it['text'] or it['label']}"
+                      f"{'  (' + it['repeat'] + ')' if it['repeat'] != 'none' else ''}  [{it['id']}]")
+            for n in insts.list_names(i):
+                if i.main or n not in insts.shared_lists:
+                    print(f"  list {n}: {', '.join(insts.list_get(i, n)) or '(empty)'}")
+            for m in insts.memories(i)[-5:]:
+                print(f"  note: {m['text']}")
+    finally:
+        home.close()
+    return 0
+
+
+def _cmd_fingerprint(args) -> int:
+    from .dispatcher import Dispatcher
+    from .fingerprint import FingerprintDoor
+
+    cfg = load_config(args.config)
+    if not cfg.fingerprint:
+        print("add a `fingerprint:` section to the config first", file=sys.stderr)
+        return 2
+    fp_cfg = next((f for f in cfg.fingerprint if str(f.get("door", "front")) == args.door), cfg.fingerprint[0])
+    home = Dispatcher(cfg, dry_run=True)
+    try:
+        fp = FingerprintDoor(home, fp_cfg)
+        if args.action == "list":
+            for p in fp.bank.people.values():
+                if p.fingerprints:
+                    print(f"{p.name:<20} fingers {p.fingerprints}")
+            return 0
+        who = " ".join(args.person)
+        if not who:
+            print("usage: phrasehome fingerprint enroll <name>", file=sys.stderr)
+            return 2
+        fp.bank.find(who)  # must be in the face bank first
+        print(f"Place {who}'s finger on the sensor, lift it, then place it again (LED guides you)...")
+        fid = fp.enroll(who)
+        print(f"saved as finger #{fid} for {who}")
+    except KeyError as e:
+        print(f"{e.args[0]} (enroll their face first: phrasehome faces enroll ...)", file=sys.stderr)
+        return 1
+    finally:
+        home.close()
+    return 0
+
+
+def _cmd_backup(args) -> int:
+    """Pack config + data (face bank, events, reminders) + recorded voices into one file."""
+    import tarfile
+    import time as _t
+    from pathlib import Path
+
+    cfg = load_config(args.config)
+    out = Path(args.to or ".") / _t.strftime("phrasehome-backup-%Y%m%d-%H%M.tar.gz")
+    with tarfile.open(out, "w:gz") as tar:
+        tar.add(args.config, arcname="config.yaml")
+        for extra in (cfg.data_dir, "voice_bank", ".env", "credentials.json"):
+            p = cfg.resolve_path(extra)
+            if p.exists():
+                tar.add(p, arcname=Path(extra).name,
+                        filter=lambda ti: None if "voice_cache" in ti.name else ti)
+    out.chmod(0o600)
+    print(f"saved {out}\nIt contains face data, voice recordings and secrets: keep it somewhere private.")
     return 0
 
 
@@ -275,6 +348,7 @@ def main(argv: list[str] | None = None) -> int:
     fc.add_argument("--samples", type=int, default=8)
     fc.add_argument("--deny", action="store_true", help="enroll as NOT allowed (e.g. banned)")
     fc.add_argument("--name", help="new display name")
+    fc.add_argument("--hours", type=float, help="guest pass: allowed for this many hours only")
     fc.add_argument("-n", type=int, default=20, help="how many scans to show")
     fc.set_defaults(fn=_cmd_faces)
 
@@ -284,6 +358,20 @@ def main(argv: list[str] | None = None) -> int:
     vo.add_argument("text", nargs="*")
     vo.add_argument("--seconds", type=float, default=4.0)
     vo.set_defaults(fn=_cmd_voice)
+
+    ag = sub.add_parser("agenda", help="show everyone's reminders, alarms, timers and lists")
+    ag.add_argument("--person")
+    ag.set_defaults(fn=_cmd_agenda)
+
+    fpp = sub.add_parser("fingerprint", help="enroll fingers on the door's fingerprint sensor")
+    fpp.add_argument("action", choices=["enroll", "list"], nargs="?", default="list")
+    fpp.add_argument("person", nargs="*")
+    fpp.add_argument("--door", default="front")
+    fpp.set_defaults(fn=_cmd_fingerprint)
+
+    bk = sub.add_parser("backup", help="back up config, face bank, reminders and recordings")
+    bk.add_argument("--to", help="folder to save the backup in")
+    bk.set_defaults(fn=_cmd_backup)
 
     ak = sub.add_parser("ask", help="type a question to the AI assistant")
     ak.add_argument("question", nargs="*")

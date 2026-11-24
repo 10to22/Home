@@ -85,19 +85,22 @@ def test_request_shape(home):
     assert r["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert "room_lights_on" in r["system"][0]["text"] and "Portland" in r["system"][0]["text"]
     names = {t["name"] for t in r["tools"]}
-    assert names == {"run_command", "home_status", "run_routine", "set_door", "web_search"}
+    assert names == {"run_command", "home_status", "run_routine", "set_door", "web_search",
+                     "agenda", "lists", "memory", "announce", "schedule_command", "set_mode"}
     assert all(t.get("strict") for t in r["tools"] if t["name"] != "web_search")
     first = r["messages"][0]["content"]
     assert "speaking from: bedroom" in first[0]["text"] and first[1]["text"] == "hello"
+    assert "house mode: home" in first[0]["text"]
 
 
 def test_cannot_unlock_by_default(home):
     ai = Assistant(home, client=FakeClient([text("ok")]))
-    door_tool = next(t for t in ai.tools if t["name"] == "set_door")
+    system, tools = ai.profile(home.instances.main)
+    door_tool = next(t for t in tools if t["name"] == "set_door")
     assert door_tool["input_schema"]["properties"]["state"]["enum"] == ["locked"]
     with pytest.raises(PermissionError):
         ai._run_tool("set_door", {"door": "front", "state": "unlocked"}, None)
-    assert "cannot unlock" in ai.system
+    assert "cannot unlock" in system
 
 
 def test_command_with_slots_and_here(home):
@@ -124,9 +127,8 @@ def test_remembers_conversation_per_room(home):
     assert len(client.requests[2]["messages"]) == 1  # bedroom is a separate conversation
 
 
-def test_addressing():
-    ai = Assistant.__new__(Assistant)
-    ai.names = ["house", "jarvis"]
+def test_addressing(home):
+    ai = Assistant(home, client=FakeClient())
     assert ai.addressed("hey house what's the weather") == "what's the weather"
     assert ai.addressed("Jarvis, lock up") == "lock up"
     assert ai.addressed("turn on the lights") is None

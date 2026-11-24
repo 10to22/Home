@@ -47,6 +47,9 @@ DEFAULTS: dict[str, Any] = {
                   {"backend": "doors", "door": "{door}", "state": "locked"}],
     "on_unknown": [{"backend": "voice", "speak": "retinal_scan_failed"},
                    {"backend": "doors", "door": "{door}", "state": "locked"}],
+    # doorbell button on the door camera (firmware/door_cam DOORBELL_PIN)
+    "on_doorbell": [{"backend": "voice", "speak": "doorbell", "everywhere": True},
+                    {"backend": "voice", "speak": "doorbell_announce", "everywhere": True}],
 }
 
 
@@ -62,6 +65,7 @@ class Camera:
         s = str(spec)
         self.snapshot = s.startswith("http") and (s.endswith("/capture") or s.endswith(".jpg"))
         self.cap = None if self.snapshot else cv2.VideoCapture(int(s) if s.isdigit() else s)
+        self.doorbell: int | None = None  # press counter reported by the ESP32-CAM
 
     def read(self):
         if self.snapshot:
@@ -69,6 +73,8 @@ class Camera:
 
             r = requests.get(self.spec, timeout=5)
             r.raise_for_status()
+            if "X-Doorbell" in r.headers:
+                self.doorbell = int(r.headers["X-Doorbell"])
             return self.cv2.imdecode(np.frombuffer(r.content, np.uint8), self.cv2.IMREAD_COLOR)
         ok, frame = self.cap.read()
         return frame if ok else None
@@ -107,6 +113,7 @@ class DoorScanner:
         self._camera = camera
         self._streak = _Streak()
         self._last_decided: dict[str, float] = {}
+        self._bell: int | None = None
         self._running = False
 
     # ---------- the decision logic (one camera frame at a time) ----------
@@ -183,6 +190,23 @@ class DoorScanner:
             except Exception as e:
                 log.error("door scan step %s failed: %s", step, e)
 
+    def doorbell_pressed(self, img=None) -> None:
+        photo = ""
+        if img is not None:
+            try:
+                import cv2
+
+                ok, buf = cv2.imencode(".jpg", img)
+                if ok:
+                    photo = str(self.bank.save_photo("doorbell", buf.tobytes()))
+            except Exception:
+                pass
+        log.info("doorbell at the %s door", self.door)
+        self.home.events.log("doorbell", door=self.door, photo=photo)
+        values = {"door": self.door, "photo": photo}
+        threading.Thread(target=self.home.run_steps, args=(self.cfg["on_doorbell"], values, "doorbell"),
+                         daemon=True).start()
+
     # ---------- camera loop ----------
     def start(self) -> None:
         self._running = True
@@ -200,6 +224,11 @@ class DoorScanner:
                 if self._camera is None:
                     self._camera = Camera(self.cfg["camera"])
                 img = self._camera.read()
+                bell = getattr(self._camera, "doorbell", None)
+                if bell is not None:
+                    if self._bell is not None and bell > self._bell:
+                        self.doorbell_pressed(img)
+                    self._bell = bell
                 if img is not None:
                     self.process(img)
                 backoff = 1.0

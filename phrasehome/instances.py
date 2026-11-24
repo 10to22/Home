@@ -162,7 +162,7 @@ class Instances:
             self._load(inst.id)["agenda"].append(item)
             self._save(inst.id)
         if self.events:
-            self.events.log("agenda.added", instance=inst.id, kind=kind, text=text or label,
+            self.events.log("agenda.added", instance=inst.id, item=kind, text=text or label,
                             due=item["due"])
         return item
 

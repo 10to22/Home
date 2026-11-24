@@ -21,6 +21,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from . import clock
 from .matcher import normalize
 
 log = logging.getLogger("phrasehome.assistant")
@@ -55,49 +56,88 @@ class Assistant:
         self.client = client
         self._convos: dict[str, tuple[float, list]] = {}
         self._lock = threading.Lock()
-        self.tools = self._tools()
-        self.system = self._system_prompt()
+        self._profiles: dict[str, tuple[str, list]] = {}
 
     # ---------- addressing ----------
-    def addressed(self, text: str) -> str | None:
-        """If `text` starts with the wake name (optionally "hey"/"ok" first), return the rest."""
+    def names_for(self, room: str | None) -> list[str]:
+        names = list(self.names)
+        inst = self.home.instances.for_room(room)
+        names += [normalize(w) for w in inst.wake_names]
+        return names
+
+    def addressed(self, text: str, room: str | None = None) -> str | None:
+        """If `text` starts with a wake name for this room (optionally "hey"/"ok" first),
+        return the rest."""
         words = normalize(text).split()
         while words and words[0] in ("hey", "ok", "okay", "hi"):
             words = words[1:]
-        for name in self.names:
+        for name in sorted(self.names_for(room), key=len, reverse=True):
             n = name.split()
             if words[: len(n)] == n:
                 return " ".join(words[len(n):])
         return None
 
-    def strip_name(self, text: str) -> str:
-        rest = self.addressed(text)
+    def strip_name(self, text: str, room: str | None = None) -> str:
+        rest = self.addressed(text, room)
         return text if rest is None else rest
 
     def vocabulary(self) -> list[str]:
-        return sorted({w for n in self.names for w in n.split()} | {"hey", "ok"})
+        words = {w for n in self.names for w in n.split()}
+        for inst in self.home.instances.all.values():
+            words |= {w for n in inst.wake_names for w in normalize(n).split()}
+        return sorted(words | {"hey", "ok"})
 
-    # ---------- what Claude knows and can do ----------
-    def _system_prompt(self) -> str:
+    # ---------- what Claude knows and can do, per instance ----------
+    def profile(self, inst) -> tuple[str, list]:
+        if inst.id not in self._profiles:
+            self._profiles[inst.id] = (self._system_prompt(inst), self._tools(inst))
+        return self._profiles[inst.id]
+
+    def _system_prompt(self, inst) -> str:
         c = self.home.config
         cmds = "\n".join(f"- {cmd.name}: e.g. \"{cmd.phrases[0]}\"" for cmd in c.commands)
         routines = "\n".join(f"- {name}" for name in c.routines) or "(none)"
-        slots = "\n".join(f"- {{{k}}}: {', '.join(v)}" for k, v in c.slots.items()) or "(none)"
+        slots = "\n".join(f"- {{{k}}}: {', '.join(list(v)[:25])}" for k, v in c.slots.items()) or "(none)"
         doors = ", ".join(c.doors) or "(none)"
-        names = ", ".join(self.names)
-        return f"""{self.persona}
+        others = "\n".join(f"- {i.name} (id {i.id}): rooms {', '.join(i.rooms) or 'none'}"
+                           + (" [main room]" if i.main else "")
+                           for i in self.home.instances.all.values())
+        if inst.main:
+            role = ("You are speaking in the household's main room. Here you can see and manage "
+                    "everyone's reminders, alarms, timers, lists and notes; pass `person` to act "
+                    "for someone (e.g. \"remind Sam to...\").")
+        else:
+            role = (f"You are {inst.name}'s own assistant, in their room. Their reminders, lists "
+                    f"and notes are private to them; you can't see other people's. Shared household "
+                    f"lists ({', '.join(self.home.instances.shared_lists)}) are visible to everyone.")
+        kid = ("\nThis room belongs to a child. Keep everything age-appropriate, kind and simple. "
+               "You can't control doors, routines or house modes from here." if inst.kid_mode else "")
+        persona = inst.persona or self.persona
+        names = ", ".join(self.names_for(inst.rooms[0] if inst.rooms else None))
+        return f"""{persona}
 People address you as: {names}.{f" The home is in {self.location}." if self.location else ""}
+{role}{kid}
+
+The people and rooms in this home:
+{others}
 
 How to reply: your reply is spoken aloud by a speaker, so answer in one to three short
 sentences of plain speech. Don't use lists, markdown, emoji or URLs. Say numbers and times the
 way a person would.
 
+Reminders, alarms and timers: use the agenda tool. Work out exact local times from the current
+time given with each message ("tomorrow at 7" means the next day at 07:00). Confirm the day and
+time briefly. To do something later ("turn off the lights in 20 minutes"), use schedule_command.
+Lists (shopping, to-do, anything) use the lists tool. When someone tells you something worth
+remembering about them or the house, save it with the memory tool; their saved notes are given
+with each message. To pass a message to another room or person, use announce.
+
 Controlling the home: use the tools. Prefer a routine when one matches the request, otherwise
 the matching command. Commands take slot values from these lists:
 {slots}
-A command whose action uses {{here}} acts on the room the person is speaking from, and the
-current room is given with each message. After acting, briefly confirm what you did. If a tool
-fails, say so plainly. Don't claim success you didn't get.
+A command whose action uses {{here}} acts on the room the person is speaking from.
+After acting, briefly confirm what you did. If a tool fails, say so plainly. Don't claim success
+you didn't get.
 
 Commands:
 {cmds}
@@ -114,52 +154,118 @@ from outside. The event log is household history: you can use it to answer quest
 who came to the door and when.
 """
 
-    def _tools(self) -> list[dict]:
+    def _tools(self, inst) -> list[dict]:
         c = self.home.config
+        kid = inst.kid_mode
+        blocked = {"doors", "routine", "mode", "privacy", "presence"} if kid else set()
+        cmd_names = [cmd.name for cmd in c.commands if cmd.action["backend"] not in blocked]
+        slot_items = {"type": "object", "additionalProperties": False,
+                      "properties": {"name": {"type": "string"}, "value": {"type": "string"}},
+                      "required": ["name", "value"]}
+        person = {"type": "string", "description": "Whose (a person's name or id); empty for the person speaking."}
         tools = [
             _strict("run_command", "Run one of the home's voice commands.", {
-                "command": {"type": "string", "enum": [cmd.name for cmd in c.commands]},
+                "command": {"type": "string", "enum": cmd_names or ["none"]},
                 "slots": {"type": "array", "description": "Slot values, if the command has slots.",
-                          "items": {"type": "object", "additionalProperties": False,
-                                    "properties": {"name": {"type": "string"},
-                                                   "value": {"type": "string"}},
-                                    "required": ["name", "value"]}},
+                          "items": slot_items},
             }, ["command", "slots"]),
-            _strict("home_status", "Door states, the people in the face bank, and recent events "
-                    "(door scans, commands, locks).", {
+            _strict("home_status", "House mode, who's home, door states, offline devices, sensor "
+                    "readings, the people in the face bank and recent events (door scans, "
+                    "doorbell, commands, locks).", {
                         "event_kind": {"type": "string", "description":
-                                       "Only events of this kind (scan, door, command, routine), or empty for all."},
+                                       "Only events of this kind (scan, doorbell, door, sensor, command, presence), or empty for all."},
                         "limit": {"type": "integer", "description": "How many recent events, 1-200."},
                     }, ["event_kind", "limit"]),
+            _strict("agenda", "Reminders, alarms and timers: add, list or cancel.", {
+                "action": {"type": "string", "enum": ["add", "list", "cancel"]},
+                "kind": {"type": "string", "enum": ["reminder", "alarm", "timer", "any"]},
+                "text": {"type": "string", "description": "What to remind about, or the timer/alarm label. For cancel: words from it, or empty for the next one."},
+                "when": {"type": "string", "description": "Local date-time YYYY-MM-DDTHH:MM, or empty when using in_minutes."},
+                "in_minutes": {"type": "number", "description": "Minutes from now (timers, 'in 20 minutes'); 0 if using when."},
+                "repeat": {"type": "string", "description": "none, daily, weekdays, weekends, weekly, or days like mon,wed,fri."},
+                "person": person,
+            }, ["action", "kind", "text", "when", "in_minutes", "repeat", "person"]),
+            _strict("lists", "Shopping, to-do and any other lists.", {
+                "action": {"type": "string", "enum": ["add", "remove", "show", "clear", "all_lists"]},
+                "list": {"type": "string", "description": "List name, e.g. shopping, todo, packing."},
+                "items": {"type": "array", "items": {"type": "string"}},
+                "person": person,
+            }, ["action", "list", "items", "person"]),
+            _strict("memory", "Save or delete a note about a person or the house.", {
+                "action": {"type": "string", "enum": ["remember", "forget"]},
+                "text": {"type": "string"},
+                "person": person,
+            }, ["action", "text", "person"]),
+            _strict("announce", "Say something out loud in other rooms (intercom).", {
+                "text": {"type": "string", "description": "Exactly what to say."},
+                "rooms": {"type": "array", "items": {"type": "string"}, "description": "Room names, or empty."},
+                "person": {"type": "string", "description": "Say it in this person's rooms, or empty."},
+                "everyone": {"type": "boolean", "description": "Say it in every room."},
+            }, ["text", "rooms", "person", "everyone"]),
         ]
-        if c.routines:
-            tools.append(_strict("run_routine", "Run a routine (several actions at once).",
-                                 {"routine": {"type": "string", "enum": list(c.routines)}},
-                                 ["routine"]))
-        if c.doors:
-            states = ["locked", "unlocked"] if self.allow_unlock else ["locked"]
-            tools.append(_strict("set_door", "Lock (or, if allowed, unlock) a door.", {
-                "door": {"type": "string", "enum": list(c.doors) + ["all"]},
-                "state": {"type": "string", "enum": states},
-            }, ["door", "state"]))
+        if not kid:
+            tools.append(_strict("schedule_command", "Run a command later.", {
+                "command": {"type": "string", "enum": cmd_names or ["none"]},
+                "slots": {"type": "array", "items": slot_items},
+                "when": {"type": "string", "description": "Local date-time YYYY-MM-DDTHH:MM, or empty."},
+                "in_minutes": {"type": "number", "description": "Minutes from now, or 0 if using when."},
+            }, ["command", "slots", "when", "in_minutes"]))
+            from .state import MODES
+
+            tools.append(_strict("set_mode", "Set the house mode.", {
+                "mode": {"type": "string", "enum": MODES}}, ["mode"]))
+            if c.routines:
+                tools.append(_strict("run_routine", "Run a routine (several actions at once).",
+                                     {"routine": {"type": "string", "enum": list(c.routines)}},
+                                     ["routine"]))
+            if c.doors:
+                states = ["locked", "unlocked"] if self.allow_unlock else ["locked"]
+                tools.append(_strict("set_door", "Lock (or, if allowed, unlock) a door.", {
+                    "door": {"type": "string", "enum": list(c.doors) + ["all"]},
+                    "state": {"type": "string", "enum": states},
+                }, ["door", "state"]))
+        if any(i.calendar for i in self.home.instances.all.values()):
+            tools.append(_strict("calendar", "Events from someone's calendar.", {
+                "person": person,
+                "from_day": {"type": "integer", "description": "0 = today, 1 = tomorrow..."},
+                "days": {"type": "integer", "description": "How many days to include, 1-31."},
+            }, ["person", "from_day", "days"]))
         if self.web_search:
             tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 3})
         return tools
 
-    def _run_tool(self, name: str, args: dict, room: str | None) -> str:
+    # ---------- running tools ----------
+    def _slot_values(self, args: dict) -> dict[str, str]:
+        c = self.home.config
+        values: dict[str, str] = {}
+        for s in args.get("slots") or []:
+            options = c.slots.get(s["name"])
+            if options is None:
+                raise ValueError(f"unknown slot {s['name']}")
+            v = s["value"].lower()
+            match = options.get(v) or next((val for val in options.values() if val.lower() == v), None)
+            if match is None:
+                raise ValueError(f"{s['value']} isn't a valid {s['name']} ({', '.join(list(options)[:15])})")
+            values[s["name"]] = match
+        return values
+
+    def _when(self, args: dict):
+        from datetime import datetime, timedelta
+
+        if args.get("in_minutes"):
+            return clock.now() + timedelta(minutes=float(args["in_minutes"]))
+        if args.get("when"):
+            t = datetime.fromisoformat(args["when"])
+            return t if t.tzinfo else t.replace(tzinfo=clock.now().tzinfo)
+        raise ValueError("give `when` or `in_minutes`")
+
+    def _run_tool(self, name: str, args: dict, room: str | None, inst=None) -> str:
         c, home = self.home.config, self.home
+        inst = inst or home.instances.for_room(room)
+        insts = home.instances
         if name == "run_command":
             cmd = next(x for x in c.commands if x.name == args["command"])
-            values: dict[str, str] = {}
-            for s in args.get("slots") or []:
-                options = c.slots.get(s["name"])
-                if options is None:
-                    raise ValueError(f"unknown slot {s['name']}")
-                v = s["value"].lower()
-                match = options.get(v) or next((val for val in options.values() if val.lower() == v), None)
-                if match is None:
-                    raise ValueError(f"{s['value']} isn't a valid {s['name']} ({', '.join(options)})")
-                values[s["name"]] = match
+            values = self._slot_values(args)
             if room:
                 values.setdefault("here", room)
             result = home.run_action(cmd.action, values, phrase=f"assistant: {cmd.name}")
@@ -172,6 +278,8 @@ who came to the door and when.
             if args["state"] == "unlocked" and not self.allow_unlock:
                 raise PermissionError("unlocking by voice is turned off")
             return home.doors.set(args["door"], args["state"], reason="assistant")
+        if name == "set_mode":
+            return home.state.set_mode(args["mode"], reason="assistant")
         if name == "home_status":
             limit = max(1, min(200, int(args.get("limit") or 20)))
             bank = []
@@ -179,39 +287,135 @@ who came to the door and when.
                 from .faces import FaceBank
 
                 fb = FaceBank(c.resolve_path(c.data_dir) / "faces")
-                bank = [{"name": p.name, "allowed": p.allowed, "kind": p.kind,
+                bank = [{"name": p.name, "allowed": p.is_allowed(), "kind": p.kind,
                          "last_seen": p.last_seen, "times_seen": p.seen} for p in fb.people.values()]
             except Exception:
                 pass
-            return json.dumps({"doors": home.doors.states(), "face_bank": bank,
-                               "events": home.events.query(args.get("event_kind") or None, limit=limit)})
+            sensors = {}
+            if home.sensors:
+                sensors = {f"{n}/{i}": {k: v for k, v in val.items() if k in ("state", "value")}
+                           for (n, i), val in list(home.sensors.values.items())[:60]}
+            return json.dumps({
+                "mode": home.state.mode, "people_home": home.state.home_people(),
+                "doors": home.doors.states(),
+                "offline_devices": sorted(home.sensors.offline) if home.sensors else [],
+                "sensors": sensors, "face_bank": bank,
+                "events": home.events.query(args.get("event_kind") or None, limit=limit)})
+        if name == "agenda":
+            action, kind = args["action"], args.get("kind") or "any"
+            if action == "list" and inst.main and str(args.get("person", "")).lower() in ("everyone", "all"):
+                out = {i.name: insts.items(i) for i in insts.all.values()}
+                return json.dumps(out)
+            target = insts.get(args.get("person"), asker=inst)
+            kinds = None if kind == "any" else (kind,)
+            if action == "add":
+                if kind == "any":
+                    kind = "reminder"
+                due = self._when(args)
+                where = room if (target.id == inst.id and room) else (target.rooms[0] if target.rooms else room)
+                text = args.get("text", "")
+                item = insts.add(target, kind, due, text=text if kind == "reminder" else "",
+                                 label=text if kind != "reminder" else "", repeat=args.get("repeat") or "none",
+                                 room=where)
+                return f"added {kind} {item['id']} for {target.name} at {item['due']} in {where or 'the main room'}"
+            if action == "list":
+                return json.dumps(insts.items(target, kinds))
+            if action == "cancel":
+                hit = insts.cancel(target, args.get("text", ""), kinds)
+                if hit:
+                    for r in list(home.scheduler.ringers.values()):
+                        if r.item.get("id") in {h["id"] for h in hit}:
+                            r.stop()
+                return f"cancelled {len(hit)}: " + ", ".join(h["text"] or h["label"] or h["kind"] for h in hit)
+        if name == "lists":
+            action = args["action"]
+            target = insts.get(args.get("person"), asker=inst)
+            lname = args.get("list") or "todo"
+            if action == "all_lists":
+                return json.dumps({n: insts.list_get(target, n) for n in insts.list_names(target)})
+            if action == "add":
+                return json.dumps(insts.list_add(target, lname, args.get("items") or []))
+            if action == "remove":
+                return json.dumps(insts.list_remove(target, lname, args.get("items") or []))
+            if action == "show":
+                return json.dumps(insts.list_get(target, lname))
+            if action == "clear":
+                insts.list_clear(target, lname)
+                return "cleared"
+        if name == "memory":
+            target = insts.get(args.get("person"), asker=inst)
+            if args["action"] == "remember":
+                insts.remember(target, args["text"])
+                return "saved"
+            return f"forgot {insts.forget(target, args['text'])} notes"
+        if name == "announce":
+            rooms = [r.lower() for r in args.get("rooms") or []]
+            if args.get("person"):
+                target = insts.get(args["person"], asker=insts.main)  # anyone may message anyone
+                rooms += target.rooms
+            everywhere = bool(args.get("everyone"))
+            if not rooms and not everywhere:
+                raise ValueError("say who or which rooms")
+            home.voice.speak("intercom", rooms=rooms or None, everywhere=everywhere,
+                             text=args["text"])
+            home.events.log("intercom", room=room, to=",".join(rooms) or "everyone", text=args["text"])
+            return f"said it in {', '.join(rooms) if rooms else 'every room'}"
+        if name == "schedule_command":
+            cmd = next(x for x in c.commands if x.name == args["command"])
+            values = self._slot_values(args)
+            if room:
+                values["here"] = room
+            action = home.render(cmd.action, values)
+            item = insts.add(inst, "action", self._when(args), text=cmd.name, room=room, action=action)
+            return f"scheduled {cmd.name} for {item['due']}"
+        if name == "calendar":
+            from .calendar_feed import upcoming
+
+            target = insts.get(args.get("person"), asker=inst)
+            if not target.calendar:
+                return f"{target.name} has no calendar connected"
+            days = max(1, min(31, int(args.get("days") or 1)))
+            return json.dumps(upcoming(target.calendar, days, int(args.get("from_day") or 0)))
         raise ValueError(f"unknown tool {name}")
 
     # ---------- the conversation ----------
+    def context(self, inst, room: str | None) -> str:
+        h = self.home
+        doors = ", ".join(f"{d} {s}" for d, s in h.doors.states().items()) or "none"
+        upcoming = [f"{i['kind']} {i['due'][5:16].replace('T', ' ')} {i['text'] or i['label']}".strip()
+                    for i in h.instances.items(inst)[:6]]
+        notes = [m["text"] for m in h.instances.memories(inst)][-30:]
+        return (f"[{clock.now().strftime('%A %d %B %Y, %H:%M %Z')}; speaking from: {room or 'unknown'}"
+                f" ({inst.name}'s {'main room' if inst.main else 'room'}); house mode: {h.state.mode};"
+                f" home now: {', '.join(h.state.home_people()) or 'unknown'}; doors: {doors};"
+                f" {inst.name}'s upcoming: {'; '.join(upcoming) or 'nothing'};"
+                f" {inst.name}'s saved notes: {' | '.join(notes) or 'none'}]")
+
     def ask(self, question: str, room: str | None = None) -> str:
+        inst = self.home.instances.for_room(room)
+        system, tools = self.profile(inst)
         with self._lock:
             key = room or "_"
             now = time.monotonic()
             last, messages = self._convos.get(key, (0.0, []))
             if now - last > self.memory_seconds or len(messages) > 40:
                 messages = []  # start fresh rather than trimming the middle of a conversation
-            doors = ", ".join(f"{d} {s}" for d, s in self.home.doors.states().items()) or "none"
-            context = (f"[{time.strftime('%A %d %B %Y, %H:%M')}; speaking from: {room or 'unknown'}; "
-                       f"doors: {doors}]")
-            messages.append({"role": "user", "content": [{"type": "text", "text": context},
-                                                         {"type": "text", "text": question}]})
-            answer = self._loop(messages, room)
+            messages.append({"role": "user", "content": [
+                {"type": "text", "text": self.context(inst, room)},
+                {"type": "text", "text": question}]})
+            answer = self._loop(messages, room, inst, system, tools)
             self._convos[key] = (time.monotonic(), messages)
-            self.home.events.log("assistant", room=room, question=question, answer=answer[:300])
+            self.home.events.log("assistant", room=room, instance=inst.id, question=question,
+                                 answer=answer[:300])
             return answer
 
-    def _loop(self, messages: list, room: str | None) -> str:
+    def _loop(self, messages: list, room: str | None, inst, system: str, tools: list) -> str:
         for _ in range(10):
             resp = self.client.beta.messages.create(
                 model=self.model,
                 max_tokens=16000,
-                system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
-                tools=self.tools,
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                tools=tools,
                 messages=messages,
                 output_config={"effort": self.effort},
                 betas=["server-side-fallback-2026-07-01"],
@@ -228,7 +432,7 @@ who came to the door and when.
             results = []
             for b in calls:
                 try:
-                    out = self._run_tool(b.name, dict(b.input), room)
+                    out = self._run_tool(b.name, dict(b.input), room, inst)
                     results.append({"type": "tool_result", "tool_use_id": b.id, "content": str(out)})
                 except Exception as e:
                     log.warning("assistant tool %s failed: %s", b.name, e)
@@ -287,7 +491,7 @@ class AssistantRouter:
                reply: Callable[[str], None] | None) -> bool:
         """Return True if the AI took this utterance (so it isn't also matched as a command)."""
         now = time.monotonic()
-        rest = self.assistant.addressed(text)
+        rest = self.assistant.addressed(text, room)
         following_up = self._follow_up.get(source, 0) > now
         if rest is None and not following_up:
             return False
@@ -296,14 +500,14 @@ class AssistantRouter:
             reply("matched")
         if rest is not None and all(w == "unk" for w in rest.split()):
             # only the name was heard clearly; the question may be in this audio or the next utterance
-            full = self.assistant.strip_name(self.transcribe(pcm))
+            full = self.assistant.strip_name(self.transcribe(pcm), room)
             if not full.strip():
                 self._follow_up[source] = now + self.assistant.follow_up_seconds
-                self.assistant.home.voice.speak("listening")
+                self.assistant.home.voice.speak("listening", room=room)
                 return True
             question = full
         else:
-            question = self.assistant.strip_name(self.transcribe(pcm)) if pcm else (rest or text)
+            question = self.assistant.strip_name(self.transcribe(pcm), room) if pcm else (rest or text)
         threading.Thread(target=self._answer, args=(question, room, reply), daemon=True).start()
         return True
 
@@ -312,11 +516,11 @@ class AssistantRouter:
         try:
             answer = self.assistant.ask(question, room)
             log.info("assistant -> %r", answer)
-            self.assistant.home.voice.speak(answer)
+            self.assistant.home.voice.speak(answer, room=room)
             if reply:
                 reply("done")
         except Exception as e:
             log.error("assistant failed: %s", e)
-            self.assistant.home.voice.speak("assistant_error")
+            self.assistant.home.voice.speak("assistant_error", room=room)
             if reply:
                 reply("failed")

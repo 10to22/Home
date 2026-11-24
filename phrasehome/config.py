@@ -211,7 +211,7 @@ def load_config(path: str | Path) -> Config:
     scanners = []
     for i, sc in enumerate(raw_scanners if isinstance(raw_scanners, list) else [raw_scanners]):
         sc = dict(sc)
-        for k in ("on_allowed", "on_denied", "on_unknown"):
+        for k in ("on_allowed", "on_denied", "on_unknown", "on_doorbell"):
             if k in sc:
                 sc[k] = steps(sc[k], f"door_scanner {i + 1} {k}")
         if str(sc.get("door", "front")).lower() not in doors:
