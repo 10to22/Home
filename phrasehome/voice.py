@@ -28,7 +28,7 @@ log = logging.getLogger("phrasehome.voice")
 
 DEFAULT_PHRASES: dict[str, Any] = {
     # door scanner
-    "retinal_scan_complete": ["Retinal scan complete. Welcome home, {name}."],
+    "retinal_scan_complete": ["Retinal scan complete. Welcome, {name}."],
     "retinal_scan_failed": ["Retinal scan failed. Locking the {door} door."],
     "fingerprint_prompt": "Please place your finger on the scanner.",
     "fingerprint_accepted": "Fingerprint accepted. Welcome home, {name}.",
@@ -70,6 +70,21 @@ DEFAULT_PHRASES: dict[str, Any] = {
     "assistant_error": "Sorry, I can't answer that right now.",
     "leak_alarm": "Water leak detected in the {room}!",
     "device_offline": "Heads up: the {node} module is offline.",
+    # alarm
+    "alarm_arming": "The alarm will turn on in {seconds} seconds.",
+    "alarm_entry": "Hello. The alarm is on. Scan your face or fingerprint, or say disarm, within {seconds} seconds.",
+    "alarm_alert": "Warning. The alarm was not disarmed. The owners have been notified.",
+    "alarm_disarmed": "Alarm off. Welcome home.",
+    # door greeting
+    "welcome_person": ["Welcome, {name}.", "Welcome home, {name}."],
+    # smoke and weather
+    "smoke_alarm": "Smoke alarm detected in the {room}! Please check it now.",
+    "co_alarm": "Carbon monoxide alarm detected in the {room}! Get some fresh air and leave the house.",
+    "weather_alert": "Weather alert: {headline}",
+    "weather_warning": "Weather heads up for {day}: {detail}.",
+    "package_delivered": "A package was delivered: {description}.",
+    "package_taken": "Heads up: the package on the porch is gone, and nobody from the house picked it up.",
+    "mail": "You've got mail.",
 }
 
 

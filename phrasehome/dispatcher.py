@@ -42,6 +42,10 @@ class Dispatcher:
         self.sensors = None      # set by the sensor watcher when it runs
         self.satellites = None   # set by the listener when mic satellites are enabled
         self.assistant = None    # set when the AI assistant is enabled
+        # optional services, set when they start (see services.py)
+        self.cameras = self.weather = self.alarm = self.smoke = self.energy = None
+        self.rooms = self.locator = self.spotify = self.meals = self.packages = None
+        self.commute = self.voice_id = None
         self.backends: dict[str, Backend] = {}
         self._backend_errors: dict[str, Exception] = {}
         self._backend_lock = threading.Lock()
@@ -131,7 +135,8 @@ class Dispatcher:
             builtin = {"voice": b.VoiceBackend, "doors": b.DoorsBackend, "routine": b.RoutineBackend,
                        "timer": b.TimerBackend, "alarm": b.AlarmBackend, "mode": b.ModeBackend,
                        "presence": b.PresenceBackend, "assistant": b.AskBackend,
-                       "privacy": b.PrivacyBackend, "dnd": b.DndBackend, "logic": b.LogicBackend}
+                       "privacy": b.PrivacyBackend, "dnd": b.DndBackend, "logic": b.LogicBackend,
+                       "report": b.ReportBackend, "security": b.SecurityBackend}
             try:
                 if name in builtin:
                     b = builtin[name](name, {}, self.config)
@@ -243,7 +248,7 @@ class Dispatcher:
 
 
 BUILTIN_NAMES = {"routine", "doors", "voice", "timer", "alarm", "mode", "presence", "assistant",
-                 "privacy", "dnd", "logic"}
+                 "privacy", "dnd", "logic", "report", "security"}
 
 
 def _quality(m: Match) -> float:

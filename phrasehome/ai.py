@@ -1,0 +1,64 @@
+"""One place for the hub's background AI calls (cameras, meal planning, diary, watcher...).
+The spoken assistant lives in assistant.py; this is for single questions that return text or
+JSON. Uses the assistant's model and API key settings."""
+
+from __future__ import annotations
+
+import base64
+import json
+import logging
+from typing import Any
+
+log = logging.getLogger("phrasehome.ai")
+
+
+class AIUnavailable(RuntimeError):
+    pass
+
+
+def _client(home):
+    if home.assistant is not None:
+        return home.assistant.client
+    if getattr(home, "_ai_client", None) is None:
+        try:
+            import anthropic
+
+            home._ai_client = anthropic.Anthropic()
+        except Exception as e:
+            raise AIUnavailable(f"AI not available: {e}")
+    return home._ai_client
+
+
+def _model(home) -> str:
+    return home.config.assistant.get("model", "claude-opus-5-5")
+
+
+def image_block(jpeg: bytes) -> dict:
+    return {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                        "data": base64.standard_b64encode(jpeg).decode()}}
+
+
+def ask(home, prompt: str, images: list[bytes] | None = None, system: str = "",
+        schema: dict | None = None, effort: str = "low") -> Any:
+    """Returns text, or a dict when `schema` (a JSON schema) is given."""
+    content: list[dict] = [image_block(j) for j in images or []]
+    content.append({"type": "text", "text": prompt})
+    output_config: dict[str, Any] = {"effort": effort}
+    if schema:
+        output_config["format"] = {"type": "json_schema", "schema": schema}
+    kwargs: dict[str, Any] = dict(
+        model=_model(home), max_tokens=16000, messages=[{"role": "user", "content": content}],
+        output_config=output_config, betas=["server-side-fallback-2026-07-01"], fallbacks="default")
+    if system:
+        kwargs["system"] = system
+    resp = _client(home).beta.messages.create(**kwargs)
+    if resp.stop_reason == "refusal":
+        raise AIUnavailable("the AI declined this request")
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    return json.loads(text) if schema else text
+
+
+def obj(props: dict[str, Any]) -> dict:
+    """A strict JSON-schema object where every property is required."""
+    return {"type": "object", "properties": props, "required": list(props),
+            "additionalProperties": False}

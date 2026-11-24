@@ -38,6 +38,19 @@ def start_services(home) -> list:
             add(FingerprintDoor(home, fp))
         except Exception as e:
             log.error("fingerprint sensor for %s not started: %s", fp.get("door"), e)
+    optional = [
+        ("cameras", lambda: home.config.cameras, "vision", "CameraHub"),
+        ("weather", lambda: "latitude" in home.config.location, "weather", "Weather"),
+        ("alarm", lambda: "alarm" in home.config.extra, "alarm", "AlarmSystem"),
+    ]
+    for label, wanted, module, cls in optional:
+        if not wanted():
+            continue
+        try:
+            mod = __import__(f"phrasehome.{module}", fromlist=[cls])
+            add(getattr(mod, cls)(home))
+        except Exception as e:
+            log.error("%s not started: %s", label, e)
     if home.config.web.get("enabled", True):
         try:
             from .web import WebServer

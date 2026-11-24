@@ -48,7 +48,8 @@ class Settings:
 #   {if: {mode: away}, then: [...], else: [...]}
 BUILTIN_BACKENDS = {"speak": "voice", "door": "doors", "routine": "routine", "timer": "timer",
                     "alarm": "alarm", "mode": "mode", "presence": "presence", "ask": "assistant",
-                    "privacy": "privacy", "dnd": "dnd", "if": "logic"}
+                    "privacy": "privacy", "dnd": "dnd", "if": "logic", "report": "report",
+                    "security": "security"}
 RESERVED = set(BUILTIN_BACKENDS.values())
 
 
@@ -83,6 +84,9 @@ class Config:
     web: dict[str, Any] = field(default_factory=dict)
     presence: dict[str, Any] = field(default_factory=dict)
     sensors: dict[str, Any] = field(default_factory=dict)
+    cameras: dict[str, Any] = field(default_factory=dict)
+    camera_settings: dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)  # weather, alarm, energy, meals, spotify...
 
     def resolve_path(self, p: str) -> Path:
         path = Path(p).expanduser()
@@ -129,6 +133,11 @@ def normalize_action(action: dict[str, Any], default_backend: str | None,
     if action["backend"] not in backends and action["backend"] not in RESERVED:
         raise ConfigError(f"{where} uses unknown backend '{action['backend']}'")
     return action
+
+
+EXTRA_SECTIONS = ("weather", "alarm", "energy", "packages", "meals", "spotify", "commute", "rooms",
+                  "tags", "beds", "pets", "voice_id", "languages", "diary", "watcher", "floorplan",
+                  "follow_lights", "smoke")
 
 
 def load_config(path: str | Path) -> Config:
@@ -258,4 +267,7 @@ def load_config(path: str | Path) -> Config:
         location=dict(data.get("location") or {}), schedules=schedules, automations=automations,
         vacation=vacation, fingerprint=fingerprint, web=dict(data.get("web") or {}),
         presence=dict(data.get("presence") or {}), sensors=dict(data.get("sensors") or {}),
+        cameras={str(k).lower(): v for k, v in (data.get("cameras") or {}).items()},
+        camera_settings=dict(data.get("camera_settings") or {}),
+        extra={k: data[k] for k in EXTRA_SECTIONS if k in data},
     )

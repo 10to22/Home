@@ -24,7 +24,9 @@ class EventLog:
                 except ValueError:
                     pass
 
-    def log(self, kind: str, **data: Any) -> dict[str, Any]:
+    def log(self, kind: str, /, **data: Any) -> dict[str, Any]:
+        if "kind" in data:  # "kind" names the event itself; keep a field of that name as "type"
+            data["type"] = data.pop("kind")
         ev = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "kind": kind, **data}
         with self._lock:
             self.recent.append(ev)

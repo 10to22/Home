@@ -213,3 +213,43 @@ class DndBackend(_Builtin):
         on = _on(action["dnd"])
         self.home.instances.set_dnd(inst, on)
         return self.home.voice.speak("dnd_on" if on else "dnd_off", room=room, urgent=True)
+
+
+class ReportBackend(_Builtin):
+    """{report: closed}  {report: weather, day: tomorrow}  {report: climate, room: "{here}"} ...
+    Speaks a status sentence in the room. only_problems: true stays quiet when all is fine;
+    notify: <ntfy backend> also sends it to the phone (when there's something to say)."""
+
+    def run(self, action: dict[str, Any], phrase: str) -> str:
+        from ..reports import REPORTS
+
+        kind = str(action["report"]).lower()
+        if kind not in REPORTS:
+            raise ValueError(f"unknown report '{kind}' (have: {', '.join(sorted(REPORTS))})")
+        text = REPORTS[kind](self.home, action)
+        room = action.get("_context", {}).get("here")
+        if text and not action.get("silent"):
+            self.home.voice.speak(text, room=room)
+        if text and action.get("notify"):
+            self.home.run_action({"backend": action["notify"], "message": text, "title": kind.capitalize()})
+        return text or "nothing to report"
+
+
+class SecurityBackend(_Builtin):
+    """{security: arm} / {security: disarm} / {security: status} for the gentle alarm."""
+
+    def run(self, action: dict[str, Any], phrase: str) -> str:
+        a = getattr(self.home, "alarm", None)
+        if a is None:
+            raise RuntimeError("the alarm isn't set up (add an `alarm:` section)")
+        what = str(action["security"]).lower()
+        room = action.get("_context", {}).get("here")
+        if what == "arm":
+            self.home.state.set_mode("away", reason=phrase or "arm")
+            return self.home.voice.speak("alarm_arming", room=room, seconds=int(a.exit_delay))
+        if what == "disarm":
+            result = a.disarm(by=phrase or "voice")
+            if self.home.state.mode in a.arm_modes:
+                self.home.state.set_mode("home", reason="disarm")
+            return result
+        return self.home.voice.speak(f"The alarm is {a.state}.", room=room)

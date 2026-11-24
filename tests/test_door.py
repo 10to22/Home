@@ -107,7 +107,7 @@ def test_allowed_face_scan_complete_and_door_stays_unlocked(home):
     home.doors._remember("front", "unlocked")
     d = walk_up(scanner(home), ALICE)
     assert (d.result, d.name) == ("allowed", "Alice")
-    assert home.spoken == ["Retinal scan complete. Welcome home, Alice.",
+    assert home.spoken == ["Retinal scan complete. Welcome, Alice.",
                            "Please place your finger on the scanner."]
     assert home.doors.state("front") == "unlocked"  # a match never locks the door
     assert Recorder.calls == []

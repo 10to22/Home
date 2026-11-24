@@ -80,6 +80,25 @@ class Camera:
         return frame if ok else None
 
 
+class FeedCamera:
+    """Reads the shared camera feed (vision.CameraHub) instead of opening the camera again."""
+
+    def __init__(self, feed) -> None:
+        self.feed = feed
+        self._last = 0.0
+
+    @property
+    def doorbell(self):
+        return self.feed.doorbell
+
+    def read(self):
+        frame, _, t = self.feed.latest()
+        if frame is None or t == self._last:
+            return None
+        self._last = t
+        return frame
+
+
 @dataclass
 class Decision:
     result: str  # allowed | denied | unknown
@@ -222,7 +241,9 @@ class DoorScanner:
         while self._running:
             try:
                 if self._camera is None:
-                    self._camera = Camera(self.cfg["camera"])
+                    hub = getattr(self.home, "cameras", None)
+                    feed = hub.get(str(self.cfg["camera"])) if hub else None
+                    self._camera = FeedCamera(feed) if feed else Camera(self.cfg["camera"])
                 img = self._camera.read()
                 bell = getattr(self._camera, "doorbell", None)
                 if bell is not None:

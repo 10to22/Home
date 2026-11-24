@@ -57,6 +57,12 @@ class Engine:
         return rec
 
     def feed(self, source: str, room: str | None, pcm: bytes, reply: Reply | None) -> None:
+        smoke = getattr(self.dispatcher, "smoke", None)
+        if smoke is not None:
+            try:
+                smoke.feed(room or source, pcm)  # beep patterns only, even in privacy mode
+            except Exception as e:
+                log.debug("smoke listener: %s", e)
         rec = self._recognizer(source)
         buf = self.buffers.setdefault(source, bytearray())
         buf += pcm
@@ -98,6 +104,10 @@ def listen(config: Config, dry_run: bool = False) -> None:
         )
 
     dispatcher = Dispatcher(config, dry_run=dry_run)
+    if (config.extra.get("smoke") or {}).get("enabled", True):
+        from .smoke import SmokeListener
+
+        SmokeListener(dispatcher)
     model = vosk.Model(str(model_dir))
     router = None
     if config.assistant and config.assistant.get("enabled", True):

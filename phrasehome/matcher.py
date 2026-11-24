@@ -15,9 +15,10 @@ _SLOT_RE = re.compile(r"\{(\w+)\}")
 
 
 def normalize(text: str) -> str:
-    text = text.lower().replace("[unk]", " unk ")
-    text = text.replace("’", "'")
-    text = re.sub(r"[^a-z0-9' ]+", " ", text)
+    """Lowercase words only. Keeps letters of every language (é, ñ, ü, ...)."""
+    text = text.casefold().replace("[unk]", " unk ")
+    text = text.replace("\u2019", "'")
+    text = re.sub(r"[^\w' ]+|_", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
