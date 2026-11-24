@@ -83,7 +83,13 @@ class Assistant:
         from .local_ai import is_local, make_client
 
         self.local = is_local(cfg)
-        self.web_search = bool(cfg.get("web_search", True)) and not self.local  # no web search locally
+        self.web_search = bool(cfg.get("web_search", True)) and not self.local  # Claude's own web search
+        self.search = None  # the local AI's web search (websearch.py)
+        if self.local and cfg.get("search", {}) is not False and cfg.get("web_search", True):
+            from .websearch import WebSearch
+
+            self.search = WebSearch(cfg.get("search") if isinstance(cfg.get("search"), dict) else {})
+        self._read_web: set[str] = set()  # conversations that have read the web (see _guard)
         # the house is mean by default; `assistant: {persona: butler}` for polite
         self.persona = PERSONAS.get(cfg.get("persona", "mean"), cfg.get("persona") or PERSONAS["mean"])
         self.memory_seconds = float(cfg.get("memory_minutes", 5)) * 60
@@ -281,7 +287,29 @@ who came to the door and when.
         tools += tools_for(self.home, inst)
         if self.web_search:
             tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 3})
+        if self.search:
+            tools.append(_strict("web_search", "Search the web for current or unknown information (news, "
+                                 "scores, opening hours, facts). Returns titles, links and snippets.",
+                                 {"query": {"type": "string"}}, ["query"]))
+            tools.append(_strict("read_webpage", "Read the text of a web page, e.g. a search result link.",
+                                 {"url": {"type": "string"}}, ["url"]))
         return tools
+
+    # Web text is written by strangers: after reading it, the AI can't touch these.
+    SENSITIVE_TOOLS = {"set_door", "set_mode", "run_routine", "schedule_command"}
+    SENSITIVE_BACKENDS = {"doors", "security", "mode", "routine", "privacy", "freak"}
+
+    def _guard(self, name: str, args: dict, key: str) -> str | None:
+        if key not in self._read_web:
+            return None
+        risky = name in self.SENSITIVE_TOOLS
+        if name == "run_command":
+            cmd = next((x for x in self.home.config.commands if x.name == args.get("command")), None)
+            risky = bool(cmd and cmd.action.get("backend") in self.SENSITIVE_BACKENDS)
+        if risky:
+            return ("Not allowed: this conversation has read text from the web, so locks, the alarm, modes and "
+                    "routines are off-limits until it ends. Tell them to ask again in a few minutes.")
+        return None
 
     # ---------- running tools ----------
     def _slot_values(self, args: dict) -> dict[str, str]:
@@ -310,6 +338,18 @@ who came to the door and when.
 
     def _run_tool(self, name: str, args: dict, room: str | None, inst=None) -> str:
         c, home = self.home.config, self.home
+        key = room or "_"
+        blocked = self._guard(name, args, key)
+        if blocked:
+            home.events.log("assistant.blocked", tool=name, room=room, why="read the web")
+            return blocked
+        if name in ("web_search", "read_webpage") and self.search:
+            from .websearch import format_results, read_page
+
+            self._read_web.add(key)
+            if name == "web_search":
+                return format_results(args["query"], self.search.search(args["query"]))
+            return read_page(args["url"])
         inst = inst or home.instances.for_room(room)
         insts = home.instances
         if name == "run_command":
@@ -460,6 +500,7 @@ who came to the door and when.
             last, messages = self._convos.get(key, (0.0, []))
             if now - last > self.memory_seconds or len(messages) > 40:
                 messages = []  # start fresh rather than trimming the middle of a conversation
+                self._read_web.discard(key)  # a new conversation hasn't read the web
             messages.append({"role": "user", "content": [
                 {"type": "text", "text": self.context(inst, room, person)},
                 {"type": "text", "text": question}]})

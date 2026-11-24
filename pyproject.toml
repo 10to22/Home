@@ -18,7 +18,7 @@ dependencies = [
 audio = ["vosk>=0.3.45", "sounddevice>=0.4"]
 google = ["gassist-text>=0.1.0", "google-auth-oauthlib>=1.0"]
 vision = ["opencv-python-headless>=4.8,<5", "numpy>=1.24"]  # OpenCV 5 dropped the Caffe loader the camera detector uses
-ai = ["anthropic>=0.100"]
+ai = ["anthropic>=0.100", "ddgs>=9"]  # ddgs: web search for the local AI
 voice = ["piper-tts>=1.2"]
 calendar = ["icalendar>=5", "recurring-ical-events>=2"]
 all = ["phrasehome[audio,google,vision,ai,voice,calendar]"]

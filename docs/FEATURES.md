@@ -143,7 +143,8 @@ instantly; lines starting "house, ..." go to the AI assistant.
 
 | Feature | How |
 |---|---|
-| Claude or a local AI | Claude by default (needs a key, pay per use). `assistant: {provider: local}` runs it on a model in Ollama instead: free, private, works offline, but no web search and less reliable with house tools. `phrasehome ai-check` tests either |
+| Claude or a local AI | Claude by default (needs a key, pay per use). `assistant: {provider: local}` runs it on a model in Ollama instead: free, private, works offline, less reliable with house tools. `phrasehome ai-check` tests either |
+| Web search for the local AI | On by default: DuckDuckGo (no setup), or your own SearXNG, or Brave (free key). It can search and read pages. Pages on your home network are off-limits, and after reading the web the AI can't touch locks, the alarm, modes or routines until that conversation ends |
 | Ask anything | Say "house, ..." (web search for weather and news) |
 | Morning briefing | Part of "good morning", and a weekday 7:15 schedule in Sam's room: weather, reminders, calendar, overnight door activity |
 | Calendars | `calendar:` iCal link per instance: "house, what's on tomorrow?" |

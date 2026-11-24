@@ -86,7 +86,7 @@ def test_assistant_uses_house_tools_through_the_local_model(home, ollama):
     first, second = ollama.requests
     assert first["model"] == "qwen3:8b" and first["stream"] is False
     names = [t["function"]["name"] for t in first["tools"]]
-    assert "run_command" in names and "web_search" not in names  # no web search locally
+    assert "run_command" in names and "web_search" in names and "read_webpage" in names  # the house's own search
     assert first["messages"][0]["role"] == "system" and "house" in first["messages"][0]["content"].lower()
     tool_msg = [m for m in second["messages"] if m["role"] == "tool"]
     assert tool_msg and tool_msg[0]["tool_name"] == "run_command"

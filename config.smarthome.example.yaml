@@ -290,6 +290,9 @@ assistant:
   #   url: http://localhost:11434   # on the Pi: a laptop/desktop on your Wi-Fi running Ollama
   #   model: qwen3:8b               # qwen3:4b for slower computers
   #   vision_model: qwen2.5vl:7b    # for camera questions (optional)
+  # search:                       # the local AI's web search (on by default)
+  #   engine: duckduckgo          # no setup; or searxng (self-hosted, url:) or brave (BRAVE_API_KEY in .env)
+  #   results: 5
   model: claude-opus-5-5
   effort: low
   location: ""                 # CHANGE ME e.g. "Brooklyn, New York"
