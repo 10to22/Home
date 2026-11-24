@@ -129,7 +129,10 @@ way a person would.
 Reminders, alarms and timers: use the agenda tool. Work out exact local times from the current
 time given with each message ("tomorrow at 7" means the next day at 07:00). Confirm the day and
 time briefly. To do something later ("turn off the lights in 20 minutes"), use schedule_command.
-Lists (shopping, to-do, anything) use the lists tool. When someone tells you something worth
+Lists (shopping, to-do, pantry, anything) use the lists tool. Meals, diets, energy, packages,
+countdowns, pets, music, cameras ("what's at the door?"), weather, traffic and where things are
+have their own tools when set up. You can create new voice commands and schedules for people with
+the customize tool, built only from existing commands and routines. When someone tells you something worth
 remembering about them or the house, save it with the memory tool; their saved notes are given
 with each message. To pass a message to another room or person, use announce.
 
@@ -231,6 +234,9 @@ who came to the door and when.
                 "from_day": {"type": "integer", "description": "0 = today, 1 = tomorrow..."},
                 "days": {"type": "integer", "description": "How many days to include, 1-31."},
             }, ["person", "from_day", "days"]))
+        from .assistant_tools import tools_for
+
+        tools += tools_for(self.home, inst)
         if self.web_search:
             tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 3})
         return tools
@@ -377,7 +383,9 @@ who came to the door and when.
                 return f"{target.name} has no calendar connected"
             days = max(1, min(31, int(args.get("days") or 1)))
             return json.dumps(upcoming(target.calendar, days, int(args.get("from_day") or 0)))
-        raise ValueError(f"unknown tool {name}")
+        from .assistant_tools import run
+
+        return run(self.home, name, args, room, inst)
 
     # ---------- the conversation ----------
     def context(self, inst, room: str | None, person: str | None = None) -> str:
@@ -443,7 +451,8 @@ who came to the door and when.
             for b in calls:
                 try:
                     out = self._run_tool(b.name, dict(b.input), room, inst)
-                    results.append({"type": "tool_result", "tool_use_id": b.id, "content": str(out)})
+                    content = out if isinstance(out, list) else str(out)  # lists carry camera pictures
+                    results.append({"type": "tool_result", "tool_use_id": b.id, "content": content})
                 except Exception as e:
                     log.warning("assistant tool %s failed: %s", b.name, e)
                     results.append({"type": "tool_result", "tool_use_id": b.id,

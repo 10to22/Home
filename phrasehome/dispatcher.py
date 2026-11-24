@@ -45,7 +45,7 @@ class Dispatcher:
         # optional services, set when they start (see services.py)
         self.cameras = self.weather = self.alarm = self.smoke = self.energy = None
         self.rooms = self.locator = self.spotify = self.meals = self.packages = None
-        self.commute = self.voice_id = None
+        self.commute = self.voice_id = self.pets = self.diary = self.engine = None
         self.backends: dict[str, Backend] = {}
         self._backend_errors: dict[str, Exception] = {}
         self._backend_lock = threading.Lock()
@@ -64,6 +64,9 @@ class Dispatcher:
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
         self.automations = Automations(self)
+        from .customs import Customs
+
+        Customs(self)  # commands and schedules made by voice (data/custom.json)
 
     def submit(self, m: Match) -> bool:
         """Queue a match. Returns False if it was dropped by cooldown or lost arbitration."""

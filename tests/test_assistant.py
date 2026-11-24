@@ -14,8 +14,8 @@ def text(t):
     return NS(type="text", text=t)
 
 
-def tool(name, **inp):
-    return NS(type="tool_use", id=f"tu_{name}", name=name, input=inp)
+def tool(tool_name, **inp):
+    return NS(type="tool_use", id=f"tu_{tool_name}", name=tool_name, input=inp)
 
 
 class FakeClient:
@@ -85,8 +85,10 @@ def test_request_shape(home):
     assert r["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert "room_lights_on" in r["system"][0]["text"] and "Portland" in r["system"][0]["text"]
     names = {t["name"] for t in r["tools"]}
-    assert names == {"run_command", "home_status", "run_routine", "set_door", "web_search",
-                     "agenda", "lists", "memory", "announce", "schedule_command", "set_mode"}
+    assert {"run_command", "home_status", "run_routine", "set_door", "web_search", "agenda", "lists",
+            "memory", "announce", "schedule_command", "set_mode", "countdowns", "check_closed",
+            "customize"} <= names
+    assert "look_at_camera" not in names  # only offered when cameras are set up
     assert all(t.get("strict") for t in r["tools"] if t["name"] != "web_search")
     first = r["messages"][0]["content"]
     assert "speaking from: bedroom" in first[0]["text"] and first[1]["text"] == "hello"
