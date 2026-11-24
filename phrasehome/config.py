@@ -95,6 +95,7 @@ class Config:
     cameras: dict[str, Any] = field(default_factory=dict)
     camera_settings: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)  # weather, alarm, energy, meals, spotify...
+    source_name: str = ""
 
     def resolve_path(self, p: str) -> Path:
         path = Path(p).expanduser()
@@ -285,4 +286,5 @@ def load_config(path: str | Path) -> Config:
         cameras={str(k).lower(): v for k, v in (data.get("cameras") or {}).items()},
         camera_settings=dict(data.get("camera_settings") or {}),
         extra={k: data[k] for k in EXTRA_SECTIONS if k in data},
+        source_name=path.name,
     )

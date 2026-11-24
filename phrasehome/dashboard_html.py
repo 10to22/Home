@@ -41,6 +41,7 @@ svg.plan rect.handle{fill:var(--acc)}
 <section class="card"><h2>Doors</h2><div id="doors"></div></section>
 <section class="card"><h2>Routines</h2><div class="chips" id="routines"></div></section>
 <section class="card"><h2>Say or ask</h2>
+<form onsubmit="heard(event)"><input id="cmdText" placeholder="Type a command, e.g. lights on"><select id="cmdRoom"></select><button>Run</button></form>
 <form onsubmit="say(event)"><input id="sayText" placeholder="Dinner's ready!"><select id="sayRoom"></select><button>Say</button></form>
 <form id="askForm" onsubmit="ask(event)"><input id="askText" placeholder="Ask the house..."><button class="primary">Ask</button></form>
 <div id="answer" class="mute"></div></section>
@@ -66,6 +67,8 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const btn=(label,fn,cls='')=>{A.push(fn);return `<button class="${cls}" onclick="A[${A.length-1}]()">${label}</button>`};
 async function post(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));if(!r.ok)alert(j.error||r.status);load();return j}
 function say(e){e.preventDefault();const t=sayText.value.trim();if(!t)return;const room=sayRoom.value;post('/api/say',room?{text:t,room}:{text:t,everywhere:true});sayText.value=''}
+async function heard(e){e.preventDefault();const t=cmdText.value.trim();if(!t)return;
+ const j=await post('/api/heard',{text:t,room:cmdRoom.value||null});answer.textContent=j.assistant||(j.matched?'Ran: '+j.matched.replace(/_/g,' '):j.hint||'');cmdText.value=''}
 async function ask(e){e.preventDefault();const q=askText.value.trim();if(!q)return;answer.textContent='Thinking...';const j=await post('/api/ask',{question:q});answer.textContent=j.answer||j.error||'';askText.value=''}
 function addPkg(e,f){e.preventDefault();if(f.number.value.trim())post('/api/package',{number:f.number.value,name:f.name.value});f.reset()}
 function addCd(e,f){e.preventDefault();if(f.name.value.trim()&&f.date.value)post('/api/countdown',{name:f.name.value,date:f.date.value});f.reset()}
@@ -114,6 +117,7 @@ async function load(){
  routines.innerHTML=S.routines.map(n=>btn(esc(n.replace(/_/g,' ')),()=>post('/api/routine',{name:n}))).join('')||'<span class=mute>None yet</span>';
  const rooms=[...new Set(S.instances.flatMap(i=>i.rooms))];
  sayRoom.innerHTML='<option value="">Everywhere</option>'+rooms.map(r=>`<option>${esc(r)}</option>`).join('');
+ if(!cmdRoom.options.length||cmdRoom.dataset.n!=rooms.length){cmdRoom.dataset.n=rooms.length;cmdRoom.innerHTML='<option value="">(no room)</option>'+rooms.map(r=>`<option>${esc(r)}</option>`).join('')}
  askForm.style.display=S.assistant?'flex':'none';
  weatherCard.style.display=S.weather?'':'none';
  if(S.weather)weather.innerHTML=`<div>${esc(S.weather.today)}</div><div class="mute" style="margin-top:6px">${esc(S.weather.tomorrow)}</div>${S.weather.needs.length?`<div style="margin-top:6px">Take: <b>${S.weather.needs.map(esc).join(', ')}</b></div>`:''}`;

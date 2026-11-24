@@ -384,6 +384,15 @@ def _cmd_voice_id(args) -> int:
     return 0
 
 
+def _cmd_simulate(args) -> int:
+    """A virtual house: your config with simulated ESP32s, on this computer."""
+    from .simulator import run
+
+    run(load_config(args.config), mic=args.mic, base_port=args.port, real_backends=args.real_backends,
+        webcam=args.webcam)
+    return 0
+
+
 def _cmd_devices(args) -> int:
     import sounddevice as sd
 
@@ -485,6 +494,14 @@ def main(argv: list[str] | None = None) -> int:
     vi.add_argument("person", nargs="?")
     vi.add_argument("files", nargs="*", help="WAV recordings (3+ seconds each)")
     vi.set_defaults(fn=_cmd_voice_id)
+
+    sm = sub.add_parser("simulate", help="run your config as a virtual house with simulated devices")
+    sm.add_argument("--mic", action="store_true", help="also listen on this computer's microphone")
+    sm.add_argument("--webcam", action="store_true", help="use this computer's webcam as the door camera")
+    sm.add_argument("--port", type=int, default=9100, help="first port for simulated nodes")
+    sm.add_argument("--real-backends", action="store_true",
+                    help="really use Google, phone alerts, speakers... (off by default)")
+    sm.set_defaults(fn=_cmd_simulate)
 
     ak = sub.add_parser("ask", help="type a question to the AI assistant")
     ak.add_argument("question", nargs="*")

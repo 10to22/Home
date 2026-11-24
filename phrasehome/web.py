@@ -131,6 +131,35 @@ class WebServer:
             "assistant": h.assistant is not None,
         }
 
+    # ---------- typed commands ("as if heard in a room") ----------
+    def heard(self, text: str, room: str | None) -> dict:
+        h = self.home
+        ai = h.assistant
+        if ai is not None:
+            rest = ai.addressed(text, room)
+            if rest:
+                answer = ai.ask(rest, room)
+                h.voice.speak(answer, room=room)
+                return {"assistant": answer}
+        engine = getattr(h, "engine", None)
+        if engine is not None:
+            matcher = engine._lang(room).matcher
+        else:
+            if getattr(self, "_matcher_n", None) != len(h.config.commands):
+                from .matcher import Matcher, expand
+
+                s = h.config.settings
+                self._matcher = Matcher(expand(h.config.commands, h.config.slots), s.match_mode,
+                                        s.match_threshold, s.block_words)
+                self._matcher_n = len(h.config.commands)
+            matcher = self._matcher
+        m = matcher.match(text)
+        if not m:
+            return {"matched": None, "hint": "No command matches that. Start with the wake name to ask the AI."}
+        m.room = room
+        h.submit(m)
+        return {"matched": m.command.name, "slots": m.slots}
+
     # ---------- floor plan ----------
     def _fp_path(self) -> Path:
         c = self.home.config
@@ -220,6 +249,8 @@ class WebServer:
             h.voice.speak("intercom", rooms=rooms, everywhere=bool(body.get("everywhere")),
                           text=str(body["text"]))
             return {"result": "said"}
+        if path == "/api/heard":
+            return self.heard(str(body.get("text", "")), body.get("room") or None)
         if path == "/api/ask":
             if h.assistant is None:
                 raise RuntimeError("the AI assistant isn't enabled")
