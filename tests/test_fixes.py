@@ -13,7 +13,7 @@ from phrasehome.dispatcher import Dispatcher
 from phrasehome.door_scanner import DoorScanner
 from phrasehome.voice import STYLES, Voice, effect_filter
 from phrasehome.weather import is_major
-from tests.test_door import ALICE, MALLORY, FakeEngine, Recorder, home, scanner, walk_up  # noqa: F401
+from tests.test_door import ALICE, MALLORY, STRANGER, FakeEngine, Recorder, home, scanner, vec, walk_up  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -235,3 +235,55 @@ def test_auto_unlock_saved_in_face_bank(home):
     home.doors._remember("front", "locked")
     assert not walk_up(sc, ALICE, t0=100).auto_unlock
     assert home.doors.state("front") == "locked"
+
+
+# ---------- "retinal scan failed" for an enrolled face ----------
+def _blend(a, b, cos):
+    """A unit vector with cosine ~`cos` to a (b is mixed in for the rest)."""
+    b = b - (b @ a) * a
+    b = b / np.linalg.norm(b)
+    v = cos * a + np.sqrt(1 - cos * cos) * b
+    return v / np.linalg.norm(v)
+
+
+def test_enrolling_while_the_house_runs_is_seen_and_not_overwritten(home):
+    from phrasehome.faces import FaceBank
+
+    sc = scanner(home)  # the running house's bank (Alice, Mallory)
+    finn = vec(7)
+    cli = FaceBank(sc.bank.folder)  # `phrasehome faces enroll` in another Terminal tab
+    cli.enroll("Finn", [finn])
+    cli.set_auto_unlock("finn")
+    home.doors._remember("front", "locked")
+    d = walk_up(sc, finn)  # the running scanner sees Finn straight away
+    assert (d.name, d.auto_unlock) == ("Finn", True)
+    walk_up(sc, STRANGER, t0=100)  # the scanner saves the bank (a new visitor)...
+    assert FaceBank(sc.bank.folder).find("finn").auto_unlock  # ...without wiping Finn
+
+
+def test_a_visitor_saved_from_my_face_cant_beat_my_enrollment(home):
+    sc = scanner(home)
+    me = vec(8)
+    sc.bank.add_visitor(me)  # the door saved me as a stranger before I enrolled
+    sc.bank.enroll("Finn", [_blend(me, vec(9), 0.6)])  # enrolled samples are a bit different
+    d = walk_up(sc, me)
+    assert d.name == "Finn" and d.result == "allowed"
+
+
+def test_near_miss_keeps_looking_instead_of_locking(home):
+    sc = scanner(home)
+    home.doors._remember("front", "unlocked")
+    nearly = _blend(ALICE, vec(10), 0.33)  # under 0.40, inside the "not sure" zone
+    assert walk_up(sc, nearly, frames=6) is None
+    assert home.doors.state("front") == "unlocked" and home.spoken == []
+    assert not any(p.kind == "visitor" for p in sc.bank.people.values())
+
+
+def test_enroll_removes_visitor_copies_of_me(home):
+    sc = scanner(home)
+    me = vec(11)
+    sc.bank.add_visitor(me)
+    sc.bank.add_visitor(STRANGER)
+    p = sc.bank.enroll("Finn", [me])
+    like = sc.bank.visitors_like(p, 0.40)
+    assert [v.embeddings[0][:3] for v in like] == [list(map(float, me[:3]))]

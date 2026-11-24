@@ -72,6 +72,61 @@ def _cmd_speakers(args) -> int:
     return 0
 
 
+def _faces_test(cfg, sc, bank, eng, args) -> int:
+    """Live: who does the camera think it sees, and how sure is it?"""
+    import time as _t
+
+    from .door_scanner import Camera, DoorScanner
+
+    spec = 0 if args.webcam else sc["camera"]
+    cams = cfg.cameras or {}
+    if isinstance(spec, str) and spec.lower() in cams:
+        spec = cams[spec.lower()].get("url", 0)
+    try:
+        cam = Camera(spec)
+    except Exception as e:
+        print(f"can't open the camera: {e}", file=sys.stderr)
+        return 1
+
+    class _H:
+        config = cfg
+
+    scanner = DoorScanner(_H, sc, engine=eng, camera=cam)
+    thr = float(sc["match_threshold"])
+    print(f"Look at the camera for {args.seconds:.0f} s. A match needs {thr:.2f} or more "
+          f"({thr - float(sc['unsure_margin']):.2f}+ = 'not sure yet', keeps looking). Control+C to stop.")
+    end, scores = _t.monotonic() + args.seconds, []
+    try:
+        while _t.monotonic() < end:
+            img = cam.read()
+            if img is None:
+                continue
+            faces = [f for f in eng.faces(img) if f.size >= sc["min_face_px"]]
+            if not faces:
+                small = eng.faces(img)
+                print("  no face" + (f" big enough (yours is {max(f.size for f in small):.0f} px, needs "
+                                     f"{sc['min_face_px']}: come closer)" if small else ""), flush=True)
+            else:
+                f = max(faces, key=lambda f: f.size)
+                label, person, _, near, score = scanner.identify(eng.embed(img, f))
+                verdict = {"unsure": "not sure yet", "unknown": "STRANGER"}.get(
+                    label, f"MATCH {person.name}" + ("  (auto-unlock)" if getattr(person, "auto_unlock", False) else ""))
+                if person is not None and person.kind == "visitor":
+                    verdict = f"matches {person.id} (a saved stranger) - run: phrasehome faces delete visitors"
+                print(f"  closest: {near.name if near else '-':<12} {score:.2f}  -> {verdict}", flush=True)
+                if near:
+                    scores.append(score)
+            _t.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+    if scores:
+        avg = sum(scores) / len(scores)
+        print(f"average {avg:.2f}, best {max(scores):.2f}. " + (
+            "Looks good." if avg >= thr else
+            "Too low: enroll more samples here, facing the camera in this light, without hats or sunglasses."))
+    return 0
+
+
 def _face_tools(cfg):
     from .door_scanner import DEFAULTS
     from .faces import FaceBank, OpenCVFaceEngine
@@ -102,6 +157,12 @@ def _cmd_faces(args) -> int:
             if e["kind"] == "scan":
                 print(f"{e['time']}  {e['door']:<8} {e['result']:<8} {e['name']:<18} "
                       f"score {e.get('score', 0):.2f}  {e.get('photo') or ''}")
+        return 0
+    if a == "test":
+        return _faces_test(cfg, sc, bank, engine(), args)
+    if a == "delete" and " ".join(args.ref).lower() in ("visitors", "all visitors"):
+        gone = [bank.delete(p.id) for p in list(bank.people.values()) if p.kind == "visitor"]
+        print(f"deleted {len(gone)} visitor entries" + (f": {', '.join(p.id for p in gone)}" if gone else ""))
         return 0
     if not args.ref:
         print(f"usage: phrasehome faces {a} <name or id>", file=sys.stderr)
@@ -160,6 +221,9 @@ def _cmd_faces(args) -> int:
                 bank.save_photo(p.id, photo)
             if args.auto_unlock and not args.deny:
                 p = bank.set_auto_unlock(p.id, True)
+            for v in bank.visitors_like(p, float(sc["match_threshold"])):
+                bank.delete(v.id)  # the door saved them as a stranger before: that was them
+                print(f"  removed {v.id}: it was {p.name}'s face, saved before they were enrolled")
             print(f"enrolled {p.name} ({p.id}) with {len(p.embeddings)} samples in total, "
                   f"{'allowed' if p.allowed else 'NOT allowed'}"
                   + (", their face unlocks the door by itself" if p.auto_unlock else ""))
@@ -466,9 +530,9 @@ def main(argv: list[str] | None = None) -> int:
     fc = sub.add_parser("faces", help="manage the door face bank",
                         description="phrasehome faces list | scans | enroll NAME --camera | "
                                     "allow ID [--name N] | deny ID | rename ID --name N | delete ID | "
-                                    "auto-unlock ID [--off]")
+                                    "auto-unlock ID [--off] | test [--webcam] | delete visitors")
     fc.add_argument("action", choices=["list", "scans", "enroll", "allow", "deny", "rename", "delete",
-                                       "auto-unlock"],
+                                       "auto-unlock", "test"],
                     nargs="?", default="list")
     fc.add_argument("ref", nargs="*", help="name or id")
     fc.add_argument("--camera", action="store_true", help="enroll from the door camera")
@@ -480,6 +544,7 @@ def main(argv: list[str] | None = None) -> int:
     fc.add_argument("--auto-unlock", action="store_true",
                     help="enroll: this face unlocks the door by itself (no fingerprint)")
     fc.add_argument("--off", action="store_true", help="auto-unlock: turn it off for this person")
+    fc.add_argument("--seconds", type=float, default=20, help="test: how long to watch")
     fc.add_argument("--name", help="new display name")
     fc.add_argument("--hours", type=float, help="guest pass: allowed for this many hours only")
     fc.add_argument("-n", type=int, default=20, help="how many scans to show")

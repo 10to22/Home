@@ -40,6 +40,9 @@ DEFAULTS: dict[str, Any] = {
     "interval": 0.3,
     "min_face_px": 80,
     "match_threshold": 0.40,  # cosine similarity; OpenCV suggests 0.363 for SFace
+    # A face this close to an enrolled person (but under match_threshold) is "not sure yet":
+    # keep looking instead of calling it a stranger and locking them out.
+    "unsure_margin": 0.10,
     "confirm_frames": 3,
     "repeat_seconds": 30,
     # Add unrecognized faces to the bank (with a photo) so you can approve them later.
@@ -147,6 +150,7 @@ class DoorScanner:
         self._last_decided: dict[str, float] = {}
         self._bell: int | None = None
         self._running = False
+        self.last_seen: tuple = (None, 0.0, None)  # (closest enrolled name, score, label)
 
     # ---------- the decision logic (one camera frame at a time) ----------
     def process(self, img, now: float | None = None) -> Decision | None:
@@ -159,8 +163,11 @@ class DoorScanner:
             return None
         face = max(faces, key=lambda f: f.size)  # whoever is closest
         emb = self.engine.embed(img, face)
-        person, score = self.bank.best_match(emb)
-        label = person.id if person and score >= self.cfg["match_threshold"] else "unknown"
+        label, person, score, near, near_score = self.identify(emb)
+        self.last_seen = (near.name if near else None, near_score, label)
+        if label == "unsure":
+            st.last_face = now
+            return None  # almost someone we know: keep looking, don't decide on this frame
 
         if label != st.label:
             st = self._streak = _Streak(label=label)
@@ -200,8 +207,28 @@ class DoorScanner:
         photo = self.bank.save_photo("scans", st.photo) if st.photo else None
         d = Decision(result, person.id, person.name, round(st.score, 3), self.door, photo,
                      auto_unlock=label != "unknown" and auto)
+        if label == "unknown" or result == "denied":
+            near, near_score, _ = self.last_seen
+            if near:
+                log.info("closest enrolled face was %s at %.2f (needs %.2f). If that was them, run "
+                         "`phrasehome faces test --webcam` and enroll more samples in this light.",
+                         near, near_score, self.cfg["match_threshold"])
         self._react(d)
         return d
+
+    def identify(self, emb) -> tuple[str, Any, float, Any, float]:
+        """(label, person, score, closest enrolled person, their score). Enrolled people always
+        win over visitor entries, so a visitor saved from your own face can't lock you out."""
+        thr = float(self.cfg["match_threshold"])
+        known, k_score = self.bank.best_match(emb, kind="enrolled")
+        if known and k_score >= thr:
+            return known.id, known, k_score, known, k_score
+        if known and k_score >= thr - float(self.cfg["unsure_margin"]):
+            return "unsure", None, k_score, known, k_score
+        visitor, v_score = self.bank.best_match(emb, kind="visitor")
+        if visitor and v_score >= thr:
+            return visitor.id, visitor, v_score, known, k_score
+        return "unknown", None, k_score, known, k_score
 
     def auto_unlocks(self, person) -> bool:
         if person.kind == "visitor":

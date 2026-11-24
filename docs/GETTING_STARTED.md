@@ -113,6 +113,7 @@ and the fingerprint sensor.
 
    ```bash
    .venv/bin/phrasehome faces enroll "Your Name" --camera --samples 30   # follow the prompts; run again to add more
+   .venv/bin/phrasehome faces test --camera                             # live: who it sees and how sure (0.40+ = match)
    ```
 
 4. Run with the webcam:
@@ -334,7 +335,8 @@ Do it in this order, testing each step on the dashboard before the next:
 |---|---|
 | Commands fire by accident | Raise `match_threshold` (85 → 90) or `min_confidence`; use longer phrases |
 | Commands are missed | `log_heard: true`, add the phrases people actually say; lower `GAIN_SHIFT` for far mics |
-| The face scan is slow or misses | Lower `min_face_px` a little; enroll more samples at the door in both day and night light |
+| The face scan is slow or misses | Run `phrasehome faces test --camera` to see the live score. Under 0.40: enroll more samples at the door in both day and night light. Lower `min_face_px` if it says your face is too small |
+| "Retinal scan failed" for someone enrolled | `phrasehome faces list`: if there are `visitor-...` entries of them from before they enrolled, run `phrasehome faces delete visitors` |
 | Strangers ever match someone | Raise `match_threshold` (0.40 → 0.45) |
 | Camera alerts for leaves, shadows or cars passing | Raise `camera_settings.min_confidence`; limit `detect_groups` per camera |
 | Lights switch off while you sit still | Raise `rooms.empty_after`; mmWave instead of PIR |

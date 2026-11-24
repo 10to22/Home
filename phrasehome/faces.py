@@ -13,6 +13,7 @@ fine on a Raspberry Pi). Everything stays on the hub; no face data leaves your h
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
@@ -104,17 +105,41 @@ class FaceBank:
         self.people: dict[str, Person] = {}
         self._matrix: np.ndarray | None = None
         self._owners: list[str] = []
-        if self.path.exists():
-            known = set(Person.__dataclass_fields__)
-            for p in json.loads(self.path.read_text()).get("people", []):
-                self.people[p["id"]] = Person(**{k: v for k, v in p.items() if k in known})
+        self._stamp: int | None = None
+        self.refresh()
+
+    def _disk_stamp(self) -> int | None:
+        try:
+            return self.path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def refresh(self) -> bool:
+        """Reload if another program (e.g. `phrasehome faces enroll` while the house is running)
+        changed the bank on disk. Called before every match and every change, so the running
+        house sees new faces at once and never writes over them."""
+        with self._lock:
+            stamp = self._disk_stamp()
+            if stamp == self._stamp:
+                return False
+            people = {}
+            if stamp is not None:
+                try:
+                    known = set(Person.__dataclass_fields__)
+                    for p in json.loads(self.path.read_text()).get("people", []):
+                        people[p["id"]] = Person(**{k: v for k, v in p.items() if k in known})
+                except (OSError, ValueError):
+                    return False  # caught mid-write; try again next time
+            self.people, self._stamp, self._matrix = people, stamp, None
+            return True
 
     def save(self) -> None:
         with self._lock:
             self.folder.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
+            tmp = self.path.with_name(f"bank.{os.getpid()}.tmp")
             tmp.write_text(json.dumps({"people": [vars(p) for p in self.people.values()]}))
             tmp.replace(self.path)
+            self._stamp = self._disk_stamp()
             self._matrix = None
 
     def _index(self) -> None:
@@ -126,16 +151,38 @@ class FaceBank:
         self._matrix = np.array(rows, dtype=np.float32) if rows else np.zeros((0, 1), np.float32)
         self._owners = owners
 
-    def best_match(self, emb: np.ndarray) -> tuple[Person | None, float]:
-        """Closest person by cosine similarity (1.0 = identical)."""
+    def best_match(self, emb: np.ndarray, kind: str | None = None) -> tuple[Person | None, float]:
+        """Closest person by cosine similarity (1.0 = identical). kind: only "enrolled" or
+        only "visitor" people."""
         with self._lock:
+            self.refresh()
             if self._matrix is None:
                 self._index()
             if not self._owners:
                 return None, 0.0
             sims = self._matrix @ emb
+            if kind:
+                mask = np.array([self.people[o].kind == kind for o in self._owners])
+                if not mask.any():
+                    return None, 0.0
+                sims = np.where(mask, sims, -2.0)
             i = int(np.argmax(sims))
             return self.people[self._owners[i]], float(sims[i])
+
+    def visitors_like(self, person: Person, threshold: float) -> list[Person]:
+        """Visitor entries that are really this person (saved before they were enrolled, or on a
+        bad frame)."""
+        with self._lock:
+            mine = np.array(person.embeddings, dtype=np.float32)
+            if not len(mine):
+                return []
+            out = []
+            for v in self.people.values():
+                if v.kind == "visitor" and v.embeddings:
+                    sims = np.array(v.embeddings, dtype=np.float32) @ mine.T
+                    if float(np.median(sims.max(axis=1))) >= threshold:
+                        out.append(v)
+            return out
 
     def find(self, ref: str) -> Person:
         ref_l = ref.lower()
@@ -153,6 +200,7 @@ class FaceBank:
 
     def enroll(self, name: str, embeddings: list[np.ndarray], allowed: bool = True) -> Person:
         with self._lock:
+            self.refresh()
             try:
                 p = self.find(name)
             except KeyError:
@@ -166,6 +214,7 @@ class FaceBank:
 
     def add_visitor(self, embedding: np.ndarray, photo: bytes = b"") -> Person:
         with self._lock:
+            self.refresh()
             n = 1 + sum(1 for p in self.people.values() if p.kind == "visitor")
             p = Person(self._new_id(f"visitor-{n}"), f"visitor {n}", False, "visitor",
                        [embedding.tolist()], _now(), _now(), 1)
@@ -177,6 +226,10 @@ class FaceBank:
 
     def seen(self, person: Person, embedding: np.ndarray | None = None) -> None:
         with self._lock:
+            self.refresh()
+            person = self.people.get(person.id)
+            if person is None:
+                return  # deleted meanwhile
             person.seen += 1
             person.last_seen = _now()
             if embedding is not None and len(person.embeddings) < MAX_EMBEDDINGS:
@@ -193,6 +246,7 @@ class FaceBank:
     def set_allowed(self, ref: str, allowed: bool, name: str | None = None,
                     hours: float | None = None) -> Person:
         with self._lock:
+            self.refresh()
             p = self.find(ref)
             p.allowed = allowed
             p.allowed_until = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + hours * 3600)) \
@@ -206,6 +260,7 @@ class FaceBank:
 
     def set_auto_unlock(self, ref: str, on: bool = True) -> Person:
         with self._lock:
+            self.refresh()
             p = self.find(ref)
             p.auto_unlock = on
             if on:
@@ -215,6 +270,7 @@ class FaceBank:
 
     def rename(self, ref: str, name: str) -> Person:
         with self._lock:
+            self.refresh()
             p = self.find(ref)
             p.name = name
             self.save()
@@ -225,6 +281,7 @@ class FaceBank:
 
     def add_fingerprint(self, ref: str, fid: int) -> Person:
         with self._lock:
+            self.refresh()
             p = self.find(ref)
             if fid not in p.fingerprints:
                 p.fingerprints.append(fid)
@@ -237,6 +294,7 @@ class FaceBank:
 
     def delete(self, ref: str) -> Person:
         with self._lock:
+            self.refresh()
             p = self.people.pop(self.find(ref).id)
             self.save()
             return p
