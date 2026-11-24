@@ -110,6 +110,7 @@ class WebServer:
 
             extra["packages"] = [{**i, "words": STATUS_WORDS.get(i["status"], i["status"])} for i in h.packages.items]
         extra["countdowns"] = h.instances.countdowns(h.instances.main)
+        extra["freak"] = h.freak.status()
         if getattr(h, "alarm", None):
             extra["alarm"] = h.alarm.state
         if getattr(h, "rooms", None):
@@ -345,6 +346,10 @@ class WebServer:
         if path == "/api/agenda/cancel":
             inst = h.instances.get(body.get("person"), asker=h.instances.main)
             return {"cancelled": len(h.instances.cancel(inst, body["id"]))}
+        if path == "/api/freak":
+            if body.get("action", "off") == "off":
+                return {"result": h.freak.stop(body.get("room"))}
+            return {"result": h.freak.start(body.get("room"), body.get("minutes"))}
         if path == "/api/alarm":
             return {"result": h.run_action({"backend": "security", "security": body["action"]})}
         if path == "/api/package":

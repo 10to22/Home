@@ -49,6 +49,9 @@ class Dispatcher:
         from .wake import Wake
 
         self.wake = Wake(self)  # morning alarms that make sure you're up
+        from .freak import Freak
+
+        self.freak = Freak(self)
         self.backends: dict[str, Backend] = {}
         self._backend_errors: dict[str, Exception] = {}
         self._backend_lock = threading.Lock()
@@ -144,7 +147,7 @@ class Dispatcher:
                        "privacy": b.PrivacyBackend, "dnd": b.DndBackend, "logic": b.LogicBackend,
                        "report": b.ReportBackend, "security": b.SecurityBackend,
                        "energy": b.EnergyBackend, "spotify": b.SpotifyBackend,
-                       "pets": b.PetBackend, "voiceid": b.VoiceIdBackend}
+                       "pets": b.PetBackend, "voiceid": b.VoiceIdBackend, "freak": b.FreakBackend}
             try:
                 if name in builtin:
                     b = builtin[name](name, {}, self.config)
@@ -233,7 +236,8 @@ class Dispatcher:
         """Push to an instance's phone (ntfy topic), if it has one and an ntfy backend exists."""
         if not inst.phone:
             return
-        ntfy = next((n for n, b in self.config.backends.items() if b["type"] == "ntfy"), None)
+        ntfy = next((n for n, b in self.config.backends.items()
+                     if b["type"] == "ntfy" or b.get("was") == "ntfy"), None)  # "was": simulated
         if not ntfy:
             return
         try:
@@ -288,7 +292,7 @@ class Dispatcher:
 
 BUILTIN_NAMES = {"routine", "doors", "voice", "timer", "alarm", "mode", "presence", "assistant",
                  "privacy", "dnd", "logic", "report", "security", "energy", "spotify",
-                 "pets", "voiceid"}
+                 "pets", "voiceid", "freak"}
 
 
 def _quality(m: Match) -> float:

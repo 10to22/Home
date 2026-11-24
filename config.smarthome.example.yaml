@@ -230,6 +230,10 @@ follow_lights:
   living room: { light: { node: living room, channel: lamp }, level: 60, only_dark: true, off_after: 600 }
 beds:
   sam: { node: bedroom, input: bed }
+freak:                             # "freak mode": everyone else's phone says stay clear, mic off in there
+  minutes: 90                      # ends by itself after this ("freak mode off" ends it sooner)
+  on_start: [ { node: "{here}", channel: lamp, level: 15 } ]
+  on_end:   [ { node: "{here}", channel: lamp, level: 60 } ]
 wake:                              # alarms that make sure you're actually up (edit each one at /alarms)
   make_sure_up: true               # "stop" from bed only quiets it; it comes back until you're up
   recheck_minutes: 3
@@ -432,6 +436,8 @@ commands:
   - { name: privacy_off, phrases: [start listening, privacy off], action: { privacy: off } }
   - { name: dnd_on, phrases: [do not disturb], action: { dnd: on } }
   - { name: dnd_off, phrases: [turn off do not disturb, disturb me], action: { dnd: off } }
+  - { name: freak_on, phrases: [freak mode, freak mode on, "we're getting freaky"], action: { freak: on } }
+  - { name: freak_off, phrases: [freak mode off, end freak mode, freak mode over], action: { freak: off } }
 
   # ---- intercom presets
   - { name: dinner, phrases: ["dinner's ready", dinner time], action: { speak: dinner, everywhere: true } }

@@ -356,3 +356,14 @@ class VoiceIdBackend(_Builtin):
             (" A few more times will help." if n < 6 else "")
         self.home.voice.speak(msg, room=room)
         return msg
+
+
+class FreakBackend(_Builtin):
+    """{freak: on} / {freak: off} in the room it was said in (or room: bedroom). {freak: on, minutes: 60}"""
+
+    def run(self, action: dict[str, Any], phrase: str) -> str:
+        what = str(action.get("freak", "on")).lower()
+        room = self.room(action)
+        if what in ("on", "true", "start"):
+            return self.home.freak.start(room, action.get("minutes"))
+        return self.home.freak.stop(room)

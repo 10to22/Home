@@ -51,7 +51,7 @@ BUILTIN_BACKENDS = {"speak": "voice", "door": "doors", "routine": "routine", "ti
                     "alarm": "alarm", "mode": "mode", "presence": "presence", "ask": "assistant",
                     "privacy": "privacy", "dnd": "dnd", "if": "logic", "report": "report",
                     "security": "security", "plug": "energy", "spotify": "spotify",
-                    "pet": "pets", "voiceid": "voiceid"}
+                    "pet": "pets", "voiceid": "voiceid", "freak": "freak"}
 RESERVED = set(BUILTIN_BACKENDS.values())
 
 
@@ -146,7 +146,7 @@ def normalize_action(action: dict[str, Any], default_backend: str | None,
 
 EXTRA_SECTIONS = ("weather", "alarm", "energy", "packages", "meals", "spotify", "commute", "rooms",
                   "tags", "beds", "pets", "voice_id", "languages", "diary", "watcher", "floorplan",
-                  "follow_lights", "smoke", "wake")
+                  "follow_lights", "smoke", "wake", "freak")
 
 
 def load_config(path: str | Path) -> Config:
@@ -241,11 +241,12 @@ def load_config(path: str | Path) -> Config:
             raise ConfigError(f"door_scanner {i + 1}: door '{sc.get('door', 'front')}' isn't in `doors:`")
         scanners.append(sc)
 
-    if isinstance(data.get("wake"), dict):  # make-sure-I'm-up alarm steps
-        data["wake"] = dict(data["wake"])
-        for k in ("escalate", "on_up"):
-            if k in data["wake"]:
-                data["wake"][k] = steps(data["wake"][k], f"wake {k}")
+    for section, keys in (("wake", ("escalate", "on_up")), ("freak", ("on_start", "on_end"))):
+        if isinstance(data.get(section), dict):  # steps inside these sections work like routines
+            data[section] = dict(data[section])
+            for k in keys:
+                if k in data[section]:
+                    data[section][k] = steps(data[section][k], f"{section} {k}")
 
     from .instances import parse_instances
 

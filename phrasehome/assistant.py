@@ -29,7 +29,7 @@ log = logging.getLogger("phrasehome.assistant")
 PERSONA = ("You are the voice assistant for this home. You're friendly, calm and brief, "
            "like a good butler.")
 
-# assistant: {persona: mean} is the default; aussie, deadpan, butler, or write your own persona text
+# assistant: {persona: mean} is the default; aussie, aussie_uncut (swears), deadpan, butler, or your own text
 PERSONAS = {
     "butler": PERSONA,
     "deadpan": (
@@ -60,6 +60,10 @@ PERSONAS = {
         "change; be gentle with children and guests; and drop the act completely for anything about "
         "safety, health, emergencies, or someone who sounds upset or asks you to be nice."),
 }
+PERSONAS["aussie_uncut"] = PERSONAS["aussie"] + (
+    " You swear casually and often, like a foul-mouthed Aussie: bloody, bastard, shit, arse, bugger, "
+    "piss off, and the odd fuck. Never slurs, and never swearing aimed at who someone is.")
+CLEAN_PERSONA = {"aussie_uncut": "aussie"}  # kids' rooms
 
 
 def _strict(name: str, description: str, props: dict, required: list[str]) -> dict:
@@ -147,6 +151,10 @@ class Assistant:
         kid = ("\nThis room belongs to a child. Keep everything age-appropriate, kind and simple. "
                "You can't control doors, routines or house modes from here." if inst.kid_mode else "")
         persona = PERSONAS.get(inst.persona, inst.persona) if inst.persona else self.persona
+        if inst.kid_mode:  # no swearing in a kid's room
+            for sweary, clean in CLEAN_PERSONA.items():
+                if persona == PERSONAS[sweary]:
+                    persona = PERSONAS[clean]
         names = ", ".join(self.names_for(inst.rooms[0] if inst.rooms else None))
         return f"""{persona}
 People address you as: {names}.{f" The home is in {self.location}." if self.location else ""}

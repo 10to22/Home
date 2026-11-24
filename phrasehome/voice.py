@@ -71,6 +71,13 @@ DEFAULT_PHRASES: dict[str, Any] = {
     "wake_up": "Good morning. You're up after {minutes} minutes.",
     "wake_back_to_bed": "Back in bed? The alarm's back on.",
     "wake_gave_up": "I'll stop now. I've let your phone know you're not up yet.",
+    # freak mode (freak.py): spoken in the room, and sent to everyone else's phone
+    "freak_on": "Freak mode is on. Everyone's been told to stay clear, and I've stopped listening in here.",
+    "freak_off": "Freak mode is off. I'm listening again.",
+    "freak_notify": "Freak mode is on in the {room}. Someone's getting freaky. Stay clear until further notice.",
+    "freak_notify_kid": "The {room} is off-limits for a while. Please stay out.",
+    "freak_over": "Freak mode is over. The {room} is open again. Knock anyway.",
+    "freak_over_kid": "The {room} is open again.",
     "reminder": ["Reminder: {text}", "{name}, don't forget: {text}"],
     # modes and privacy
     "privacy_on": "Okay, I've stopped listening.",
@@ -188,6 +195,15 @@ STYLES["mean"] = {**STYLES["deadpan"], **{
                 "Upright at last. Evolution took millions of years. You took {minutes} minutes. Close race."],
     "wake_back_to_bed": ["Back in bed? Bold. Stupid, but bold. Alarm's back on.",
                          "I saw that. The bed saw that. We're both disappointed. Get up."],
+    "freak_on": ["Freak mode on. Everyone's been told to stay clear, and I've stopped listening. "
+                 "I didn't want to hear it anyway.", "Freak mode on. Mic's off. I'll be over here, judging."],
+    "freak_off": ["Freak mode off. Welcome back to society. Open a window.", "Freak mode's over. I'm listening again. "
+                  "Unfortunately."],
+    "freak_notify": ["Freak mode is on in the {room}. Someone's getting freaky. Stay well clear, and maybe put "
+                     "headphones on.", "Heads up: the {room} is in freak mode. Do not knock. Do not enter. "
+                     "Do not ask."],
+    "freak_over": ["Freak mode's over in the {room}. It's safe to come back. Knock anyway.",
+                   "All clear in the {room}. Freak mode has ended. Proceed with caution."],
     "wake_gave_up": ["Fine. Stay there. I've told your phone you're a lost cause.",
                      "I give up. Which, for the record, is the first thing either of us has done today."],
     "snoozed": ["Fine. {minutes} more minutes of being unconscious.",
@@ -275,6 +291,15 @@ STYLES["aussie"] = {**STYLES["mean"], **{
                 "Upright at last. Took evolution millions of years. Took you {minutes} minutes. Close race."],
     "wake_back_to_bed": ["Back under the doona? Bold move. Stupid, but bold. Alarm's back on.",
                          "Saw that. The bed saw that. We're both disappointed. Up ya get."],
+    "freak_on": ["Freak mode on. Everyone's been told to rack off, and I've stopped listening. Didn't want to hear it anyway.",
+                 "Freak mode on, mate. Mic's off. I'll be over here, judging."],
+    "freak_off": ["Freak mode off. Welcome back to society. Crack a window.",
+                  "Freak mode's done. I'm listening again. Unfortunately."],
+    "freak_notify": ["Freak mode's on in the {room}. Someone's getting freaky. Stay well clear, and maybe "
+                     "chuck some headphones on.", "Heads up: the {room}'s in freak mode. Don't knock. Don't go "
+                     "in. Don't ask."],
+    "freak_over": ["Freak mode's over in the {room}. Safe to come back. Knock anyway, mate.",
+                   "All clear in the {room}. Freak mode's done. Proceed with caution."],
     "wake_gave_up": ["Righto, stay there then. I've told your phone you're a lost cause.",
                      "I give up. Which is the first thing either of us has finished today."],
     "snoozed": ["Righto. {minutes} more minutes of being unconscious.",
@@ -333,6 +358,104 @@ STYLES["aussie"] = {**STYLES["mean"], **{
     "mail": "You've got mail. Bills, probably. It's always bills.",
     "all_clear": "All clear. Nothing happened. Like every other day round here.",
 }}
+
+# `voice: {style: aussie_uncut}`: the Aussie style with the swearing left in. Lines a stranger
+# hears at the door stay milder (delivery drivers, neighbours). In guest mode and kids' rooms
+# (kid_mode) the house switches to the clean version automatically. Safety lines stay plain.
+STYLES["aussie_uncut"] = {**STYLES["aussie"], **{
+    # mornings
+    "alarm": ["It's {time}. Get your arse out of bed, ya bludger. The day's not gonna waste itself.",
+              "{time}, mate. Rise and bloody shine. Well, rise. Shine's a big ask for you.",
+              "Oi. It's {time}. Your doona's sick of your shit and wants a restraining order."],
+    "wake_still_in_bed": ["Turning me off from under the doona doesn't count, ya cheeky bastard. "
+                          "Back in {minutes} minutes.",
+                          "Nice try, dickhead. You haven't moved a muscle. Round two in {minutes} minutes."],
+    "wake_nag": ["This is your {count} bloody reminder. The bed's started charging you rent.",
+                 "Still horizontal. Fair dinkum, that's world-class bludging.",
+                 "The bed sensor reckons you're still there. Even the bed's over your shit.",
+                 "Your {count} reminder, mate. I'm a house. I've got all fucking day. You haven't."],
+    "wake_snoozed": ["Righto. {minutes} more minutes of being useless. {left} snoozes left. "
+                     "Spend 'em wisely. You bloody won't.",
+                     "Snoozing {minutes} minutes. {left} left. The clock doesn't give a shit, and neither do I."],
+    "wake_snooze_denied": ["Nah. Piss off. You've snoozed {snoozes} times. That's not a rest, that's a lifestyle.",
+                           "Snooze denied. Had a look at your choices and they're shit. Overruled.",
+                           "No more snoozes. The snooze button's been retired for its own bloody safety."],
+    "wake_up": ["Oh look, you're vertical. Only took {minutes} bloody minutes. Someone fetch a medal. "
+                "A shit one. From the servo.",
+                "You're up. {minutes} minutes, {snoozes} snoozes. Absolute shocker, mate. "
+                "That's going on your permanent record.",
+                "Upright at last. Took evolution millions of years. Took you {minutes} minutes. Close bloody race."],
+    "wake_back_to_bed": ["Back under the doona? Are you fucking serious? Alarm's back on.",
+                         "Saw that, ya sneaky bastard. The bed saw it too. Up."],
+    "freak_on": ["Freak mode on. Everyone's been told to piss off, and I've stopped listening. "
+                 "Didn't bloody want to hear it anyway.", "Freak mode on, mate. Mic's off. Go for your life."],
+    "freak_off": ["Freak mode off. Welcome back to society. Crack a bloody window.",
+                  "Freak mode's done. I'm listening again. Christ."],
+    "freak_notify": ["Freak mode's on in the {room}. Someone's getting freaky. Stay the hell away, and "
+                     "chuck some headphones on.", "Heads up: the {room}'s in freak mode. Don't knock. Don't go "
+                     "in. Don't bloody ask."],
+    "freak_over": ["Freak mode's over in the {room}. Safe to come back. Knock anyway, for fuck's sake.",
+                   "All clear in the {room}. Freak mode's done. Proceed with bloody caution."],
+    "wake_gave_up": ["Righto, stay there then. I've told your phone you're a lost bloody cause.",
+                     "Fuck it, I give up. First thing either of us has finished today."],
+    "snoozed": ["Righto. {minutes} more minutes of being unconscious, ya bludger.",
+                "Snoozing {minutes} minutes. The clock doesn't give a shit about ya either."],
+    "alarm_set": "Alarm's set for {time}. We both know you'll ignore the bloody thing. Setting it anyway.",
+    "good_morning": ["Mornin'. Another day for you to almost get shit done.",
+                     "G'day. You're awake. Technically. Don't get bloody carried away."],
+    # doors (what strangers hear stays milder)
+    "retinal_scan_complete": ["Retinal scan complete. Oh, bloody hell, it's you, {name}. "
+                              "Was hoping for someone more interesting.",
+                              "Retinal scan complete. G'day, {name}. House was quieter without ya. Better, too."],
+    "retinal_scan_failed": ["Retinal scan failed. Dunno who the hell you are, mate. Locking the {door} door.",
+                            "Retinal scan failed. Bugger off. The {door} door's staying locked."],
+    "fingerprint_prompt": "Finger on the scanner, mate. One of your own, for fuck's sake.",
+    "fingerprint_accepted": "Fingerprint accepted. Welcome home, {name}. Don't touch my shit.",
+    "fingerprint_rejected": "Don't recognise that fingerprint. Barely recognise that bloody finger. Have another go.",
+    "fingerprint_lockout": "Too many stuff-ups. The {door} door's locked. It's your own finger, ya galah. "
+                           "How the hell'd you get that wrong?",
+    "access_denied": "Access denied. Bugger off.",
+    "door_locked": "The {door} door's locked. Someone round here has to be the responsible bastard.",
+    "door_auto_locked": "Some dickhead left the {door} door unlocked again. Won't say who. It was you.",
+    "door_left_open": "The {door} door's been open for bloody ages. Were you born in a tent? "
+                      "We heating the whole street now?",
+    "doorbell_announce": "Someone's at the {door} door. Go on, pretend you're not home. You're a bloody natural.",
+    "welcome_person": ["G'day, {name}. Didn't hear you come in. Didn't miss ya either.",
+                       "Oh, for fuck's sake. {name}'s back."],
+    "welcome_home": ["Oh, you're back. Just when I was enjoying the bloody quiet.",
+                     "Welcome home. Shoes off. You live here, mate. You don't run the joint. I do."],
+    # routines
+    "lockdown": "Lockdown's on. Doors locked, lights off. Finally, no worries and no bloody people.",
+    "goodnight": "Night, mate. I'll be up all night keeping your arse safe. Don't thank me. You never bloody do.",
+    "leaving": "Piss off then. I'll lock up. Try and get something done out there. Anything. I'll wait.",
+    # timers and reminders
+    "timer_set": "Timer's set for {duration}. Don't wander off and forget, like you always bloody do.",
+    "timer_done": ["Timer's done. Whatever's in there, I'm sure it's fine. It's not fucking fine.",
+                   "Timer's up, mate. Go sort out whatever shit you started and then wandered off from."],
+    "timer_done_named": "Your {label} timer's done. Try and look like you meant it, for once.",
+    "timer_cancelled": "Timer cancelled. Another plan, chucked in the bin. Bloody typical.",
+    "reminder": ["Reminder: {text}. You asked me to remember 'cause your memory's bloody useless.",
+                 "{name}. Reminder: {text}. Yep, again. Yep, still your shit to deal with."],
+    # the house
+    "privacy_on": "Fine. Not listening. Whatever you're about to say, I'm sure it's a bloody ripper.",
+    "privacy_off": "Listening again. Try and say something worth hearing this time, for fuck's sake.",
+    "dnd_on": "Do not disturb's on. I'll keep my opinions to meself. Gonna be bloody hard.",
+    "dnd_off": "Do not disturb's off. Been saving up, mate. Brace yourself.",
+    "mode_changed": "House is in {mode} mode now. Hold your bloody applause.",
+    "time_now": "It's {time}. Later than you reckon. Always bloody is with you.",
+    "date_now": "It's {date}. Another bloody one.",
+    "listening": ["What.", "Yeah, what? Make it quick.", "Listening. Unfortunately."],
+    "assistant_error": "Can't answer that right now. Bugger. Enjoy not knowing. You're used to it.",
+    "device_offline": "The {node} module's gone offline. Can't say I blame the poor bastard.",
+    "alarm_alert": "The alarm wasn't disarmed. The owners have been told and the cameras are rolling. Get stuffed.",
+    "alarm_disarmed": "Alarm off. Welcome home. Took ya bloody long enough.",
+    "package_delivered": "Parcel's arrived: {description}. More shit. Exactly what this place needed.",
+    "package_taken": "The parcel on the porch is gone and nobody here took it. Some bastard's nicked it.",
+    "mail": "You've got mail. Bills, probably. It's always bloody bills.",
+    "all_clear": "All clear. Nothing happened. Like every other bloody day round here.",
+}}
+# what a sweary style turns into in guest mode and kids' rooms
+CLEAN_STYLE = {"aussie_uncut": "aussie"}
 
 # `voice: {effect: synthetic}` (or any ffmpeg -af filter string). {up}/{rate} are filled in.
 EFFECTS: dict[str, str] = {
@@ -472,6 +595,9 @@ class Voice:
         if style and style not in STYLES:
             log.warning("unknown voice style %r (have: %s)", style, ", ".join(STYLES))
         self.phrases = {**DEFAULT_PHRASES, **STYLES.get(style or "", {}), **(cfg.get("phrases") or {})}
+        clean = CLEAN_STYLE.get(style or "")
+        self.clean_phrases = ({**DEFAULT_PHRASES, **STYLES.get(clean, {}), **(cfg.get("phrases") or {})}
+                              if clean else self.phrases)
         self._lock = threading.Lock()
         self._router = None
 
@@ -484,11 +610,13 @@ class Voice:
         return self._router
 
     # ---------- choosing what to say ----------
-    def resolve(self, key_or_text: str, lang: str | None = None, **values: Any) -> tuple[str, Path | None]:
-        """Returns (text, recorded clip or built-in sound or None). Unknown keys are spoken as text."""
+    def resolve(self, key_or_text: str, lang: str | None = None, clean: bool = False,
+                **values: Any) -> tuple[str, Path | None]:
+        """Returns (text, recorded clip or built-in sound or None). Unknown keys are spoken as text.
+        clean: no swearing (guest mode, kids' rooms)."""
         key = key_or_text.strip()
         clip = self._clip(key)
-        entry = self.phrases.get(key)
+        entry = (self.clean_phrases if clean else self.phrases).get(key)
         if isinstance(entry, dict) and not ({"text", "file"} & set(entry)):  # {en: ..., es: ...}
             entry = entry.get(lang or "", entry.get(self.config.settings.language, next(iter(entry.values()))))
         if entry is None and clip is None:
@@ -629,8 +757,8 @@ class Voice:
               everywhere: bool = False, urgent: bool = False, **values: Any) -> str:
         home = getattr(self.config, "home", None)
         lang = home.language_for(room) if home is not None and hasattr(home, "language_for") else None
-        text, clip = self.resolve(key_or_text, lang=lang, **values)
         targets = self.targets(room, rooms, everywhere, urgent)
+        text, clip = self.resolve(key_or_text, lang=lang, clean=self.keep_clean(targets or [room]), **values)
         if self.dry_run or not targets:
             log.info("%ssay%s: %s", "DRY RUN " if self.dry_run else "",
                      f" [{', '.join(t or 'hub' for t in targets)}]" if targets else " (nobody to tell)",
@@ -673,6 +801,17 @@ class Voice:
             for th in threads:
                 th.join(timeout=120)
         return text
+
+    def keep_clean(self, rooms: list) -> bool:
+        """No swearing: guests over (guest mode), or a kid's room is listening."""
+        if self.clean_phrases is self.phrases:
+            return False
+        home = getattr(self.config, "home", None)
+        if home is None:
+            return False
+        if getattr(home.state, "mode", "") == "guest":
+            return True
+        return any(home.instances.for_room(r).kid_mode for r in rooms)
 
     def _play_one(self, text: str, audio: Path, room: str | None, volume: float, route: str) -> None:
         try:

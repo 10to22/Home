@@ -222,7 +222,7 @@ def prepare(config, base_port: int = 9100, real_backends: bool = False, webcam: 
     if not real_backends:
         for name, b in list(config.backends.items()):
             if b["type"] not in SAFE_TYPES:
-                config.backends[name] = {"type": "log"}
+                config.backends[name] = {"type": "log", "was": b["type"]}  # e.g. phone pushes get printed
         config.fingerprint = []
         if "spotify" in config.extra:
             config.extra["spotify"] = {**config.extra["spotify"], "simulated": True}

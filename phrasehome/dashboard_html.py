@@ -32,7 +32,7 @@ svg.plan rect.handle{fill:var(--acc)}
 </style>
 <header><h1>Home</h1><div class="chips">
 <a href="/meals" class="pill" style="padding:6px 10px">Meal planner</a> <a href="/alarms" class="pill" style="padding:6px 10px">Alarms</a>
-<span id="alarmTop"></span>
+<span id="alarmTop"></span><span id="freakTop"></span>
 <select id="mode" onchange="post('/api/mode',{mode:this.value})"></select>
 <button id="priv" onclick="post('/api/privacy',{on:!S.private,minutes:60})"></button></div></header>
 <main>
@@ -110,6 +110,7 @@ async function load(){
  S=await r.json();A=[];
  mode.innerHTML=S.modes.map(m=>`<option ${m==S.mode?'selected':''}>${m}</option>`).join('');
  priv.textContent=S.private?'Mics paused - resume':'Pause mics 1h';
+ freakTop.innerHTML=(S.freak||[]).map(f=>`<span class="pill bad">freak mode: ${esc(f.room)}, ${f.minutes_left} min left</span> `+btn('End',()=>post('/api/freak',{action:'off',room:f.room}))).join(' ');
  alarmTop.innerHTML=S.alarm?`<span class="pill ${S.alarm=='disarmed'?'':'bad'}">alarm ${esc(S.alarm)}</span> `+(S.alarm=='disarmed'?btn('Arm',()=>post('/api/alarm',{action:'arm'})):btn('Disarm',()=>post('/api/alarm',{action:'disarm'}))):'';
  drawCams();if(!editing)drawPlan();
  doors.innerHTML=Object.entries(S.doors).map(([d,s])=>`<div class="row"><span>${esc(d)} <span class="pill ${s}">${s}</span></span><span>

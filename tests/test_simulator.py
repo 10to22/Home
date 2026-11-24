@@ -30,7 +30,8 @@ def test_virtual_house_end_to_end(tmp_path):
     cfg = load_config(ROOT / "config.smarthome.example.yaml")
     cfg.data_dir = str(tmp_path)
     sims = prepare(cfg, base_port=0)
-    assert cfg.backends["google"] == {"type": "log"} and cfg.backends["phone"] == {"type": "log"}
+    assert cfg.backends["google"] == {"type": "log", "was": "google_assistant"}
+    assert cfg.backends["phone"] == {"type": "log", "was": "ntfy"}
     assert "lock" in sims["front door"].channels and "contact" in sims["front door"].inputs
     assert {"lights", "feeder"} <= set(sims["kitchen"].channels)
     home = Dispatcher(cfg)
@@ -65,3 +66,18 @@ def test_virtual_house_end_to_end(tmp_path):
         home.close()
         for s in sims.values():
             s.close()
+
+
+
+def test_simulated_phone_messages_are_printed(tmp_path, caplog):
+    import logging
+
+    cfg = load_config(ROOT / "config.smarthome.example.yaml")
+    cfg.data_dir = str(tmp_path)
+    prepare(cfg, base_port=0)
+    home = Dispatcher(cfg)
+    home.voice.dry_run = True
+    with caplog.at_level(logging.INFO):
+        home.run_action({"backend": "freak", "freak": "on"}, {"here": "kids room"})
+    assert "would send to CHANGE-ME-sam" in caplog.text and "freak mode" in caplog.text.lower()
+    home.close()

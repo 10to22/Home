@@ -114,8 +114,9 @@ class Engine:
                 # Privacy mode: nothing is logged, matched or sent to the AI, except the
                 # command that turns privacy off (otherwise you could never say it).
                 m = L.matcher.match(text) if text else None
-                if m and m.command.action.get("backend") == "privacy" and \
-                        str(m.command.action.get("privacy")).lower() in ("off", "false"):
+                a = m.command.action if m else {}
+                if m and ((a.get("backend") == "privacy" and str(a.get("privacy")).lower() in ("off", "false"))
+                          or (a.get("backend") == "freak" and str(a.get("freak")).lower() in ("off", "false", "stop"))):
                     m.room, m.notify = room, reply
                     self.dispatcher.submit(m)
                 return
