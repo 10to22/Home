@@ -1,0 +1,200 @@
+# phrasehome: the whole smart home. Copy to config.yaml and edit.
+#   ESP32 mics in every room -> voice commands + an AI assistant ("house, ...")
+#   ESP32 device nodes (lights, locks), ESP32 speakers, a door camera with face scanning
+#   Google Home for everything else (TV, vacuum, thermostat, smart plugs)
+# Lines marked CHANGE ME need your own names/addresses.
+
+settings:
+  model_path: models/vosk-model-small-en-us-0.15
+  match_mode: utterance
+  match_threshold: 85
+  min_confidence: 0.6
+  cooldown_seconds: 2
+  arbitration_seconds: 0.6
+  restrict_vocabulary: true
+  block_words: ["don't", "dont", "do not", "not", "never"]
+  default_backend: esp
+  log_heard: false
+
+data_dir: data            # face bank, event log, door states, voice cache
+
+sources:
+  satellites: { port: 7777 }
+  local_mic: { room: living room }   # delete if the Pi has no mic
+
+backends:
+  esp:                               # ESP32 device nodes (firmware/device_node)
+    type: esp32
+    token_env: PHRASEHOME_TOKEN
+    nodes:                           # CHANGE ME: one per device node
+      kitchen: phrasehome-kitchen.local
+      bedroom: phrasehome-bedroom.local
+      living room: phrasehome-living-room.local
+      porch: phrasehome-porch.local
+      front door: phrasehome-front-door.local
+      back door: phrasehome-back-door.local
+  music:                             # ESP32 speakers (firmware/speaker)
+    type: speakers
+    token_env: PHRASEHOME_TOKEN
+    speakers:
+      kitchen: phrasehome-speaker-kitchen.local
+      living room: phrasehome-speaker-living-room.local
+      front door: phrasehome-speaker-front-door.local   # a speaker by the door for the scanner's voice
+  google:                            # Google Home: TV, vacuum, thermostat, plugs...
+    type: google_assistant
+    credentials: credentials.json
+  phone:                             # push notifications via the free ntfy app (ntfy.sh)
+    type: webhook
+    url: https://ntfy.sh
+    # CHANGE ME: pick a long random topic name and subscribe to it in the ntfy app
+
+# ---------------------------------------------------------------- doors
+doors:
+  front:
+    lock:   { node: front door, channel: lock, state: on }
+    unlock: { node: front door, channel: lock, state: off }
+    sensor: { backend: esp, node: front door, channel: lock, locked_when: on }
+  back:
+    lock:   { node: back door, channel: lock, state: on }
+    unlock: { node: back door, channel: lock, state: off }
+    sensor: { backend: esp, node: back door, channel: lock, locked_when: on }
+  # A smart lock already in Google Home instead of an ESP32:
+  # garage:
+  #   lock: { backend: google, say: lock the garage door }
+
+# ---------------------------------------------------------------- door scanner
+door_scanner:
+  door: front
+  camera: http://phrasehome-doorcam-front.local/capture   # ESP32-CAM; or 0 for a USB webcam
+  min_face_px: 90            # ignore faces farther away than ~1.5 m
+  match_threshold: 0.40      # higher = stricter
+  confirm_frames: 3
+  repeat_seconds: 30
+  on_allowed:                # recognized and allowed. Note: never locks.
+    - { speak: retinal_scan_complete }
+    - { speak: fingerprint_prompt }
+    # Face-only unlocking is easy to fool with a photo. Wait for the fingerprint stage, or accept the risk:
+    # - { door: "{door}", state: unlocked }
+  on_denied:                 # in the bank but not allowed
+    - { speak: retinal_scan_failed }
+    - { door: "{door}", state: locked }
+    - { backend: phone, json: { topic: CHANGE-ME-house-alerts, title: "Door", message: "{name} was denied at the {door} door" } }
+  on_unknown:                # never seen before
+    - { speak: retinal_scan_failed }
+    - { door: "{door}", state: locked }
+    - { node: porch, channel: lights, state: on }
+    - { backend: phone, json: { topic: CHANGE-ME-house-alerts, title: "Unknown visitor", message: "Someone unrecognized is at the {door} door" } }
+
+# ---------------------------------------------------------------- voice bank
+voice:
+  engine: piper                          # piper (natural) | espeak (robotic) | command (your own)
+  piper_model: models/piper/en_US-lessac-medium.onnx
+  speed: 1.0
+  speakers: music                        # also speak through speakers in group mode
+  phrases:                               # change any wording; a list picks one at random
+    retinal_scan_complete:
+      - "Retinal scan complete. Welcome home, {name}."
+      - "Retinal scan complete. Good to see you, {name}."
+    retinal_scan_failed: "Retinal scan failed. Locking the {door} door."
+    fingerprint_prompt: "Please place your finger on the scanner."
+    lockdown: "Lockdown engaged. All doors are locked."
+    goodnight: "Good night. The house is secure."
+    leaving: "Goodbye. Locking up behind you."
+    good_morning: ["Good morning.", "Morning! Rise and shine."]
+    panic: "Emergency mode. All lights on. Doors locked."
+    all_clear: "All clear."
+  # Record your own clip for any phrase: phrasehome voice record retinal_scan_complete
+
+# ---------------------------------------------------------------- AI assistant
+assistant:
+  names: [house]               # say "house, ..." (pick a word that doesn't come up in normal talk)
+  model: claude-opus-5-5
+  effort: low                  # fast spoken answers; medium/high for harder questions
+  location: ""                 # CHANGE ME e.g. "Austin, Texas" (for weather and local questions)
+  web_search: true
+  allow_unlock: false          # the AI can lock but never unlock doors
+  transcriber: vosk            # or whisper (more accurate: pip install faster-whisper)
+  memory_minutes: 5
+
+# ---------------------------------------------------------------- routines
+routines:
+  lockdown:                    # most lights off, every door locked
+    - { door: all, state: locked }
+    - { node: kitchen, channel: lights, state: off }
+    - { node: bedroom, channel: lights, state: off }
+    - { node: living room, channel: lights, state: off }
+    - { node: porch, channel: lights, state: on }     # keep the porch lit
+    - { speak: lockdown }
+  goodnight:
+    - { routine: lockdown }
+    - { node: bedroom, channel: lamp, level: 10 }
+    - { backend: music, speaker: all, mode: bluetooth }
+    - { backend: google, say: turn off the TV }
+    - { speak: goodnight }
+  leaving:
+    - { speak: leaving }
+    - { wait: 20 }                                    # time to get out the door
+    - { routine: lockdown }
+    - { backend: google, say: start the vacuum }      # clean while you're out
+  good_morning:
+    - { node: kitchen, channel: lights, state: on }
+    - { node: bedroom, channel: lamp, level: 60 }
+    - { backend: google, say: set the thermostat to 70 }
+    - { speak: good_morning }
+  movie_time:
+    - { node: living room, channel: lights, state: off }
+    - { node: living room, channel: lamp, level: 15 }
+    - { backend: google, say: turn on the TV }
+  party:
+    - { backend: music, speaker: all, mode: group }
+    - { node: all, channel: lights, state: on }
+  panic:                       # everything on so you can see; doors locked; phone alert
+    - { node: all, channel: lights, state: on }
+    - { node: all, channel: lamp, level: 100 }
+    - { door: all, state: locked }
+    - { speak: panic }
+    - { backend: phone, json: { topic: CHANGE-ME-house-alerts, title: "PANIC", priority: 5, message: "Panic mode was triggered at home" } }
+
+slots:
+  room: [kitchen, bedroom, living room, porch]
+  door: [front, back]
+  level: { ten: "10", twenty: "20", thirty: "30", forty: "40", fifty: "50",
+           sixty: "60", seventy: "70", eighty: "80", ninety: "90", one hundred: "100" }
+  temp: { sixty five: "65", sixty eight: "68", seventy: "70", seventy two: "72", seventy five: "75" }
+
+commands:
+  # ---- lights
+  - { name: lights_on, phrases: [lights on, turn on the lights], action: { node: "{here}", channel: lights, state: on } }
+  - { name: lights_off, phrases: [lights off, turn off the lights], action: { node: "{here}", channel: lights, state: off } }
+  - { name: room_lights_on, phrases: ["turn on the {room} lights", "{room} lights on"], action: { node: "{room}", channel: lights, state: on } }
+  - { name: room_lights_off, phrases: ["turn off the {room} lights", "{room} lights off"], action: { node: "{room}", channel: lights, state: off } }
+  - { name: all_lights_off, phrases: [all lights off, turn off all the lights], action: { node: all, channel: lights, state: off } }
+  - { name: dim, phrases: ["dim the lights to {level} percent", "lamp {level} percent"], action: { node: "{here}", channel: lamp, level: "{level}" } }
+
+  # ---- doors (lock only: unlocking is the door scanner's job, never a voice's)
+  - { name: lock_door, phrases: ["lock the {door} door"], action: { door: "{door}", state: locked } }
+  - { name: lock_all, phrases: [lock all the doors, lock the doors, lock up], action: { door: all, state: locked } }
+
+  # ---- routines
+  - { name: lockdown, phrases: [lockdown, lock down, lockdown mode], action: { routine: lockdown } }
+  - { name: goodnight, phrases: [good night house, goodnight house, bedtime], action: { routine: goodnight } }
+  - { name: leaving, phrases: ["i'm leaving", "we're leaving", heading out], action: { routine: leaving } }
+  - { name: good_morning, phrases: [good morning house, good morning], action: { routine: good_morning } }
+  - { name: movie_time, phrases: [movie time, movie mode], action: { routine: movie_time } }
+  - { name: party, phrases: [party mode, party time], action: { routine: party } }
+  - { name: panic, phrases: [panic mode, emergency, help help help], action: { routine: panic } }
+
+  # ---- music (ESP32 speakers)
+  - { name: play_everywhere, phrases: [play everywhere, all speakers], action: { backend: music, speaker: all, mode: group } }
+  - { name: speaker_bluetooth, phrases: [bluetooth speaker, speaker on its own], action: { backend: music, speaker: "{here}", mode: bluetooth } }
+  - { name: louder, phrases: [volume up, louder], action: { backend: music, speaker: "{here}", volume: up } }
+  - { name: quieter, phrases: [volume down, quieter], action: { backend: music, speaker: "{here}", volume: down } }
+
+  # ---- Google Home devices
+  - { name: vacuum_start, phrases: [start the vacuum, vacuum the house, start cleaning], action: { backend: google, say: start the vacuum } }
+  - { name: vacuum_stop, phrases: [stop the vacuum, vacuum go home], action: { backend: google, say: send the vacuum home } }
+  - { name: vacuum_room, phrases: ["vacuum the {room}"], action: { backend: google, say: "vacuum the {room}" } }
+  - { name: tv_on, phrases: [turn on the tv, tv on], action: { backend: google, say: turn on the TV } }
+  - { name: tv_off, phrases: [turn off the tv, tv off], action: { backend: google, say: turn off the TV } }
+  - { name: thermostat, phrases: ["set the temperature to {temp}", "make it {temp} degrees"], action: { backend: google, say: "set the thermostat to {temp}" } }
+  - { name: find_phone, phrases: [find my phone, where's my phone], action: { backend: google, say: find my phone } }

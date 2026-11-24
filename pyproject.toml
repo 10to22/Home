@@ -16,8 +16,11 @@ dependencies = [
 [project.optional-dependencies]
 audio = ["vosk>=0.3.45", "sounddevice>=0.4"]
 google = ["gassist-text>=0.1.0", "google-auth-oauthlib>=1.0"]
-all = ["phrasehome[audio,google]"]
-dev = ["pytest>=7"]
+vision = ["opencv-python-headless>=4.8", "numpy>=1.24"]
+ai = ["anthropic>=0.100"]
+voice = ["piper-tts>=1.2"]
+all = ["phrasehome[audio,google,vision,ai,voice]"]
+dev = ["pytest>=7", "numpy>=1.24"]
 
 [project.scripts]
 phrasehome = "phrasehome.cli:main"

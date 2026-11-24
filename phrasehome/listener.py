@@ -24,18 +24,25 @@ Reply = Callable[[str], None]
 class Engine:
     """One speech recognizer per audio source, all sharing one model and matcher."""
 
-    def __init__(self, config: Config, model, dispatcher: Dispatcher) -> None:
+    MAX_UTTERANCE_BYTES = 20 * 16000 * 2  # keep at most 20 s of audio per utterance
+
+    def __init__(self, config: Config, model, dispatcher: Dispatcher, router=None) -> None:
         import vosk
 
         self._vosk = vosk
         self.config = config
         self.model = model
         self.dispatcher = dispatcher
+        self.router = router  # the AI assistant, if enabled
         s = config.settings
         self.candidates = expand(config.commands, config.slots)
         self.matcher = Matcher(self.candidates, s.match_mode, s.match_threshold, s.block_words)
-        self.grammar = json.dumps(vocabulary(self.candidates)) if s.restrict_vocabulary else None
+        words = vocabulary(self.candidates)
+        if router:  # the recognizer must know the wake name
+            words = words[:-1] + router.assistant.vocabulary() + words[-1:]
+        self.grammar = json.dumps(words) if s.restrict_vocabulary else None
         self.recognizers: dict[str, object] = {}
+        self.buffers: dict[str, bytearray] = {}
 
     def _recognizer(self, source: str):
         rec = self.recognizers.get(source)
@@ -51,8 +58,18 @@ class Engine:
 
     def feed(self, source: str, room: str | None, pcm: bytes, reply: Reply | None) -> None:
         rec = self._recognizer(source)
+        buf = self.buffers.setdefault(source, bytearray())
+        buf += pcm
+        if len(buf) > self.MAX_UTTERANCE_BYTES:
+            del buf[: len(buf) - self.MAX_UTTERANCE_BYTES]
         if rec.AcceptWaveform(pcm):
-            handle_result(json.loads(rec.Result()), self.matcher, self.dispatcher, self.config,
+            result = json.loads(rec.Result())
+            audio = bytes(buf)
+            buf.clear()
+            text = result.get("text", "").strip()
+            if self.router and text and self.router.handle(source, room, text, audio, reply):
+                return
+            handle_result(result, self.matcher, self.dispatcher, self.config,
                           room=room, reply=reply)
 
 
@@ -72,7 +89,18 @@ def listen(config: Config, dry_run: bool = False) -> None:
         )
 
     dispatcher = Dispatcher(config, dry_run=dry_run)
-    engine = Engine(config, vosk.Model(str(model_dir)), dispatcher)
+    model = vosk.Model(str(model_dir))
+    router = None
+    if config.assistant and config.assistant.get("enabled", True):
+        try:
+            from .assistant import Assistant, AssistantRouter, Transcriber
+
+            assistant = Assistant(dispatcher)
+            router = AssistantRouter(assistant, Transcriber(config.assistant, model, s.sample_rate))
+            log.info("AI assistant on: say \"%s, ...\"", assistant.names[0])
+        except Exception as e:
+            log.error("AI assistant not started: %s", e)
+    engine = Engine(config, model, dispatcher, router)
     audio: queue.Queue[tuple[str, str | None, bytes, Reply | None]] = queue.Queue(maxsize=2000)
 
     def put(item) -> None:
@@ -86,6 +114,17 @@ def listen(config: Config, dry_run: bool = False) -> None:
     hubs = [get_hub(n, b, config) for n, b in config.backends.items() if b["type"] == "speakers"]
     for h in hubs:
         h.start()
+
+    scanners = []
+    for sc in config.door_scanners:
+        try:
+            from .door_scanner import DoorScanner
+
+            scanners.append(DoorScanner(dispatcher, sc))
+        except Exception as e:
+            log.error("door scanner for %s door not started: %s", sc.get("door", "front"), e)
+    for sc in scanners:
+        sc.start()
 
     stream = server = None
     try:
@@ -102,7 +141,7 @@ def listen(config: Config, dry_run: bool = False) -> None:
                 allowed_ips=sats.get("allowed_ips"),
             )
             server.start()
-        if not stream and not server and not hubs:
+        if not stream and not server and not hubs and not scanners:
             raise SystemExit("no audio sources enabled (see `sources:` in config)")
 
         log.info("Listening for %d phrases (%d commands). Ctrl+C to stop.",
@@ -118,6 +157,8 @@ def listen(config: Config, dry_run: bool = False) -> None:
             server.close()
         for h in hubs:
             h.close()
+        for sc in scanners:
+            sc.stop()
         dispatcher.close()
 
 

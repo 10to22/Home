@@ -6,6 +6,7 @@ Two sketches, one per board:
 |---|---|---|
 | `mic_satellite/` | Mic in a room. Streams audio to the hub, blinks its LED when a command is heard | ESP32 dev board + INMP441 I2S mic (~$8) |
 | `device_node/` | Switches relays and dims LED strips on command. Has its own web page with buttons | ESP32 dev board + relay module and/or MOSFET module (~$6–10) |
+| `door_cam/` | Door camera for the face scanner. Serves photos to the hub | AI-Thinker ESP32-CAM + ESP32-CAM-MB flasher (~$12) |
 | `speaker/` | Bluetooth speaker on its own, or one of a synced multi-room group | **Classic** ESP32 dev board + MAX98357A amp + 3 W speaker (~$10) |
 
 You can mix and match: one mic and one device node per room, a mic-only room that controls
@@ -109,6 +110,22 @@ and a power switch. Feed the boost output to the ESP32's `5V` pin and the amp's 
 - **Group mode:** plays the Pi's music in sync with the other group speakers. The LED is solid while playing.
 - **To switch:** hold the BOOT button for 1.5 s, say a voice command ("play everywhere", "bluetooth speaker"), or run
   `phrasehome speakers group kitchen`. The speaker restarts to switch, which takes about 3 seconds.
+
+## Door camera (ESP32-CAM)
+
+1. Plug the ESP32-CAM into the ESP32-CAM-MB board, then connect that to USB. In the Arduino IDE pick
+   **AI Thinker ESP32-CAM**, and set `DOOR_NAME` in `config.h`.
+2. Mount it at face height, about 0.5–1 m from where people stand, facing them, not the sun. Leave
+   1–2 cm of clearance in front of the lens if it's behind a window.
+3. In config.yaml set `door_scanner.camera: http://phrasehome-doorcam-front.local/capture`. If you set a
+   `TOKEN`, add `?token=...` to that address.
+4. Check it: open that address in a browser and you should see a photo.
+
+**Night scanning:** the built-in flash LED (GPIO 4) works but is harsh. Better: an OV2640 "night vision"
+lens (no IR filter) plus an 850 nm IR LED board switched by a transistor on a free pin. A side benefit is
+that phone screens show up dark in IR, which makes spoofing with a photo on a phone harder.
+
+**Power:** use a solid 5 V 2 A supply. Weak USB power is the #1 cause of ESP32-CAM resets.
 
 ## Protocol (if you want to build your own)
 

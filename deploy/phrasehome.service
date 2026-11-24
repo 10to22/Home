@@ -12,7 +12,8 @@ Restart=always
 # Lets the speaker hub record music from the user's PipeWire session
 Environment=XDG_RUNTIME_DIR=/run/user/@UID@
 RestartSec=5
-# EnvironmentFile=@DIR@/.env   # e.g. HA_TOKEN=...
+# Secrets: ANTHROPIC_API_KEY, PHRASEHOME_TOKEN, HA_TOKEN... (optional file)
+EnvironmentFile=-@DIR@/.env
 
 [Install]
 WantedBy=multi-user.target

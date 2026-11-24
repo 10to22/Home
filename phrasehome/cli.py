@@ -72,6 +72,154 @@ def _cmd_speakers(args) -> int:
     return 0
 
 
+def _face_tools(cfg):
+    from .door_scanner import DEFAULTS
+    from .faces import FaceBank, OpenCVFaceEngine
+
+    sc = {**DEFAULTS, **(cfg.door_scanners[0] if cfg.door_scanners else {})}
+    bank = FaceBank(cfg.resolve_path(cfg.data_dir) / "faces")
+    engine = lambda: OpenCVFaceEngine(cfg.resolve_path(sc["detector_model"]),  # noqa: E731
+                                      cfg.resolve_path(sc["recognizer_model"]))
+    return sc, bank, engine
+
+
+def _cmd_faces(args) -> int:
+    cfg = load_config(args.config)
+    sc, bank, engine = _face_tools(cfg)
+    a = args.action
+    if a == "list":
+        if not bank.people:
+            print("face bank is empty. Add someone: phrasehome faces enroll \"Your Name\" --camera")
+        for p in sorted(bank.people.values(), key=lambda p: (p.kind, p.id)):
+            print(f"{p.id:<16} {p.name:<18} {'ALLOWED' if p.allowed else 'not allowed':<12} "
+                  f"{p.kind:<9} seen {p.seen}x, last {p.last_seen or '-'}, {len(p.embeddings)} samples")
+        return 0
+    if a == "scans":
+        from .events import EventLog
+
+        for e in EventLog(cfg.resolve_path(cfg.data_dir) / "events.jsonl").query("scan", limit=args.n):
+            if e["kind"] == "scan":
+                print(f"{e['time']}  {e['door']:<8} {e['result']:<8} {e['name']:<18} "
+                      f"score {e.get('score', 0):.2f}  {e.get('photo') or ''}")
+        return 0
+    if not args.ref:
+        print(f"usage: phrasehome faces {a} <name or id>", file=sys.stderr)
+        return 2
+    ref = " ".join(args.ref)
+    try:
+        if a == "enroll":
+            eng = engine()
+            embs, photo = [], b""
+            if args.image:
+                import cv2
+
+                for path in args.image:
+                    img = cv2.imread(path)
+                    faces = eng.faces(img) if img is not None else []
+                    if not faces:
+                        print(f"  no face found in {path}, skipped")
+                        continue
+                    f = max(faces, key=lambda f: f.size)
+                    embs.append(eng.embed(img, f))
+                    photo = photo or eng.crop_jpeg(img, f)
+            if args.camera:
+                from .door_scanner import DoorScanner
+
+                print("Look at the door camera. Turn your head a little and change expression...")
+
+                class _H:  # DoorScanner only needs config here
+                    config = cfg
+
+                got, ph = DoorScanner(_H, sc, engine=eng).capture_embeddings(args.samples)
+                embs += got
+                photo = photo or ph
+            if not embs:
+                print("no face samples collected; use --camera and/or --image", file=sys.stderr)
+                return 1
+            p = bank.enroll(ref, embs, allowed=not args.deny)
+            if photo:
+                bank.save_photo(p.id, photo)
+            print(f"enrolled {p.name} ({p.id}) with {len(embs)} samples, "
+                  f"{'allowed' if p.allowed else 'NOT allowed'}")
+        elif a == "allow":
+            p = bank.set_allowed(ref, True, name=args.name)
+            print(f"{p.name} ({p.id}) is now allowed")
+        elif a == "deny":
+            p = bank.set_allowed(ref, False)
+            print(f"{p.name} ({p.id}) is now NOT allowed")
+        elif a == "rename":
+            if not args.name:
+                print("usage: phrasehome faces rename <id> --name \"New Name\"", file=sys.stderr)
+                return 2
+            p = bank.rename(ref, args.name)
+            print(f"{p.id} is now called {p.name}")
+        elif a == "delete":
+            p = bank.delete(ref)
+            print(f"deleted {p.name} ({p.id}) from the face bank")
+    except KeyError as e:
+        print(e.args[0], file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_voice(args) -> int:
+    from .voice import Voice
+
+    cfg = load_config(args.config)
+
+    class _Home:
+        def backend(self, name):
+            from .actions import build_backend
+
+            return build_backend(name, cfg.backends[name], cfg)
+
+    cfg.home = _Home()
+    v = Voice(cfg)
+    text = " ".join(args.text)
+    if args.action == "list":
+        for key in sorted(v.phrases):
+            clip = v._clip(key)
+            entry = v.phrases[key]
+            shown = " | ".join(entry) if isinstance(entry, list) else entry
+            print(f"{key:<24} {'[recorded clip] ' if clip else ''}{shown}")
+    elif args.action == "say":
+        print(v.speak(text or "Hello. This is your house speaking."))
+    elif args.action == "record":
+        if not text:
+            print("usage: phrasehome voice record <phrase_key> [--seconds 4]", file=sys.stderr)
+            return 2
+        print(f"Recording {args.seconds:.0f} seconds for '{text}' - speak now...")
+        print(f"saved {v.record(text, args.seconds)}")
+    return 0
+
+
+def _cmd_ask(args) -> int:
+    """Type a question to the AI assistant (as if you'd said "house, ...")."""
+    from .assistant import Assistant
+    from .dispatcher import Dispatcher
+
+    cfg = load_config(args.config)
+    if not cfg.assistant:
+        print("add an `assistant:` section to the config first", file=sys.stderr)
+        return 2
+    home = Dispatcher(cfg, dry_run=args.dry_run)
+    try:
+        ai = Assistant(home)
+        questions = [" ".join(args.question)] if args.question else None
+        if questions is None:
+            print(f"Talk to {ai.names[0]} (Ctrl+D to quit):")
+            questions = (q.strip() for q in sys.stdin)
+        for q in questions:
+            if q:
+                answer = ai.ask(q, room=args.room)
+                print(f"{ai.names[0]}: {answer}")
+                if args.speak:
+                    home.voice.speak(answer)
+    finally:
+        home.close()
+    return 0
+
+
 def _cmd_devices(args) -> int:
     import sounddevice as sd
 
@@ -115,6 +263,34 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("check", help="validate config").set_defaults(fn=_cmd_check)
     sub.add_parser("devices", help="list microphones").set_defaults(fn=_cmd_devices)
+
+    fc = sub.add_parser("faces", help="manage the door face bank",
+                        description="phrasehome faces list | scans | enroll NAME --camera | "
+                                    "allow ID [--name N] | deny ID | rename ID --name N | delete ID")
+    fc.add_argument("action", choices=["list", "scans", "enroll", "allow", "deny", "rename", "delete"],
+                    nargs="?", default="list")
+    fc.add_argument("ref", nargs="*", help="name or id")
+    fc.add_argument("--camera", action="store_true", help="enroll from the door camera")
+    fc.add_argument("--image", nargs="+", help="enroll from photo files")
+    fc.add_argument("--samples", type=int, default=8)
+    fc.add_argument("--deny", action="store_true", help="enroll as NOT allowed (e.g. banned)")
+    fc.add_argument("--name", help="new display name")
+    fc.add_argument("-n", type=int, default=20, help="how many scans to show")
+    fc.set_defaults(fn=_cmd_faces)
+
+    vo = sub.add_parser("voice", help="test and customize the voice bank",
+                        description="phrasehome voice list | say <key or text> | record <key>")
+    vo.add_argument("action", choices=["list", "say", "record"], nargs="?", default="list")
+    vo.add_argument("text", nargs="*")
+    vo.add_argument("--seconds", type=float, default=4.0)
+    vo.set_defaults(fn=_cmd_voice)
+
+    ak = sub.add_parser("ask", help="type a question to the AI assistant")
+    ak.add_argument("question", nargs="*")
+    ak.add_argument("--room", help="pretend you're speaking from this room")
+    ak.add_argument("--speak", action="store_true", help="also say the answer out loud")
+    ak.add_argument("--dry-run", action="store_true", help="don't really control anything")
+    ak.set_defaults(fn=_cmd_ask)
 
     sp = sub.add_parser("speakers", help="show or change ESP32 speakers",
                         description="phrasehome speakers status | group [names] | bluetooth [names]"

@@ -37,6 +37,14 @@ class Settings:
     log_heard: bool = False  # log everything heard (handy for tuning; off for privacy)
 
 
+# Built-in backends, picked automatically from the action's keys:
+#   {speak: retinal_scan_complete}   -> voice bank
+#   {door: front, state: locked}     -> doors
+#   {routine: lockdown}              -> routines
+BUILTIN_BACKENDS = {"speak": "voice", "door": "doors", "routine": "routine"}
+RESERVED = set(BUILTIN_BACKENDS.values())
+
+
 @dataclass
 class Command:
     name: str
@@ -52,6 +60,12 @@ class Config:
     commands: list[Command]
     base_dir: Path
     sources: dict[str, Any] = field(default_factory=dict)
+    routines: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    doors: dict[str, dict[str, Any]] = field(default_factory=dict)
+    voice: dict[str, Any] = field(default_factory=dict)
+    door_scanners: list[dict[str, Any]] = field(default_factory=list)
+    assistant: dict[str, Any] = field(default_factory=dict)
+    data_dir: str = "data"
 
     def resolve_path(self, p: str) -> Path:
         path = Path(p).expanduser()
@@ -68,6 +82,22 @@ def _normalize_slots(raw: dict[str, Any]) -> dict[str, dict[str, str]]:
         else:
             raise ConfigError(f"slot '{name}' must be a list or a mapping")
     return slots
+
+
+def normalize_action(action: dict[str, Any], default_backend: str | None,
+                     backends: dict[str, Any], where: str) -> dict[str, Any]:
+    """Fill in `backend` and check it exists. Raises ConfigError with `where` for context."""
+    action = dict(action or {})
+    if "wait" in action and len(action) == 1:
+        return action  # routine pause step
+    if not action.get("backend"):
+        builtin = next((b for k, b in BUILTIN_BACKENDS.items() if k in action), None)
+        action["backend"] = builtin or default_backend
+    if not action["backend"]:
+        raise ConfigError(f"{where} has no backend and no default_backend is set")
+    if action["backend"] not in backends and action["backend"] not in RESERVED:
+        raise ConfigError(f"{where} uses unknown backend '{action['backend']}'")
+    return action
 
 
 def load_config(path: str | Path) -> Config:
@@ -100,12 +130,8 @@ def load_config(path: str | Path) -> Config:
         if not phrases:
             raise ConfigError(f"command #{i + 1} has no phrases")
         name = c.get("name") or phrases[0]
-        action = dict(c.get("action") or {})
-        action.setdefault("backend", settings.default_backend)
-        if not action["backend"]:
-            raise ConfigError(f"command '{name}' has no backend and no default_backend is set")
-        if action["backend"] not in backends:
-            raise ConfigError(f"command '{name}' uses unknown backend '{action['backend']}'")
+        action = normalize_action(c.get("action") or {}, settings.default_backend, backends,
+                                  f"command '{name}'")
         commands.append(Command(name=name, phrases=[str(p) for p in phrases], action=action))
     if not commands:
         raise ConfigError("no commands defined")
@@ -115,4 +141,43 @@ def load_config(path: str | Path) -> Config:
         if name not in ("local_mic", "satellites"):
             raise ConfigError(f"unknown source '{name}' (use local_mic and/or satellites)")
 
-    return Config(settings, backends, slots, commands, base_dir=path.parent, sources=sources)
+    def steps(raw, where):
+        if isinstance(raw, dict):
+            raw = [raw]
+        return [normalize_action(st, settings.default_backend, backends, f"{where} step {i + 1}")
+                for i, st in enumerate(raw or [])]
+
+    for name in backends:
+        if name in RESERVED:
+            raise ConfigError(f"backend name '{name}' is reserved; pick another")
+
+    routines = {str(n): steps(v, f"routine '{n}'") for n, v in (data.get("routines") or {}).items()}
+    for c in commands:
+        if c.action["backend"] == "routine" and c.action["routine"] not in routines:
+            raise ConfigError(f"command '{c.name}' uses unknown routine '{c.action['routine']}'")
+
+    doors = {}
+    for n, d in (data.get("doors") or {}).items():
+        d = dict(d or {})
+        for k in ("lock", "unlock"):
+            if k in d:
+                d[k] = steps(d[k], f"door '{n}' {k}")
+        doors[str(n).lower()] = d
+
+    raw_scanners = data.get("door_scanner") or []
+    scanners = []
+    for i, sc in enumerate(raw_scanners if isinstance(raw_scanners, list) else [raw_scanners]):
+        sc = dict(sc)
+        for k in ("on_allowed", "on_denied", "on_unknown"):
+            if k in sc:
+                sc[k] = steps(sc[k], f"door_scanner {i + 1} {k}")
+        if str(sc.get("door", "front")).lower() not in doors:
+            raise ConfigError(f"door_scanner {i + 1}: door '{sc.get('door', 'front')}' isn't in `doors:`")
+        scanners.append(sc)
+
+    return Config(
+        settings, backends, slots, commands, base_dir=path.parent, sources=sources,
+        routines=routines, doors=doors, voice=dict(data.get("voice") or {}),
+        door_scanners=scanners, assistant=dict(data.get("assistant") or {}),
+        data_dir=str(data.get("data_dir", "data")),
+    )

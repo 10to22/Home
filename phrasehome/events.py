@@ -1,0 +1,43 @@
+"""Household event log: door scans, visitors, commands, locks. Kept in memory for the AI
+assistant and appended to data/events.jsonl so you can look back later."""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from collections import deque
+from pathlib import Path
+from typing import Any
+
+
+class EventLog:
+    def __init__(self, path: Path | None = None, keep: int = 500) -> None:
+        self.path = path
+        self.recent: deque[dict[str, Any]] = deque(maxlen=keep)
+        self._lock = threading.Lock()
+        if path and path.exists():  # reload the tail so the assistant remembers recent history
+            for line in path.read_text().splitlines()[-keep:]:
+                try:
+                    self.recent.append(json.loads(line))
+                except ValueError:
+                    pass
+
+    def log(self, kind: str, **data: Any) -> dict[str, Any]:
+        ev = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "kind": kind, **data}
+        with self._lock:
+            self.recent.append(ev)
+            if self.path:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with self.path.open("a") as f:
+                    f.write(json.dumps(ev) + "\n")
+        return ev
+
+    def query(self, kind: str | None = None, since: str | None = None, limit: int = 50) -> list[dict]:
+        with self._lock:
+            evs = list(self.recent)
+        if kind:
+            evs = [e for e in evs if e["kind"] == kind or e["kind"].startswith(kind + ".")]
+        if since:
+            evs = [e for e in evs if e["time"] >= since]
+        return evs[-limit:]

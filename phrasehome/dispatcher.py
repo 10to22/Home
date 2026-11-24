@@ -12,9 +12,12 @@ import logging
 import queue
 import threading
 import time
+from pathlib import Path
+from typing import Any
 
 from .actions import Backend, build_backend, render
 from .config import Config
+from .events import EventLog
 from .matcher import Match
 
 log = logging.getLogger("phrasehome")
@@ -23,12 +26,20 @@ log = logging.getLogger("phrasehome")
 class Dispatcher:
     def __init__(self, config: Config, dry_run: bool = False) -> None:
         self.config = config
+        config.home = self  # lets backends, routines and the scanner reach shared services
         self.dry_run = dry_run
+        data = Path(config.resolve_path(config.data_dir))
+        self.events = EventLog(data / "events.jsonl")
         self.backends: dict[str, Backend] = {}
+        self._backend_errors: dict[str, Exception] = {}
+        self._backend_lock = threading.Lock()
+        self._voice = self._doors = None
         if not dry_run:
-            used = {c.action["backend"] for c in config.commands}
-            for name in used:
-                self.backends[name] = build_backend(name, config.backends[name], config)
+            for name in config.backends:  # build up front so config problems show at startup
+                try:
+                    self.backend(name)
+                except Exception as e:
+                    log.error("backend %s unavailable: %s", name, e)
         self._last_fired: dict[tuple[str, str | None], float] = {}
         self._pending: dict[str, tuple[float, Match]] = {}  # command name -> (deadline, best)
         self._lock = threading.Lock()
@@ -79,25 +90,76 @@ class Dispatcher:
                 return
             self._execute(m)
 
+    # ---------- shared services ----------
+    @property
+    def voice(self):
+        if self._voice is None:
+            from .voice import Voice
+
+            self._voice = Voice(self.config, dry_run=self.dry_run)
+        return self._voice
+
+    @property
+    def doors(self):
+        if self._doors is None:
+            from .doors import Doors
+
+            self._doors = Doors(self)
+        return self._doors
+
+    def backend(self, name: str) -> Backend:
+        with self._backend_lock:
+            if name in self.backends:
+                return self.backends[name]
+            if name in self._backend_errors:
+                raise RuntimeError(f"backend {name} unavailable: {self._backend_errors[name]}")
+            from .actions.builtin import DoorsBackend, RoutineBackend, VoiceBackend
+
+            builtin = {"voice": VoiceBackend, "doors": DoorsBackend, "routine": RoutineBackend}
+            try:
+                if name in builtin:
+                    b = builtin[name](name, {}, self.config)
+                elif name in self.config.backends:
+                    b = build_backend(name, self.config.backends[name], self.config)
+                else:
+                    raise ValueError(f"no backend named '{name}'")
+            except Exception as e:
+                self._backend_errors[name] = e
+                raise
+            self.backends[name] = b
+            return b
+
+    def render(self, action: dict[str, Any], values: dict[str, Any] | None = None) -> dict:
+        action = render(action, {k: str(v) for k, v in (values or {}).items()})
+        if "{here}" in str(action):
+            raise ValueError("this needs {here}, but the mic that heard it has no room set")
+        return action
+
+    def run_action(self, action: dict[str, Any], values: dict[str, Any] | None = None,
+                   phrase: str = "") -> str:
+        """Run one action now, on the calling thread. Used by commands, routines, doors,
+        the door scanner and the AI assistant."""
+        action = self.render(action, values)
+        name = action["backend"]
+        if name in ("routine", "doors", "voice"):
+            # built-ins also get the context ({name}, {door}, {room}...) for their own templates
+            action["_context"] = {k: v for k, v in (values or {}).items()}
+        elif self.dry_run:
+            log.info("DRY RUN %s", action)
+            return "dry run"
+        return self.backend(name).run(action, phrase)
+
     def _execute(self, m: Match) -> None:
         values = dict(m.slots)
         if m.room:
             values.setdefault("here", m.room)
-        action = render(m.command.action, values)
-        if "{here}" in str(action):
-            log.warning("%s needs {here} but the mic that heard it has no room set", m.command.name)
-            _notify(m, "failed")
-            return
         if m.room:
             log.info("firing %s from %s", m.command.name, m.room)
         _notify(m, "matched")
-        if self.dry_run:
-            log.info("DRY RUN %s -> %s", m.command.name, action)
-            _notify(m, "done")
-            return
         try:
-            result = self.backends[action["backend"]].run(action, m.phrase)
+            result = self.run_action(m.command.action, values, m.phrase)
             log.info("done: %s%s", m.command.name, f" ({result})" if result else "")
+            self.events.log("command", name=m.command.name, room=m.room, heard=m.heard)
             _notify(m, "done")
         except Exception as e:  # keep listening no matter what
             log.error("command %s failed: %s", m.command.name, e)

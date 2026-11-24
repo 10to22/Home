@@ -8,3 +8,6 @@ credentials*.json
 client_secret*.json
 firmware/**/config.h
 .env
+# personal data: face bank + photos, event log, door states, your recorded voice
+data/
+voice_bank/

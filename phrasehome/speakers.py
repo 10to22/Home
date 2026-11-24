@@ -79,6 +79,7 @@ class SpeakerHub:
         self._wake = threading.Event()
         self._running = False
         self._proc: subprocess.Popen | None = None
+        self._announce = bytearray()  # speech waiting to be played on the group
 
     # ---------- speaker control (HTTP) ----------
     def _targets(self, speaker: str) -> list[tuple[str, str]]:
@@ -135,6 +136,21 @@ class SpeakerHub:
         for e in errors:
             log.warning("speaker %s", e)
         return ok
+
+    def announce(self, pcm: bytes) -> None:
+        """Play speech (44.1 kHz 16-bit stereo) on every group speaker, in place of the music."""
+        with self._lock:
+            if not self.members:
+                return
+            self._announce += pcm
+
+    def _next_announcement(self) -> bytes | None:
+        with self._lock:
+            if not self._announce:
+                return None
+            chunk = bytes(self._announce[:BYTES_PER_PACKET])
+            del self._announce[:BYTES_PER_PACKET]
+        return chunk.ljust(BYTES_PER_PACKET, b"\0")
 
     # ---------- streaming ----------
     def start(self) -> None:
@@ -234,6 +250,9 @@ class SpeakerHub:
                 anchor, n, due = now, 0, now
             elif due > now:  # source faster than real time (e.g. a file): pace it
                 time.sleep((due - now) / 1e6)
+            speech = self._next_announcement()
+            if speech is not None:
+                pcm = speech  # speech replaces the music for its duration
             pkt = audio_packet(seq, due + self.latency_us, pcm)
             for ip in targets:
                 try:

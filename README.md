@@ -19,6 +19,13 @@ An always-on listener for Google Home with **no wake word**. Say "turn on the li
   relays and LED strips. Say "lights on" and the lights *in that room* turn on. See [ESP32 setup](#esp32-setup).
 - **Multi-room speakers.** ESP32 speaker modules work as Bluetooth speakers on their own, or join a
   group that plays the same music in sync in every room. See [Speakers](#speakers).
+- **Door scanner.** A camera at the door recognizes faces. People you've allowed hear "retinal scan
+  complete" and are asked for their fingerprint. Strangers and denied faces hear "retinal scan
+  failed" and the door locks. See [Door scanner](#door-scanner).
+- **Routines.** One phrase runs many actions: "lockdown", "good night house", "I'm leaving", "panic mode".
+- **A voice you can customize.** Change any line the house says, record your own, or switch voices.
+- **AI assistant.** "house, who came to the door today?" or "house, set things up for movie night".
+  See [AI assistant](#ai-assistant).
 - **Other backends.** Home Assistant, webhooks (IFTTT, Node-RED…) and local scripts.
 
 ## What you need
@@ -205,6 +212,143 @@ They act on the speaker in the room you're in. You can do the same from the term
 - Mics near speakers hear the music. Lyrics rarely match a whole command in `utterance` mode, but keep mic
   satellites a little away from the speakers.
 
+## The whole smart home
+
+`config.smarthome.example.yaml` wires everything together: mics, lights, locks, the door scanner,
+speakers, Google Home devices (TV, vacuum, thermostat), phone alerts, the voice bank, routines and
+the AI assistant. Start from it:
+
+```bash
+cp config.smarthome.example.yaml config.yaml
+```
+
+- **What to buy:** [docs/BUILD_LIST.md](docs/BUILD_LIST.md), with parts, costs, a 3-room budget and a safety checklist.
+- **What to add next:** [docs/IDEAS.md](docs/IDEAS.md), from vacuums to fingerprint unlock to a morning briefing.
+
+### Door scanner
+
+```
+ ESP32-CAM at the door ──photo──► Pi: find face ──► compare with the face bank
+                                                     ├─ allowed  → "Retinal scan complete. Welcome home, Sam."
+                                                     │             "Please place your finger on the scanner."  (door left as it is)
+                                                     ├─ denied   → "Retinal scan failed."  → lock the door
+                                                     └─ unknown  → add to the bank as visitor-N → "Retinal scan failed." → lock
+```
+
+It uses face recognition, because true retinal scanning needs medical-grade optics; see the
+[build list](docs/BUILD_LIST.md#about-retinal-and-iris-scanning). The voice still says "retinal scan" because
+you asked for that wording. You can change it in the voice bank. Every scan is logged with a snapshot.
+A match never locks the door, so an unlocked door stays unlocked. The responses are lists of actions in
+`door_scanner.on_allowed / on_denied / on_unknown`, so you can add phone alerts, porch lights or music.
+
+```bash
+.venv/bin/phrasehome faces enroll "Sam" --camera        # stand at the door, turn your head a little
+```
+
+```bash
+.venv/bin/phrasehome faces enroll "Sam" --image sam1.jpg sam2.jpg
+```
+
+```bash
+.venv/bin/phrasehome faces list                         # everyone, including auto-added visitors
+```
+
+```bash
+.venv/bin/phrasehome faces allow visitor-3 --name "Grandma"
+```
+
+```bash
+.venv/bin/phrasehome faces deny "Ex"                    # in the bank, but always refused
+```
+
+```bash
+.venv/bin/phrasehome faces scans                        # recent scans with their photos
+```
+
+**Security:** a face alone can be fooled by a good photo, so the example config never unlocks on a face.
+That's what the fingerprint stage is for (see IDEAS). Locks must always open from the inside without power;
+see the safety checklist in the build list.
+
+### Routines
+
+A routine is a list of steps, and any action can be a step. Here is "lockdown" from the example:
+
+```yaml
+routines:
+  lockdown:
+    - { door: all, state: locked }
+    - { node: kitchen, channel: lights, state: off }
+    - { node: living room, channel: lights, state: off }
+    - { node: porch, channel: lights, state: on }     # keep the porch lit
+    - { speak: lockdown }
+commands:
+  - { phrases: [lockdown, lock down], action: { routine: lockdown } }
+```
+
+Steps can also be `{ wait: 20 }` or another `{ routine: ... }`. The example includes `lockdown`, `goodnight`,
+`leaving` (locks up after 20 s, then starts the vacuum), `good_morning`, `movie_time`, `party` and `panic`.
+
+### Voice bank
+
+Everything the house says has a name: `retinal_scan_complete`, `retinal_scan_failed`, `lockdown`,
+and so on. You can customize it in three ways:
+
+1. **Words:** `voice.phrases` in the config. Give a list to vary it, and use `{name}` or `{door}` placeholders.
+2. **Your own recording:** run the command below. It saves `voice_bank/<name>.wav`, which then plays instead
+   of the synthesized voice. A folder `voice_bank/<name>/` of several clips picks one at random.
+
+   ```bash
+   .venv/bin/phrasehome voice record retinal_scan_complete
+   ```
+
+3. **The voice itself:** `engine: piper` (natural and offline; [many voices](https://huggingface.co/rhasspy/piper-voices)),
+   `espeak` (robotic), or `command` to use any tool, for example a cloned voice.
+
+```bash
+.venv/bin/phrasehome voice list
+```
+
+```bash
+.venv/bin/phrasehome voice say retinal_scan_complete
+```
+
+Speech plays on the Pi's speaker and, if `voice.speakers` is set, through every speaker in group mode.
+
+### AI assistant
+
+Say the wake name, then anything:
+
+- "house, what's the weather this weekend?"
+- "house, who came to the door while I was out?"
+- "house, it's movie night"
+- "house, is the back door locked?"
+
+When it hears its name, the Pi re-transcribes your whole sentence as free speech and sends the text to
+Claude (`claude-opus-5-5`), along with your commands, routines and doors as tools it can use and the
+house's event log. It can search the web, and its reply is spoken. Commands without the name still run
+instantly and offline. The AI is only for things you ask it.
+
+1. Get an API key at console.anthropic.com and add it to `.env`:
+
+   ```bash
+   echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+   ```
+
+2. Add the `assistant:` section from the example config.
+3. Try it by typing:
+
+   ```bash
+   .venv/bin/phrasehome ask --dry-run "lock everything up for the night"
+   ```
+
+**Built-in limits:**
+- It can lock doors but never unlock them, unless you set `allow_unlock: true`.
+- It won't tell someone outside who is enrolled in the face bank.
+- Only the words after its name are sent to Anthropic, never audio.
+- Each question costs a few cents of API usage.
+
+For better understanding of free speech, set `transcriber: whisper` after `pip install faster-whisper`.
+
 ## Tuning
 
 | Problem | Fix |
@@ -251,7 +395,9 @@ pytest
 
 Code layout: `phrasehome/matcher.py` (phrase expansion and fuzzy matching), `listener.py` (mics and Vosk),
 `satellites.py` (ESP32 mic receiver), `dispatcher.py` (cooldown, multi-mic arbitration, background execution),
-`speakers.py` (synced multi-room streaming), `actions/` (backends), `firmware/` (ESP32 sketches).
+`speakers.py` (synced multi-room streaming), `faces.py` + `door_scanner.py` (face bank and scan
+decisions), `doors.py`, `voice.py`, `assistant.py`, `events.py`, `actions/` (backends, including routines),
+`firmware/` (ESP32 sketches).
 
 ## Caveats
 

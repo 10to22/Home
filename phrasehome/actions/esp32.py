@@ -55,6 +55,16 @@ class Esp32Backend(Backend):
             raise ValueError(f"unknown node '{node}' (known: {', '.join(self.nodes)})")
         return [(node, self.nodes[node])]
 
+    def get_state(self, node: str, channel: str) -> dict[str, Any]:
+        """Read one channel from a node, e.g. {"name": "lock", "on": true}."""
+        (_, host), = self._hosts(node)
+        r = requests.get(f"http://{host}/api/status", timeout=self.timeout)
+        r.raise_for_status()
+        for ch in r.json().get("channels", []):
+            if ch.get("name", "").lower() == channel.lower():
+                return ch
+        raise ValueError(f"node '{node}' has no channel '{channel}'")
+
     def run(self, action: dict[str, Any], phrase: str) -> str:
         node, channel = action.get("node"), action.get("channel")
         if not node or not channel:
