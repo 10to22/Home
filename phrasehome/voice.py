@@ -122,11 +122,13 @@ class Voice:
         return self._router
 
     # ---------- choosing what to say ----------
-    def resolve(self, key_or_text: str, **values: Any) -> tuple[str, Path | None]:
+    def resolve(self, key_or_text: str, lang: str | None = None, **values: Any) -> tuple[str, Path | None]:
         """Returns (text, recorded clip or built-in sound or None). Unknown keys are spoken as text."""
         key = key_or_text.strip()
         clip = self._clip(key)
         entry = self.phrases.get(key)
+        if isinstance(entry, dict) and not ({"text", "file"} & set(entry)):  # {en: ..., es: ...}
+            entry = entry.get(lang or "", entry.get(self.config.settings.language, next(iter(entry.values()))))
         if entry is None and clip is None:
             from .sounds import make
 
@@ -215,7 +217,9 @@ class Voice:
 
     def speak(self, key_or_text: str, room: str | None = None, rooms: list[str] | None = None,
               everywhere: bool = False, urgent: bool = False, **values: Any) -> str:
-        text, clip = self.resolve(key_or_text, **values)
+        home = getattr(self.config, "home", None)
+        lang = home.language_for(room) if home is not None and hasattr(home, "language_for") else None
+        text, clip = self.resolve(key_or_text, lang=lang, **values)
         targets = self.targets(room, rooms, everywhere, urgent)
         if self.dry_run or not targets:
             log.info("%ssay%s: %s", "DRY RUN " if self.dry_run else "",

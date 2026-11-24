@@ -21,40 +21,76 @@ log = logging.getLogger("phrasehome")
 Reply = Callable[[str], None]
 
 
+class _Lang:
+    """Everything one spoken language needs: its model, phrases, matcher and grammar."""
+
+    def __init__(self, lang: str, model, config: Config, extra_words: list[str]) -> None:
+        s = config.settings
+        self.lang = lang
+        self.model = model
+        self.candidates = expand(config.commands, config.slots, lang)
+        self.matcher = Matcher(self.candidates, s.match_mode, s.match_threshold, s.block_words)
+        words = vocabulary(self.candidates)
+        words = words[:-1] + extra_words + words[-1:]  # the recognizer must know the wake names
+        self.grammar = json.dumps(words) if s.restrict_vocabulary else None
+
+
 class Engine:
-    """One speech recognizer per audio source, all sharing one model and matcher."""
+    """One speech recognizer per audio source. Each room uses its language's model and phrases."""
 
     MAX_UTTERANCE_BYTES = 20 * 16000 * 2  # keep at most 20 s of audio per utterance
 
-    def __init__(self, config: Config, model, dispatcher: Dispatcher, router=None) -> None:
+    def __init__(self, config: Config, model, dispatcher: Dispatcher, router=None,
+                 models: dict | None = None) -> None:
         import vosk
 
         self._vosk = vosk
         self.config = config
-        self.model = model
         self.dispatcher = dispatcher
         self.router = router  # the AI assistant, if enabled
-        s = config.settings
-        self.candidates = expand(config.commands, config.slots)
-        self.matcher = Matcher(self.candidates, s.match_mode, s.match_threshold, s.block_words)
-        words = vocabulary(self.candidates)
-        if router:  # the recognizer must know the wake name
-            words = words[:-1] + router.assistant.vocabulary() + words[-1:]
-        self.grammar = json.dumps(words) if s.restrict_vocabulary else None
-        self.recognizers: dict[str, object] = {}
+        self.models = {config.settings.language: model, **(models or {})}
+        self.spk = None
+        if getattr(dispatcher, "voice_id", None) is not None:
+            try:
+                self.spk = dispatcher.voice_id.spk_model()
+            except Exception as e:
+                log.error("voice recognition off: %s", e)
+        self.reload()
+        dispatcher.engine = self
+
+    def reload(self) -> None:
+        """(Re)build phrases and grammars, e.g. after a command was added by voice."""
+        extra = self.router.assistant.vocabulary() if self.router else []
+        self.langs = {lang: _Lang(lang, m, self.config, extra) for lang, m in self.models.items()}
+        self.recognizers: dict[str, tuple[str, object]] = {}
         self.buffers: dict[str, bytearray] = {}
 
-    def _recognizer(self, source: str):
-        rec = self.recognizers.get(source)
-        if rec is None:
+    @property
+    def matcher(self) -> Matcher:
+        return self.langs[self.config.settings.language].matcher
+
+    @property
+    def candidates(self):
+        return self.langs[self.config.settings.language].candidates
+
+    def _lang(self, room: str | None) -> _Lang:
+        lang = self.dispatcher.language_for(room) if hasattr(self.dispatcher, "language_for") else None
+        return self.langs.get(lang) or self.langs[self.config.settings.language]
+
+    def _recognizer(self, source: str, room: str | None = None):
+        L = self._lang(room)
+        cur = self.recognizers.get(source)
+        if cur is None or cur[0] != L.lang:
             rate = self.config.settings.sample_rate
-            if self.grammar:
-                rec = self._vosk.KaldiRecognizer(self.model, rate, self.grammar)
+            if L.grammar:
+                rec = self._vosk.KaldiRecognizer(L.model, rate, L.grammar)
             else:
-                rec = self._vosk.KaldiRecognizer(self.model, rate)
+                rec = self._vosk.KaldiRecognizer(L.model, rate)
             rec.SetWords(True)
-            self.recognizers[source] = rec
-        return rec
+            if self.spk is not None:
+                rec.SetSpkModel(self.spk)
+            cur = self.recognizers[source] = (L.lang, rec)
+        return cur[1]
 
     def feed(self, source: str, room: str | None, pcm: bytes, reply: Reply | None) -> None:
         smoke = getattr(self.dispatcher, "smoke", None)
@@ -63,7 +99,8 @@ class Engine:
                 smoke.feed(room or source, pcm)  # beep patterns only, even in privacy mode
             except Exception as e:
                 log.debug("smoke listener: %s", e)
-        rec = self._recognizer(source)
+        rec = self._recognizer(source, room)
+        L = self._lang(room)
         buf = self.buffers.setdefault(source, bytearray())
         buf += pcm
         if len(buf) > self.MAX_UTTERANCE_BYTES:
@@ -76,16 +113,26 @@ class Engine:
             if self.dispatcher.state.is_private(room):
                 # Privacy mode: nothing is logged, matched or sent to the AI, except the
                 # command that turns privacy off (otherwise you could never say it).
-                m = self.matcher.match(text) if text else None
+                m = L.matcher.match(text) if text else None
                 if m and m.command.action.get("backend") == "privacy" and \
                         str(m.command.action.get("privacy")).lower() in ("off", "false"):
                     m.room, m.notify = room, reply
                     self.dispatcher.submit(m)
                 return
-            if self.router and text and self.router.handle(source, room, text, audio, reply):
+            person = None
+            vid = getattr(self.dispatcher, "voice_id", None)
+            if vid is not None and result.get("spk") and text:
+                person, score = vid.identify(result["spk"], room)
+                if person:
+                    log.debug("voice: %s (%.2f)", person, score)
+                    rooms = getattr(self.dispatcher, "rooms", None)
+                    if rooms and room:
+                        rooms.saw(person, room, "voice")
+            if self.router and text and self.router.handle(source, room, text, audio, reply,
+                                                           person=person, lang=L.lang):
                 return
-            handle_result(result, self.matcher, self.dispatcher, self.config,
-                          room=room, reply=reply)
+            handle_result(result, L.matcher, self.dispatcher, self.config,
+                          room=room, reply=reply, person=person)
 
 
 def listen(config: Config, dry_run: bool = False) -> None:
@@ -104,6 +151,17 @@ def listen(config: Config, dry_run: bool = False) -> None:
         )
 
     dispatcher = Dispatcher(config, dry_run=dry_run)
+    if "voice_id" in config.extra:
+        from .voiceid import VoiceID
+
+        VoiceID(dispatcher)
+    models = {}
+    for lang, lcfg in (config.extra.get("languages") or {}).items():
+        p = config.resolve_path((lcfg or {}).get("model_path", ""))
+        if p.exists():
+            models[lang] = vosk.Model(str(p))
+        else:
+            log.error("language %s: model not found at %s", lang, p)
     if (config.extra.get("smoke") or {}).get("enabled", True):
         from .smoke import SmokeListener
 
@@ -116,11 +174,12 @@ def listen(config: Config, dry_run: bool = False) -> None:
 
             assistant = Assistant(dispatcher)
             dispatcher.assistant = assistant
-            router = AssistantRouter(assistant, Transcriber(config.assistant, model, s.sample_rate))
+            router = AssistantRouter(assistant, Transcriber(config.assistant, model, s.sample_rate,
+                                                            models, s.language))
             log.info("AI assistant on: say \"%s, ...\"", assistant.names[0])
         except Exception as e:
             log.error("AI assistant not started: %s", e)
-    engine = Engine(config, model, dispatcher, router)
+    engine = Engine(config, model, dispatcher, router, models)
     audio: queue.Queue[tuple[str, str | None, bytes, Reply | None]] = queue.Queue(maxsize=2000)
 
     def put(item) -> None:
@@ -213,7 +272,8 @@ def _open_local_mic(config: Config, opts: dict, put):
 
 
 def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config: Config,
-                  room: str | None = None, reply: Reply | None = None) -> None:
+                  room: str | None = None, reply: Reply | None = None,
+                  person: str | None = None) -> None:
     text = result.get("text", "").strip()
     if not text or text == "[unk]":
         return
@@ -225,7 +285,7 @@ def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config
         return
     m = matcher.match(text)
     if m:
-        m.room, m.confidence, m.notify = room, conf, reply
+        m.room, m.confidence, m.notify, m.person = room, conf, reply, person
         if dispatcher.submit(m):
             log.info("MATCH %s <- %r (score %.0f%s)", m.command.name, text, m.score,
                      f", {room}" if room else "")

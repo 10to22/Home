@@ -138,7 +138,7 @@ def test_addressing(home):
 def test_router_name_then_question(home):
     answered = []
     ai = Assistant(home, client=FakeClient())
-    ai.ask = lambda q, room=None: answered.append((q, room)) or "Sunny."
+    ai.ask = lambda q, room=None, person=None: answered.append((q, room)) or "Sunny."
     heard = iter(["house", "what's the weather"])
     router = AssistantRouter(ai, transcribe=lambda pcm: next(heard))
     assert router.handle("mic1", "kitchen", "house", b"\0\0", None)  # name alone
@@ -149,6 +149,9 @@ def test_router_name_then_question(home):
             t.join(2)
     assert answered == [("what's the weather", "kitchen")]
     assert home.spoken[-1] == "Sunny."
+    # continuous conversation: right after an answer, a follow-up needs no wake name
+    assert "mic1" in router._follow_up
+    router._follow_up.clear()                                          # ...until the window closes
     assert not router.handle("mic1", "kitchen", "lights on", b"", None)  # normal command
 
 

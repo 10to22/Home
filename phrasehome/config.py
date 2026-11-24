@@ -34,6 +34,7 @@ class Settings:
     # clearest one, so "lights on" in the kitchen doesn't also fire in the next room.
     arbitration_seconds: float = 0.6
     default_backend: str | None = None
+    language: str = "en"  # the main language; other rooms can use others (see `languages:`)
     log_heard: bool = False  # log everything heard (handy for tuning; off for privacy)
 
 
@@ -49,15 +50,22 @@ class Settings:
 BUILTIN_BACKENDS = {"speak": "voice", "door": "doors", "routine": "routine", "timer": "timer",
                     "alarm": "alarm", "mode": "mode", "presence": "presence", "ask": "assistant",
                     "privacy": "privacy", "dnd": "dnd", "if": "logic", "report": "report",
-                    "security": "security", "plug": "energy", "spotify": "spotify"}
+                    "security": "security", "plug": "energy", "spotify": "spotify",
+                    "pet": "pets", "voiceid": "voiceid"}
 RESERVED = set(BUILTIN_BACKENDS.values())
 
 
 @dataclass
 class Command:
     name: str
-    phrases: list[str]
+    phrases: list[str]               # in the main language (settings.language)
     action: dict[str, Any]
+    by_language: dict[str, list[str]] = field(default_factory=dict)  # {"es": [...], ...}
+
+    def phrases_for(self, lang: str | None) -> list[str]:
+        if lang and lang in self.by_language:
+            return self.by_language[lang]
+        return self.phrases
 
 
 @dataclass
@@ -167,12 +175,17 @@ def load_config(path: str | Path) -> Config:
     commands: list[Command] = []
     for i, c in enumerate(data.get("commands") or []):
         phrases = c.get("phrases") or ([c["phrase"]] if "phrase" in c else [])
+        by_lang: dict[str, list[str]] = {}
+        if isinstance(phrases, dict):  # phrases: {en: [...], es: [...]}
+            by_lang = {str(k): [str(p) for p in v] for k, v in phrases.items()}
+            phrases = by_lang.get(settings.language) or next(iter(by_lang.values()), [])
         if not phrases:
             raise ConfigError(f"command #{i + 1} has no phrases")
         name = c.get("name") or phrases[0]
         action = normalize_action(c.get("action") or {}, settings.default_backend, backends,
                                   f"command '{name}'")
-        commands.append(Command(name=name, phrases=[str(p) for p in phrases], action=action))
+        commands.append(Command(name=name, phrases=[str(p) for p in phrases], action=action,
+                                by_language=by_lang))
     if not commands:
         raise ConfigError("no commands defined")
 
@@ -230,6 +243,8 @@ def load_config(path: str | Path) -> Config:
     from .instances import parse_instances
 
     instances = parse_instances(data.get("instances"))
+    if "person" not in slots:
+        slots["person"] = {i.name.lower(): i.id for i in instances if not i.main}
     room_owner: dict[str, str] = {}
     for inst in instances:
         for r in inst.rooms:

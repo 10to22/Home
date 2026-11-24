@@ -38,6 +38,7 @@ class SensorWatcher:
         self._next_poll: dict[str, float] = {}
         self._failures: dict[str, int] = {}
         self.offline: set[str] = set()
+        self._battery_low: dict[str, bool] = {}
         self._running = False
         home.sensors = self
 
@@ -85,10 +86,27 @@ class SensorWatcher:
             self.offline.discard(node)
             self.home.events.log("device.online", node=node)
         inputs = status.get("inputs") or []
-        if inputs:
+        if inputs or status.get("ble") is not None:
             self._has_inputs.add(node)
         for inp in inputs:
             self._update(node, inp)
+            if str(inp.get("name", "")).lower() == "battery" and "value" in inp:
+                self.battery(node, float(inp["value"]))
+        if "battery" in status:
+            self.battery(node, float(status["battery"]))
+        if status.get("ble") is not None:
+            loc = getattr(self.home, "locator", None)
+            if loc:
+                loc.update(node, status["ble"])
+
+    def battery(self, node: str, percent: float) -> None:
+        """Warn once when a battery gets low (below 20%), again only after it was charged."""
+        low = self._battery_low.get(node, False)
+        if percent < float(self.home.config.sensors.get("battery_low", 20)) and not low:
+            self._battery_low[node] = True
+            self.home.events.log("device.battery_low", node=node, value=round(percent))
+        elif percent > 30 and low:
+            self._battery_low[node] = False
 
     def _update(self, node: str, inp: dict[str, Any]) -> None:
         name = str(inp.get("name", "")).lower()

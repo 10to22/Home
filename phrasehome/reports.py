@@ -131,3 +131,51 @@ def report_dinner(home, action) -> str:
 
     slot = action.get("slot", "dinner")
     return spoken_meal(m.today(slot), "tonight" if slot == "dinner" else f"{slot} today")
+
+
+@register("where")
+def report_where(home, action) -> str:
+    """{report: where, what: keys}: Bluetooth tags, or people ("where is Sam")."""
+    what = str(action.get("what", "")).strip()
+    rooms = getattr(home, "rooms", None)
+    if rooms is None:
+        return "Room tracking isn't set up."
+    who = rooms._person_for_name(what)
+    if who:
+        w = rooms.where(who)
+        name = home.instances.all[who].name
+        return f"{name} is in the {w[0]}." if w else f"I'm not sure where {name} is."
+    return rooms.locator.say_where(what)
+
+
+@register("sleep")
+def report_sleep(home, action) -> str:
+    rooms = getattr(home, "rooms", None)
+    if rooms is None:
+        return "Bed sensors aren't set up."
+    inst = home.instances.for_room(action.get("_context", {}).get("here"))
+    person = action.get("person") or (inst.id if not inst.main else next(iter(rooms.beds), ""))
+    return rooms.sleep_report(person)
+
+
+@register("commute")
+def report_commute(home, action) -> str:
+    c = getattr(home, "commute", None)
+    if c is None:
+        return "Commute info isn't set up."
+    room = action.get("_context", {}).get("here")
+    inst = home.instances.for_room(room)
+    if action.get("person"):
+        inst = home.instances.get(action["person"], asker=home.instances.main)
+    if inst.main:
+        people = c.people()
+        return " ".join(f"{i.name}: {c.summary(i)}" for i in people) or "Nobody has a commute set up."
+    return c.summary(inst)
+
+
+@register("pet")
+def report_pet(home, action) -> str:
+    p = getattr(home, "pets", None)
+    if p is None:
+        return "No pets are set up."
+    return p.status(str(action.get("pet", "")))

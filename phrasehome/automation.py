@@ -249,6 +249,7 @@ class Scheduler:
         self._last_minute: str = ""
         self._next_vacation = 0.0
         self._vacation_on: set[int] = set()
+        self._pre_alarm_done: set[str] = set()
         self._running = False
 
     def start(self) -> None:
@@ -271,6 +272,7 @@ class Scheduler:
         self.home.timeline.run_due()
         for inst, item in self.home.instances.due(now):
             self.fire(inst, item)
+        self.pre_alarms(now)
         minute = now.strftime("%Y-%m-%d %H:%M")
         if minute != self._last_minute:
             self._last_minute = minute
@@ -303,6 +305,35 @@ class Scheduler:
                 self.home.run_steps([item["action"]], values, "scheduled action")
             except Exception as e:
                 log.error("scheduled action failed: %s", e)
+
+    def pre_alarms(self, now: datetime) -> None:
+        """Before an alarm: a sunrise fade of the bedroom light, and an `agenda.alarm_soon` event
+        (e.g. start the coffee machine). Per instance: sunrise: {minutes: 20, light: {...}},
+        pre_alarm_minutes: 10."""
+        for inst in self.home.instances.all.values():
+            sunrise = inst.extra.get("sunrise") or {}
+            pre = float(inst.extra.get("pre_alarm_minutes", 10))
+            for item in self.home.instances.items(inst, ("alarm",)):
+                due = datetime.fromisoformat(item["due"])
+                left = (due - now).total_seconds() / 60
+                key = f"{item['id']}:{item['due']}"
+                if 0 < left <= pre and key + ":soon" not in self._pre_alarm_done:
+                    self._pre_alarm_done.add(key + ":soon")
+                    self.home.events.log("agenda.alarm_soon", instance=inst.id, minutes=round(left),
+                                         room=item.get("room"))
+                mins = float(sunrise.get("minutes", 0) or 0)
+                if mins and sunrise.get("light") and 0 < left <= mins and key + ":sun" not in self._pre_alarm_done:
+                    self._pre_alarm_done.add(key + ":sun")
+                    self.sunrise(sunrise["light"], left)
+
+    def sunrise(self, light: dict, minutes: float, steps: int = 20) -> None:
+        """Fade a dimmable light from 1% up to 100% over `minutes`."""
+        light = dict(light)
+        light.setdefault("backend", self.home.config.settings.default_backend)
+        for i in range(steps + 1):
+            level = max(1, round(100 * (i / steps) ** 2))  # slow at first, like a real sunrise
+            self.home.timeline.call_in(minutes * 60 * i / steps,
+                                       lambda lv=level: self.home.run_action({**light, "level": lv, "state": True}))
 
     def stop_ringing(self, rooms: list[str | None] | None = None) -> int:
         n = 0

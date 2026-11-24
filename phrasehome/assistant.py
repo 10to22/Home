@@ -48,6 +48,7 @@ class Assistant:
         self.persona = cfg.get("persona", PERSONA)
         self.memory_seconds = float(cfg.get("memory_minutes", 5)) * 60
         self.follow_up_seconds = float(cfg.get("follow_up_seconds", 8))
+        self.continuous = bool(cfg.get("continuous", True))  # listen for a follow-up after answering
         self.location = cfg.get("location", "")
         if client is None:
             import anthropic
@@ -122,7 +123,7 @@ The people and rooms in this home:
 {others}
 
 How to reply: your reply is spoken aloud by a speaker, so answer in one to three short
-sentences of plain speech. Don't use lists, markdown, emoji or URLs. Say numbers and times the
+sentences of plain speech, in the language given with each message. Don't use lists, markdown, emoji or URLs. Say numbers and times the
 way a person would.
 
 Reminders, alarms and timers: use the agenda tool. Work out exact local times from the current
@@ -379,20 +380,29 @@ who came to the door and when.
         raise ValueError(f"unknown tool {name}")
 
     # ---------- the conversation ----------
-    def context(self, inst, room: str | None) -> str:
+    def context(self, inst, room: str | None, person: str | None = None) -> str:
         h = self.home
+        lang = h.language_for(room) if hasattr(h, "language_for") else "en"
+        who = f" speaker recognized by voice: {inst.name};" if person else ""
         doors = ", ".join(f"{d} {s}" for d, s in h.doors.states().items()) or "none"
         upcoming = [f"{i['kind']} {i['due'][5:16].replace('T', ' ')} {i['text'] or i['label']}".strip()
                     for i in h.instances.items(inst)[:6]]
         notes = [m["text"] for m in h.instances.memories(inst)][-30:]
         return (f"[{clock.now().strftime('%A %d %B %Y, %H:%M %Z')}; speaking from: {room or 'unknown'}"
-                f" ({inst.name}'s {'main room' if inst.main else 'room'}); house mode: {h.state.mode};"
+                f" ({inst.name}'s {'main room' if inst.main else 'room'});{who} language: {lang};"
+                f" house mode: {h.state.mode};"
                 f" home now: {', '.join(h.state.home_people()) or 'unknown'}; doors: {doors};"
                 f" {inst.name}'s upcoming: {'; '.join(upcoming) or 'nothing'};"
                 f" {inst.name}'s saved notes: {' | '.join(notes) or 'none'}]")
 
-    def ask(self, question: str, room: str | None = None) -> str:
-        inst = self.home.instances.for_room(room)
+    def instance_for(self, room: str | None, person: str | None = None):
+        """The speaker's own instance when their voice was recognized, else the room's."""
+        if person and person in self.home.instances.all:
+            return self.home.instances.all[person]
+        return self.home.instances.for_room(room)
+
+    def ask(self, question: str, room: str | None = None, person: str | None = None) -> str:
+        inst = self.instance_for(room, person)
         system, tools = self.profile(inst)
         with self._lock:
             key = room or "_"
@@ -401,7 +411,7 @@ who came to the door and when.
             if now - last > self.memory_seconds or len(messages) > 40:
                 messages = []  # start fresh rather than trimming the middle of a conversation
             messages.append({"role": "user", "content": [
-                {"type": "text", "text": self.context(inst, room)},
+                {"type": "text", "text": self.context(inst, room, person)},
                 {"type": "text", "text": question}]})
             answer = self._loop(messages, room, inst, system, tools)
             self._convos[key] = (time.monotonic(), messages)
@@ -454,26 +464,29 @@ class Transcriber:
     """Turns a whole utterance into free text (the command recognizer only knows your phrases).
     vosk: uses the same offline model. whisper: more accurate, needs `pip install faster-whisper`."""
 
-    def __init__(self, cfg: dict, vosk_model, rate: int) -> None:
+    def __init__(self, cfg: dict, vosk_model, rate: int, models: dict | None = None,
+                 main_lang: str = "en") -> None:
         self.kind = cfg.get("transcriber", "vosk")
         self.rate = rate
         self.vosk_model = vosk_model
+        self.models = models or {}
+        self.main_lang = main_lang
         if self.kind == "whisper":
             from faster_whisper import WhisperModel
 
             self.whisper = WhisperModel(cfg.get("whisper_model", "base.en"), device="cpu",
                                         compute_type="int8")
 
-    def __call__(self, pcm: bytes) -> str:
+    def __call__(self, pcm: bytes, lang: str | None = None) -> str:
         if self.kind == "whisper":
             import numpy as np
 
             audio = np.frombuffer(pcm, np.int16).astype(np.float32) / 32768.0
-            segments, _ = self.whisper.transcribe(audio, language="en", beam_size=1)
+            segments, _ = self.whisper.transcribe(audio, language=lang or self.main_lang, beam_size=1)
             return " ".join(s.text.strip() for s in segments)
         import vosk
 
-        rec = vosk.KaldiRecognizer(self.vosk_model, self.rate)
+        rec = vosk.KaldiRecognizer(self.models.get(lang, self.vosk_model), self.rate)
         rec.AcceptWaveform(pcm)
         return json.loads(rec.FinalResult()).get("text", "")
 
@@ -487,8 +500,15 @@ class AssistantRouter:
         self.transcribe = transcribe
         self._follow_up: dict[str, float] = {}
 
+    def _transcribe(self, pcm: bytes, lang: str | None) -> str:
+        try:
+            return self.transcribe(pcm, lang)
+        except TypeError:  # a simple one-argument transcriber
+            return self.transcribe(pcm)
+
     def handle(self, source: str, room: str | None, text: str, pcm: bytes,
-               reply: Callable[[str], None] | None) -> bool:
+               reply: Callable[[str], None] | None, person: str | None = None,
+               lang: str | None = None) -> bool:
         """Return True if the AI took this utterance (so it isn't also matched as a command)."""
         now = time.monotonic()
         rest = self.assistant.addressed(text, room)
@@ -500,25 +520,33 @@ class AssistantRouter:
             reply("matched")
         if rest is not None and all(w == "unk" for w in rest.split()):
             # only the name was heard clearly; the question may be in this audio or the next utterance
-            full = self.assistant.strip_name(self.transcribe(pcm), room)
+            full = self.assistant.strip_name(self._transcribe(pcm, lang), room)
             if not full.strip():
                 self._follow_up[source] = now + self.assistant.follow_up_seconds
                 self.assistant.home.voice.speak("listening", room=room)
                 return True
             question = full
         else:
-            question = self.assistant.strip_name(self.transcribe(pcm), room) if pcm else (rest or text)
-        threading.Thread(target=self._answer, args=(question, room, reply), daemon=True).start()
+            question = self.assistant.strip_name(self._transcribe(pcm, lang), room) if pcm else (rest or text)
+            if not question.strip() or all(w == "unk" for w in question.split()):
+                return True  # nothing usable was said
+        threading.Thread(target=self._answer, args=(question, room, reply, person, source),
+                         daemon=True).start()
         return True
 
-    def _answer(self, question: str, room: str | None, reply) -> None:
+    def _answer(self, question: str, room: str | None, reply, person: str | None = None,
+                source: str | None = None) -> None:
         log.info("assistant%s <- %r", f" [{room}]" if room else "", question)
         try:
-            answer = self.assistant.ask(question, room)
+            answer = self.assistant.ask(question, room, person=person) if person else \
+                self.assistant.ask(question, room)
             log.info("assistant -> %r", answer)
             self.assistant.home.voice.speak(answer, room=room)
             if reply:
                 reply("done")
+            if self.assistant.continuous and source:
+                # continuous conversation: a follow-up doesn't need the wake name
+                self._follow_up[source] = time.monotonic() + self.assistant.follow_up_seconds
         except Exception as e:
             log.error("assistant failed: %s", e)
             self.assistant.home.voice.speak("assistant_error", room=room)

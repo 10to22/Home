@@ -137,7 +137,8 @@ class Dispatcher:
                        "presence": b.PresenceBackend, "assistant": b.AskBackend,
                        "privacy": b.PrivacyBackend, "dnd": b.DndBackend, "logic": b.LogicBackend,
                        "report": b.ReportBackend, "security": b.SecurityBackend,
-                       "energy": b.EnergyBackend, "spotify": b.SpotifyBackend}
+                       "energy": b.EnergyBackend, "spotify": b.SpotifyBackend,
+                       "pets": b.PetBackend, "voiceid": b.VoiceIdBackend}
             try:
                 if name in builtin:
                     b = builtin[name](name, {}, self.config)
@@ -221,17 +222,34 @@ class Dispatcher:
         except Exception as e:
             log.warning("phone notification failed: %s", e)
 
+    def language_for(self, room: str | None) -> str:
+        """The language spoken in a room: languages.<lang>.rooms, or the room's instance's
+        `language:`, else settings.language."""
+        main = self.config.settings.language
+        if room:
+            r = room.lower()
+            for lang, cfg in (self.config.extra.get("languages") or {}).items():
+                if r in [str(x).lower() for x in (cfg or {}).get("rooms", [])]:
+                    return lang
+            inst_lang = self.instances.for_room(r).extra.get("language")
+            if inst_lang:
+                return inst_lang
+        return main
+
     def _execute(self, m: Match) -> None:
         values = dict(m.slots)
         if m.room:
             values.setdefault("here", m.room)
+        if m.person:
+            values.setdefault("person", m.person)
         if m.room:
             log.info("firing %s from %s", m.command.name, m.room)
         _notify(m, "matched")
         try:
             result = self.run_action(m.command.action, values, m.phrase)
             log.info("done: %s%s", m.command.name, f" ({result})" if result else "")
-            self.events.log("command", name=m.command.name, room=m.room, heard=m.heard)
+            self.events.log("command", name=m.command.name, room=m.room, heard=m.heard,
+                            person=m.person)
             _notify(m, "done")
         except Exception as e:  # keep listening no matter what
             log.error("command %s failed: %s", m.command.name, e)
@@ -249,7 +267,8 @@ class Dispatcher:
 
 
 BUILTIN_NAMES = {"routine", "doors", "voice", "timer", "alarm", "mode", "presence", "assistant",
-                 "privacy", "dnd", "logic", "report", "security", "energy", "spotify"}
+                 "privacy", "dnd", "logic", "report", "security", "energy", "spotify",
+                 "pets", "voiceid"}
 
 
 def _quality(m: Match) -> float:

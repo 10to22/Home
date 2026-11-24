@@ -295,3 +295,41 @@ class SpotifyBackend(_Builtin):
         if what in ("what", "like") or action.get("confirm"):
             self.home.voice.speak(text, room=room)
         return text
+
+
+class PetBackend(_Builtin):
+    """{pet: luna, do: fed | feed | status}  ("I fed the dog", "feed the cat", "did anyone feed the dog?")"""
+
+    def run(self, action: dict[str, Any], phrase: str) -> str:
+        p = getattr(self.home, "pets", None)
+        if p is None:
+            raise RuntimeError("no `pets:` section")
+        ctx = action.get("_context", {})
+        room = ctx.get("here")
+        by = ctx.get("person") or ""
+        if not by:
+            inst = self.home.instances.for_room(room)
+            by = "" if inst.main else inst.id
+        what = str(action.get("do", "status")).lower()
+        pet = str(action.get("pet", ""))
+        text = p.fed(pet, by) if what == "fed" else p.feed(pet, by) if what == "feed" else p.status(pet)
+        self.home.voice.speak(text, room=room)
+        return text
+
+
+class VoiceIdBackend(_Builtin):
+    """{voiceid: enroll, person: "{person}"}: "this is Sam" learns Sam's voice from the last few
+    sentences said in this room."""
+
+    def run(self, action: dict[str, Any], phrase: str) -> str:
+        v = getattr(self.home, "voice_id", None)
+        room = action.get("_context", {}).get("here")
+        if v is None:
+            raise RuntimeError("voice recognition isn't set up (voice_id: in config)")
+        person = str(action["person"]).lower()
+        n = v.enroll_recent(person, room or "")
+        name = self.home.instances.all[person].name if person in self.home.instances.all else person
+        msg = f"Thanks {name}, I've learned a bit more of your voice." + \
+            (" A few more times will help." if n < 6 else "")
+        self.home.voice.speak(msg, room=room)
+        return msg

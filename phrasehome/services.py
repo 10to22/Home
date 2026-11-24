@@ -46,6 +46,10 @@ def start_services(home) -> list:
         ("packages", lambda: "packages" in home.config.extra, "packages", "Packages"),
         ("meals", lambda: True, "meals", "Meals"),
         ("spotify", lambda: "spotify" in home.config.extra, "spotify", "Spotify"),
+        ("rooms", lambda: True, "rooms", "RoomTracker"),
+        ("commute", lambda: any(i.extra.get("commute") for i in home.instances.all.values()),
+         "commute", "Commute"),
+        ("pets", lambda: "pets" in home.config.extra, "pets", "Pets"),
     ]
     for label, wanted, module, cls in optional:
         if not wanted():

@@ -41,15 +41,17 @@ class Match:
     score: float
     heard: str
     room: str | None = None  # room of the mic that heard it
+    person: str | None = None  # who said it, if their voice was recognized
     confidence: float = 1.0
     notify: Callable[[str], None] | None = None  # feedback to the mic: "matched"/"done"/"failed"
 
 
-def expand(commands: list[Command], slots: dict[str, dict[str, str]]) -> list[Candidate]:
+def expand(commands: list[Command], slots: dict[str, dict[str, str]],
+           lang: str | None = None) -> list[Candidate]:
     """Expand every phrase template ("turn on the {room} lights") into concrete phrases."""
     out: list[Candidate] = []
     for cmd in commands:
-        for template in cmd.phrases:
+        for template in cmd.phrases_for(lang):
             names = _SLOT_RE.findall(template)
             for n in names:
                 if n not in slots:
