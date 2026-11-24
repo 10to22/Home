@@ -346,6 +346,62 @@ EFFECTS: dict[str, str] = {
 }
 
 
+def clean_name(x: Any) -> Any:
+    """Names typed in TextEdit can pick up curly quotes ("smart quotes"): drop them."""
+    if not isinstance(x, str):
+        return x
+    return x.strip().strip("\u201c\u201d\u2018\u2019\"'").strip() or None
+
+
+_MAC_VOICES: list[str] | None = None
+_WARNED: set[str] = set()
+
+
+def mac_voices() -> list[str]:
+    """Every voice `say` has on this Mac, e.g. ["Karen", "Lee (Premium)", "Samantha", ...]."""
+    global _MAC_VOICES
+    if _MAC_VOICES is None:
+        try:
+            out = subprocess.run(["say", "-v", "?"], capture_output=True, text=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        names = []
+        for line in out.splitlines():
+            left = line.split("#", 1)[0].rstrip()
+            parts = left.rsplit(None, 1)
+            if len(parts) == 2:
+                names.append(parts[0].strip())
+        _MAC_VOICES = names
+    return _MAC_VOICES
+
+
+def mac_voice(wanted: Any) -> str | None:
+    """The installed Mac voice closest to what config asks for: "lee" finds "Lee (Premium)"
+    (Premium, then Enhanced, then the basic one). None (= the default voice) if it isn't there."""
+    wanted = clean_name(wanted)
+    if not wanted:
+        return None
+    have = mac_voices()
+    if not have:
+        return wanted  # can't list them: let `say` try
+    w = wanted.lower()
+    exact = [n for n in have if n.lower() == w]
+    if exact and " (" in w:  # "Lee (Premium)": exactly that one
+        return exact[0]
+    base = w.split(" (")[0]  # "lee": the best version installed
+    family = [n for n in have if n.lower().split(" (")[0] == base]
+    for tier in ("premium", "enhanced", ""):
+        for n in family:
+            if tier in n.lower():
+                return n
+    if wanted not in _WARNED:
+        _WARNED.add(wanted)
+        log.error("the Mac voice %r isn't installed, so the default voice is used. Download it in System "
+                  "Settings > Accessibility > Spoken Content > System Voice > Manage Voices. Installed: %s",
+                  wanted, ", ".join(have))
+    return None
+
+
 def effect_filter(effect: str, rate: int) -> str:
     chain = EFFECTS.get(effect, effect)
     return chain.format(rate=rate, up=int(rate * 1.06), back=f"{1 / 1.06:.4f}",
@@ -400,11 +456,12 @@ class Voice:
         self.base = {
             "engine": cfg.get("engine", "piper"),
             "piper_model": cfg.get("piper_model", "models/piper/en_US-lessac-medium.onnx"),
-            "espeak_voice": cfg.get("espeak_voice", "en-us"),
+            "espeak_voice": clean_name(cfg.get("espeak_voice", "en-us")),
             "speed": float(cfg.get("speed", 1.0)),
             "command": cfg.get("command"),
             "volume": float(cfg.get("volume", 100)),
-            "effect": cfg.get("effect"),
+            "effect": clean_name(cfg.get("effect")),
+            "say_voice": clean_name(cfg.get("say_voice")),
         }
         self.quiet_volume = float(cfg.get("quiet_volume", 40))
         self.bank_dir = Path(config.resolve_path(cfg.get("bank_dir", "voice_bank")))
@@ -473,11 +530,16 @@ class Voice:
 
     # ---------- making sound ----------
     @staticmethod
-    def available_engine(engine: str) -> str:
-        """Piper isn't installed (e.g. on a Mac while testing)? Use what this computer has."""
+    def available_engine(engine: str, v: dict[str, Any] | None = None) -> str:
+        """Piper isn't installed (e.g. on a Mac while testing)? Use what this computer has.
+        On a Mac, a `say_voice` means "use that Mac voice here" even if Piper is installed."""
+        v = v or {}
+        mac = sys.platform == "darwin" and shutil.which("say")
+        if engine == "piper" and mac and v.get("say_voice"):
+            return "say"
         if engine != "piper" or shutil.which("piper"):
             return engine
-        if sys.platform == "darwin" and shutil.which("say"):
+        if mac:
             return "say"  # macOS's built-in voice
         if shutil.which("espeak-ng"):
             return "espeak"
@@ -485,7 +547,7 @@ class Voice:
 
     def synthesize(self, text: str, v: dict[str, Any] | None = None) -> Path | None:
         v = v or self.base
-        engine = self.available_engine(v.get("engine", "piper"))
+        engine = self.available_engine(v.get("engine", "piper"), v)
         if engine == "none" or not text.strip():
             return None
         ident = f"{engine}|{v.get('say_voice')}|{v.get('piper_model')}|{v.get('espeak_voice')}|{v.get('speed')}|{v.get('command')}|{v.get('effect')}|{text}"
@@ -502,9 +564,15 @@ class Voice:
         elif engine == "say":  # macOS
             cmd = ["say", "--file-format=WAVE", "--data-format=LEI16@22050",
                    "-r", str(int(180 * speed)), "-o", str(tmp), text]
-            if v.get("say_voice"):
-                cmd[1:1] = ["-v", str(v["say_voice"])]
-            subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+            name = mac_voice(v.get("say_voice"))
+            if name:
+                cmd[1:1] = ["-v", name]
+            r = subprocess.run(cmd, capture_output=True, timeout=60)
+            if r.returncode != 0 or not tmp.exists() or tmp.stat().st_size <= 44:  # 44 = an empty WAV
+                tmp.unlink(missing_ok=True)
+                err = (r.stderr or b"").decode(errors="replace").strip()
+                raise RuntimeError(f"the Mac couldn't speak with voice {name or '(default)'}: "
+                                   f"{err or 'no audio came out'}")
         elif engine == "espeak":
             cmd = ["espeak-ng", "-v", str(v.get("espeak_voice", "en-us")), "-s", str(int(170 * speed)),
                    "-w", str(tmp), text]

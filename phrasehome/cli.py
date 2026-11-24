@@ -261,6 +261,8 @@ def _cmd_voice(args) -> int:
     text = " ".join(args.text)
     if args.action == "match":  # doesn't need the house running
         return _voice_match(cfg, text, args)
+    if args.action == "check":
+        return _voice_check(cfg)
     home = Dispatcher(cfg)  # noqa: F841  (speech is routed through it)
     v = Voice(cfg)
     if args.action == "list":
@@ -285,6 +287,62 @@ def _cmd_voice(args) -> int:
         print(f"Recording {args.seconds:.0f} seconds for '{text}' - speak now...")
         print(f"saved {v.record(text, args.seconds)}")
     return 0
+
+
+def _voice_check(cfg) -> int:
+    """What voice will the house actually use here, and does it work?"""
+    import shutil
+
+    from . import voice as vmod
+    from .dispatcher import Dispatcher
+
+    raw = cfg.voice
+    print("Your config's voice section:")
+    for k in ("engine", "say_voice", "espeak_voice", "piper_model", "style", "effect", "speed"):
+        if k in raw:
+            note = "  <- has curly quotes from TextEdit (fixed automatically)" \
+                if isinstance(raw[k], str) and any(q in raw[k] for q in "\u201c\u201d\u2018\u2019") else ""
+            print(f"  {k}: {raw[k]!r}{note}")
+    home = Dispatcher(cfg)
+    v = home.voice
+    engine = v.available_engine(v.base["engine"], v.base)
+    print(f"\nComputer: {sys.platform}")
+    print(f"Engine used here: {engine}" + (f" (config says {v.base['engine']})" if engine != v.base["engine"] else ""))
+    problems = 0
+    if engine == "say":
+        wanted = v.base.get("say_voice")
+        got = vmod.mac_voice(wanted)
+        print(f"Mac voice: {got or 'the default voice'}" + (f" (you asked for {wanted!r})" if wanted and got != wanted else ""))
+        if wanted and not got:
+            problems += 1
+            print("  PROBLEM: that voice isn't installed. Installed voices:", ", ".join(vmod.mac_voices()))
+    elif engine == "piper":
+        model = cfg.resolve_path(v.base["piper_model"])
+        print(f"Piper model: {model} ({'found' if model.exists() else 'MISSING'})")
+        problems += 0 if model.exists() else 1
+    elif engine == "espeak":
+        print(f"eSpeak voice: {v.base['espeak_voice']} ({'installed' if shutil.which('espeak-ng') else 'espeak-ng NOT installed'})")
+        problems += 0 if shutil.which("espeak-ng") else 1
+    style = raw.get("style", vmod.DEFAULT_STYLE)
+    print(f"Style: {style}" + ("" if style in vmod.STYLES or style == "plain" else "  PROBLEM: unknown style, using the plain lines"))
+    if v.base.get("effect"):
+        ok = bool(shutil.which("ffmpeg"))
+        print(f"Effect: {v.base['effect']} ({'ok' if ok else 'needs ffmpeg: brew install ffmpeg'})")
+    text, _ = v.resolve("door_auto_locked", door="front")
+    print(f"\nTest line: {text}")
+    try:
+        wav = v.synthesize(text, v.base)
+        print(f"Made the audio: {wav}")
+    except Exception as e:
+        print(f"PROBLEM making the audio: {e}")
+        return 1
+    try:
+        where = v.router.play(wav, None, float(v.base.get("volume", 100)) / 100)
+        print(f"Played it ({where}). Did you hear it? If not, check the Mac's volume and output device.")
+    except Exception as e:
+        print(f"PROBLEM playing it: {e}")
+        return 1
+    return 1 if problems else 0
 
 
 def _voice_match(cfg, path: str, args) -> int:
@@ -591,8 +649,9 @@ def main(argv: list[str] | None = None) -> int:
 
     vo = sub.add_parser("voice", help="test and customize the voice bank",
                         description="phrasehome voice list | say <key or text> | record <key> | "
-                                    "match <recording> | demo [--save demo.mp3] [--short]")
-    vo.add_argument("action", choices=["list", "say", "record", "match", "demo"], nargs="?", default="list")
+                                    "match <recording> | demo [--save demo.mp3] [--short] | check")
+    vo.add_argument("action", choices=["list", "say", "record", "match", "demo", "check"], nargs="?",
+                    default="list")
     vo.add_argument("text", nargs="*")
     vo.add_argument("--seconds", type=float, default=4.0)
     vo.add_argument("--top", type=int, default=8, help="match: how many voices to show")

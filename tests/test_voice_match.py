@@ -124,3 +124,73 @@ commands:
     out = Voice(load_config(tmp_path / "c.yaml")).demo(tmp_path / "demo.wav", every_variant=False, show=lambda s: None)
     with wave.open(str(out)) as w:
         assert w.getnframes() / w.getframerate() > 60  # over a minute of speech
+
+
+# ---------- Mac voices: smart quotes, partial names, Piper installed ----------
+SAY_LIST = """Karen               en_AU    # Hi my name is Karen
+Lee                 en_AU    # Hello! My name is Lee.
+Lee (Premium)       en_AU    # Hello! My name is Lee.
+Samantha            en_US    # Hello! My name is Samantha.
+"""
+
+
+@pytest.fixture
+def mac(monkeypatch):
+    import subprocess as sp
+
+    from phrasehome import voice
+
+    monkeypatch.setattr(voice, "_MAC_VOICES", None)
+    monkeypatch.setattr(voice, "_WARNED", set())
+    monkeypatch.setattr(voice.sys, "platform", "darwin")
+    monkeypatch.setattr(voice.shutil, "which", lambda x: f"/usr/bin/{x}" if x in ("say", "piper") else None)
+    ran = []
+
+    def fake_run(cmd, **kw):
+        ran.append(cmd)
+        if cmd[:3] == ["say", "-v", "?"]:
+            return sp.CompletedProcess(cmd, 0, stdout=SAY_LIST)
+        if "-o" in cmd:
+            open(cmd[cmd.index("-o") + 1], "wb").write(b"RIFF" + bytes(400))
+        return sp.CompletedProcess(cmd, 0, stdout="", stderr=b"")
+
+    monkeypatch.setattr(voice.subprocess, "run", fake_run)
+    return ran
+
+
+@pytest.mark.parametrize("typed,used", [
+    ("Lee (Premium)", "Lee (Premium)"),
+    ("\u201cLee (Premium)\u201d", "Lee (Premium)"),   # TextEdit's curly quotes
+    ("lee", "Lee (Premium)"),                     # the best version that's installed
+    ("Lee (Enhanced)", "Lee (Premium)"),
+    ("karen", "Karen"),
+])
+def test_mac_voice_names(mac, typed, used):
+    from phrasehome.voice import mac_voice
+
+    assert mac_voice(typed) == used
+
+
+def test_missing_mac_voice_uses_the_default(mac, caplog):
+    from phrasehome.voice import mac_voice
+
+    assert mac_voice("Matilda") is None
+    assert "isn't installed" in caplog.text and "Lee (Premium)" in caplog.text
+
+
+def test_say_voice_beats_piper_on_a_mac(mac, tmp_path):
+    from phrasehome.config import load_config
+    from phrasehome.voice import Voice
+
+    (tmp_path / "c.yaml").write_text(f"""
+data_dir: {tmp_path}/data
+backends: {{ dev: {{ type: log }} }}
+settings: {{ default_backend: dev }}
+voice: {{ engine: piper, say_voice: "\u201cLee (Premium)\u201d" }}
+commands:
+  - {{ phrases: [hello], action: {{ backend: dev }} }}
+""", encoding="utf-8")
+    v = Voice(load_config(tmp_path / "c.yaml"))
+    assert v.synthesize("G'day.", v.base).exists()
+    said = [c for c in mac if c[0] == "say" and "-o" in c][0]
+    assert said[1:3] == ["-v", "Lee (Premium)"]  # Piper is installed, but the Mac voice was asked for

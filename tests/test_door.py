@@ -265,7 +265,7 @@ def test_mac_voice_fallback(home, monkeypatch, tmp_path):
     def fake_run(cmd, **kw):
         ran.append(cmd)
         out = cmd[cmd.index("-o") + 1]
-        open(out, "wb").write(b"RIFF")
+        open(out, "wb").write(b"RIFF" + bytes(400))
         return subprocess.CompletedProcess(cmd, 0)
     monkeypatch.setattr(voice.subprocess, "run", fake_run)
     v = Voice(home.config)
