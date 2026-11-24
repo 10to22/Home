@@ -74,3 +74,17 @@ commands:
     labels = [(b[1], b[2]) for b in best]
     assert ("en+f3", None) in labels
     assert len(set(labels)) == len(labels)
+
+
+def test_mac_joke_voices_are_skipped_unless_asked(monkeypatch):
+    import phrasehome.voice_match as vm
+
+    listing = """Bahh                en_US    # Do not pull the wool over my eyes.
+Samantha            en_US    # Hello! My name is Samantha.
+Zarvox              en_US    # That looks like a peaceful planet.
+"""
+    monkeypatch.setattr(vm.sys, "platform", "darwin")
+    monkeypatch.setattr(vm.shutil, "which", lambda name: "/usr/bin/say")
+    monkeypatch.setattr(vm.subprocess, "run", lambda *a, **k: type("R", (), {"stdout": listing})())
+    assert vm.say_voices() == ["Samantha"]
+    assert vm.say_voices(novelty=True) == ["Bahh", "Samantha", "Zarvox"]

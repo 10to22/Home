@@ -258,9 +258,11 @@ def _cmd_voice(args) -> int:
     from .dispatcher import Dispatcher
 
     cfg = load_config(args.config)
-    home = Dispatcher(cfg)
-    v = Voice(cfg)
     text = " ".join(args.text)
+    if args.action == "match":  # doesn't need the house running
+        return _voice_match(cfg, text, args)
+    home = Dispatcher(cfg)  # noqa: F841  (speech is routed through it)
+    v = Voice(cfg)
     if args.action == "list":
         for key in sorted(v.phrases):
             clip = v._clip(key)
@@ -269,8 +271,6 @@ def _cmd_voice(args) -> int:
             print(f"{key:<24} {'[recorded clip] ' if clip else ''}{shown}")
     elif args.action == "say":
         print(v.speak(text or "Hello. This is your house speaking."))
-    elif args.action == "match":
-        return _voice_match(cfg, text, args)
     elif args.action == "record":
         if not text:
             print("usage: phrasehome voice record <phrase_key> [--seconds 4]", file=sys.stderr)
@@ -291,7 +291,7 @@ def _voice_match(cfg, path: str, args) -> int:
     print("Comparing every voice on this computer with that recording (takes a minute or two)...")
     try:
         ref, best = match(cfg, Path(path).expanduser(), top=args.top, effects=not args.no_effects,
-                          progress=lambda m: print(m, flush=True))
+                          progress=lambda m: print(m, flush=True), novelty=args.novelty)
     except Exception as e:
         print(f"couldn't compare: {e}", file=sys.stderr)
         return 1
@@ -590,6 +590,7 @@ def main(argv: list[str] | None = None) -> int:
     vo.add_argument("--seconds", type=float, default=4.0)
     vo.add_argument("--top", type=int, default=8, help="match: how many voices to show")
     vo.add_argument("--no-effects", action="store_true", help="match: don't try the voice effects")
+    vo.add_argument("--novelty", action="store_true", help="match: include the Mac's joke voices (Bahh, Bubbles...)")
     vo.set_defaults(fn=_cmd_voice)
 
     ag = sub.add_parser("agenda", help="show everyone's reminders, alarms, timers and lists")

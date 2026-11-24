@@ -132,11 +132,17 @@ def distance(a: Profile, b: Profile) -> float:
 
 
 # ---------- the voices this computer has ----------
-def say_voices() -> list[str]:
+# macOS joke voices (bleating, singing, bubbling...): they can fake the numbers but don't sound like speech
+NOVELTY = {"albert", "bad news", "bahh", "bells", "boing", "bubbles", "cellos", "good news", "jester",
+           "organ", "superstar", "trinoids", "whisper", "wobble", "zarvox", "deranged", "hysterical",
+           "pipe organ", "princess"}
+
+
+def say_voices(novelty: bool = False) -> list[str]:
     if sys.platform != "darwin" or not shutil.which("say"):
         return []
     out = subprocess.run(["say", "-v", "?"], capture_output=True, text=True, timeout=30).stdout
-    return parse_say_list(out)
+    return [n for n in parse_say_list(out) if novelty or n.lower() not in NOVELTY]
 
 
 def parse_say_list(text: str) -> list[str]:
@@ -151,9 +157,9 @@ def parse_say_list(text: str) -> list[str]:
     return names
 
 
-def candidates(config) -> list[dict]:
+def candidates(config, novelty: bool = False) -> list[dict]:
     """Voice settings to try, as they'd go in config.yaml's `voice:`."""
-    out = [{"engine": "say", "say_voice": n} for n in say_voices()]
+    out = [{"engine": "say", "say_voice": n} for n in say_voices(novelty)]
     if shutil.which("piper"):
         folder = Path(config.resolve_path("models/piper"))
         out += [{"engine": "piper", "piper_model": str(p.relative_to(config.base_dir))
@@ -166,13 +172,14 @@ def candidates(config) -> list[dict]:
     return out
 
 
-def match(config, reference: Path, top: int = 10, effects: bool = True, progress=print) -> tuple[Profile, list]:
+def match(config, reference: Path, top: int = 10, effects: bool = True, progress=print,
+          novelty: bool = False) -> tuple[Profile, list]:
     from .voice import EFFECTS, Voice
 
     ref = profile(load(reference))
     voice = Voice(config)
     voice.cache = Path(tempfile.mkdtemp(prefix="voicematch-"))
-    tries = candidates(config)
+    tries = candidates(config, novelty)
     if not tries:
         raise RuntimeError("no voices found to compare (on a Mac this uses the built-in `say` voices)")
     fx = [None] + (list(EFFECTS) if effects and shutil.which("ffmpeg") else [])
