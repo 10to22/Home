@@ -162,6 +162,13 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Forget strangers | `remember_unknown: false` |
 | Backups | `phrasehome backup`: one private file with config, face bank, reminders and recordings |
 
+## Testing on a laptop
+
+| Feature | How |
+|---|---|
+| Voice and webcam together | `phrasehome simulate --mic --webcam`: simulated devices, your microphone and your webcam |
+| Move the laptop around | The dashboard's Laptop card: which room the microphone is in, and which camera the webcam is (or off), live |
+
 ## Dashboard and API
 
 | Feature | How |

@@ -265,6 +265,8 @@ def _open_local_mic(config: Config, opts: dict, put):
     room = opts.get("room")
     room = str(room).lower() if room else None
     mute = opts.get("mute_while_speaking", True)  # false if you use headphones
+    # `opts` is the config's local_mic section: its room is read for every chunk, so moving the
+    # laptop to another room on the dashboard (simulate) takes effect straight away
     check = {"until": _time.monotonic() + 10, "loudest": 0, "done": False}
 
     def on_audio(indata, frames, time_info, status) -> None:
@@ -278,7 +280,8 @@ def _open_local_mic(config: Config, opts: dict, put):
                                 "Security > Microphone > allow Terminal, then quit and reopen Terminal")
         if mute and local_busy():
             return  # the house is talking: don't listen to itself
-        put(("local", room, data, None))
+        r = opts.get("room")
+        put(("local", str(r).lower() if r else None, data, None))
 
     stream = sd.RawInputStream(
         samplerate=config.settings.sample_rate, blocksize=4000,

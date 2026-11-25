@@ -576,7 +576,7 @@ def _cmd_simulate(args) -> int:
     from .simulator import run
 
     run(load_config(args.config), mic=args.mic, base_port=args.port, real_backends=args.real_backends,
-        webcam=args.webcam)
+        webcam=args.webcam, room=args.room, camera=args.camera)
     return 0
 
 
@@ -889,6 +889,8 @@ def main(argv: list[str] | None = None) -> int:
     sm = sub.add_parser("simulate", help="run your config as a virtual house with simulated devices")
     sm.add_argument("--mic", action="store_true", help="also listen on this computer's microphone")
     sm.add_argument("--webcam", action="store_true", help="use this computer's webcam as the door camera")
+    sm.add_argument("--room", help="the room the laptop's microphone starts in (move it on the dashboard)")
+    sm.add_argument("--camera", help="the camera the webcam starts as, e.g. \"front door\" (move it on the dashboard)")
     sm.add_argument("--port", type=int, default=9100, help="first port for simulated nodes")
     sm.add_argument("--real-backends", action="store_true",
                     help="really use Google, phone alerts, speakers... (off by default)")

@@ -40,6 +40,11 @@ svg.plan rect.handle{fill:var(--acc)}
 <section class="card wide"><h2>House <button class="x" id="editBtn" onclick="toggleEdit()">edit layout</button></h2><svg class="plan" id="plan" viewBox="0 0 100 60"></svg><div class="mute" id="planHelp" style="display:none">Drag rooms to move them, drag the blue corner to resize, then <button onclick="savePlan()">Save layout</button></div></section>
 <section class="card"><h2>Doors</h2><div id="doors"></div></section>
 <section class="card"><h2>Routines</h2><div class="chips" id="routines"></div></section>
+<section class="card" id="simCard" style="display:none"><h2>Laptop (testing)</h2>
+<div class="row" id="simMicRow"><span>Microphone is in</span><select id="simMic" onchange="post('/api/sim',{mic_room:this.value})"></select></div>
+<div class="row" id="simCamRow"><span>Webcam is</span><select id="simCam" onchange="post('/api/sim',{camera:this.value})"></select></div>
+<img id="simPrev" style="width:100%;border-radius:8px;margin-top:8px;display:none" alt="webcam">
+<div id="simNote" class="mute"></div></section>
 <section class="card"><h2>Say or ask</h2>
 <form onsubmit="heard(event)"><input id="cmdText" placeholder="Type a command, e.g. lights on"><select id="cmdRoom"></select><button>Run</button></form>
 <form onsubmit="say(event)"><input id="sayText" placeholder="Dinner's ready!"><select id="sayRoom"></select><button>Say</button></form>
@@ -104,6 +109,15 @@ function drag(ev,name,kind){const pt=plan.createSVGPoint(),m=plan.getScreenCTM()
   if(kind=='move'){r[0]=Math.max(0,Math.min(100-r[2],orig[0]+dx));r[1]=Math.max(0,Math.min(60-r[3],orig[1]+dy))}else{r[2]=Math.max(8,orig[2]+dx);r[3]=Math.max(6,orig[3]+dy)}drawPlan()};
  const up=()=>{removeEventListener('pointermove',move);removeEventListener('pointerup',up)};addEventListener('pointermove',move);addEventListener('pointerup',up)}
 // ---------- load ----------
+function fillSel(el,opts,val){const key=opts.map(o=>o[0]).join('|');
+ if(el.dataset.opts!==key){el.innerHTML=opts.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('');el.dataset.opts=key}
+ if(document.activeElement!==el)el.value=val??''}
+function drawSim(){const m=S.sim;simCard.style.display=m?'':'none';if(!m)return;
+ simMicRow.style.display=m.mic?'':'none';fillSel(simMic,m.rooms.map(r=>[r,r]),m.mic_room);
+ simCamRow.style.display=m.webcam?'':'none';fillSel(simCam,[['','off (unplugged)'],...m.cameras.map(c=>[c,'the '+c+' camera'])],m.camera);
+ const show=m.webcam&&m.camera;simPrev.style.display=show?'':'none';
+ if(show)simPrev.src='/api/camera?name='+encodeURIComponent(m.camera)+'&t='+Date.now();
+ simNote.textContent=m.error?'Webcam problem: '+m.error:(!m.mic&&!m.webcam?'Start simulate with --mic and/or --webcam to place them here.':'')}
 async function load(){
  const r=await fetch('/api/status');
  if(r.status==401){const t=prompt('Dashboard token');if(t){document.cookie='ph_token='+encodeURIComponent(t)+';max-age=31536000;path=/';load()}return}
@@ -112,7 +126,7 @@ async function load(){
  priv.textContent=S.private?'Mics paused - resume':'Pause mics 1h';
  freakTop.innerHTML=(S.freak||[]).map(f=>`<span class="pill bad">freak mode: ${esc(f.room)}, ${f.minutes_left} min left</span> `+btn('End',()=>post('/api/freak',{action:'off',room:f.room}))).join(' ');
  alarmTop.innerHTML=S.alarm?`<span class="pill ${S.alarm=='disarmed'?'':'bad'}">alarm ${esc(S.alarm)}</span> `+(S.alarm=='disarmed'?btn('Arm',()=>post('/api/alarm',{action:'arm'})):btn('Disarm',()=>post('/api/alarm',{action:'disarm'}))):'';
- drawCams();if(!editing)drawPlan();
+ drawCams();drawSim();if(!editing)drawPlan();
  doors.innerHTML=Object.entries(S.doors).map(([d,s])=>`<div class="row"><span>${esc(d)} <span class="pill ${s}">${s}</span></span><span>
   ${btn('Lock',()=>post('/api/door',{door:d,state:'locked'}))}${S.api_unlock?btn('Unlock',()=>post('/api/door',{door:d,state:'unlocked'})):''}</span></div>`).join('')||'<span class=mute>No doors configured</span>';
  routines.innerHTML=S.routines.map(n=>btn(esc(n.replace(/_/g,' ')),()=>post('/api/routine',{name:n}))).join('')||'<span class=mute>None yet</span>';

@@ -51,13 +51,18 @@ class AudioRouter:
         self.home = home
         vcfg = home.config.voice
         local = home.config.sources.get("local_mic") or {}
-        self.local_room = str(vcfg.get("local_room") or local.get("room") or "").lower() or None
         default_player = ["afplay", "{file}"] if sys.platform == "darwin" else ["aplay", "-q", "{file}"]
         self.player = vcfg.get("player", default_player)
         self.play_local = vcfg.get("local", True)
         self.fallback_local = vcfg.get("fallback", "local") == "local"
         self.group_backend = vcfg.get("speakers")  # also speak un-roomed speech on the speaker group
         self._warned = False
+
+    @property
+    def local_room(self) -> str | None:
+        """The room the hub itself is in (read live: the laptop can be moved while testing)."""
+        local = self.home.config.sources.get("local_mic") or {}
+        return str(self.home.config.voice.get("local_room") or local.get("room") or "").lower() or None
 
     def _hub(self, name: str | None = None):
         names = [name] if name else [n for n, b in self.home.config.backends.items()

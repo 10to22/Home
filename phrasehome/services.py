@@ -60,6 +60,14 @@ def start_services(home) -> list:
             add(getattr(mod, cls)(home))
         except Exception as e:
             log.error("%s not started: %s", label, e)
+    if home.config.extra.get("sim"):  # `simulate`: where the laptop's mic and webcam are
+        try:
+            from .simulator import Placement
+
+            home.sim = Placement(home)
+            add(home.sim)
+        except Exception as e:
+            log.error("laptop placement not started: %s", e)
     if home.config.web.get("enabled", True):
         try:
             from .web import WebServer

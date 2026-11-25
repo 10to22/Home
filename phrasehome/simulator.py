@@ -203,6 +203,99 @@ load();setInterval(load,1000);
 SAFE_TYPES = {"esp32", "log"}
 
 
+WEBCAM = "sim:webcam"  # a camera fed by the laptop's webcam, when it's placed there
+
+
+class Placement:
+    """Where the laptop's microphone and webcam are, while testing. Moved from the dashboard's
+    Laptop card (or `simulate --room bedroom --camera "front door"`), without restarting."""
+
+    def __init__(self, home) -> None:
+        self.home = home
+        sim = home.config.extra.get("sim") or {}
+        self.mic = bool(sim.get("mic"))
+        self.webcam = bool(sim.get("webcam"))
+        self.camera: str | None = sim.get("camera") if self.webcam else None
+        self.interval = 0.3
+        self._running = False
+        self.error = ""
+
+    # ---------- the microphone ----------
+    @property
+    def mic_room(self) -> str | None:
+        r = (self.home.config.sources.get("local_mic") or {}).get("room")
+        return str(r).lower() if r else None
+
+    def rooms(self) -> list[str]:
+        c = self.home.config
+        out = {r for i in self.home.instances.all.values() for r in i.rooms}
+        out |= {str(r).lower() for r in ((c.extra.get("rooms") or {}).get("occupancy") or {})}
+        out |= {str(n).lower() for b in c.backends.values() if b.get("type") == "esp32" for n in b.get("nodes") or {}}
+        if self.mic_room:
+            out.add(self.mic_room)
+        return sorted(out)
+
+    def move_mic(self, room: str) -> str:
+        room = str(room).lower().strip()
+        if room not in self.rooms():
+            raise ValueError(f"unknown room {room!r} (known: {', '.join(self.rooms())})")
+        self.home.config.sources.setdefault("local_mic", {})["room"] = room  # the mic reads this live
+        self.home.events.log("sim.moved", what="microphone", room=room)
+        log.info("laptop microphone is now in the %s", room)
+        return room
+
+    # ---------- the webcam ----------
+    def cameras(self) -> list[str]:
+        hub = getattr(self.home, "cameras", None)
+        return sorted(hub.feeds) if hub and self.webcam else []
+
+    def move_camera(self, name: str | None) -> str | None:
+        name = str(name).lower().strip() if name else None
+        if name and name not in self.cameras():
+            raise ValueError(f"unknown camera {name!r} (known: {', '.join(self.cameras())})")
+        self.camera = name
+        self.home.events.log("sim.moved", what="webcam", camera=name or "off")
+        log.info("laptop webcam is now %s", f"the {name} camera" if name else "off")
+        return name
+
+    def start(self) -> None:
+        if self.webcam:
+            self._running = True
+            threading.Thread(target=self._loop, daemon=True).start()
+
+    def stop(self) -> None:
+        self._running = False
+
+    def _loop(self) -> None:
+        """One webcam, opened once; its picture goes to whichever camera it's placed as."""
+        from .door_scanner import Camera
+
+        cam = None
+        while self._running:
+            if not self.camera:
+                time.sleep(0.5)  # "unplugged"
+                continue
+            try:
+                if cam is None:
+                    cam = Camera(0)
+                frame = cam.read()
+                feed = self.home.cameras.get(self.camera) if getattr(self.home, "cameras", None) else None
+                if frame is not None and feed is not None:
+                    feed.set_frame(frame)
+                    self.error = ""
+                time.sleep(self.interval)
+            except Exception as e:
+                if not self.error:
+                    log.warning("webcam: %s", e)
+                self.error = str(e)
+                cam = None
+                time.sleep(3)
+
+    def status(self) -> dict:
+        return {"mic": self.mic, "mic_room": self.mic_room, "rooms": self.rooms(), "webcam": self.webcam,
+                "camera": self.camera, "cameras": self.cameras(), "error": self.error}
+
+
 def prepare(config, base_port: int = 9100, real_backends: bool = False, webcam: bool = False):
     """Start simulated nodes for the config and point the config at them. Returns the nodes."""
     raw = yaml.safe_load(config.base_dir.joinpath(config.source_name).read_text()) if \
@@ -226,24 +319,33 @@ def prepare(config, base_port: int = 9100, real_backends: bool = False, webcam: 
         config.fingerprint = []
         if "spotify" in config.extra:
             config.extra["spotify"] = {**config.extra["spotify"], "simulated": True}
+    sim = config.extra.setdefault("sim", {})
     if webcam:
-        door = next((n for n, c in config.cameras.items() if "door" in (c.get("roles") or [])), None)
+        # Every camera stays, fed by the laptop's webcam when it's "there" (moved on the dashboard)
+        if not config.cameras:
+            config.cameras = {"front door": {"roles": ["door", "porch"], "room": "front door"}}
+        door = next((n for n, c in config.cameras.items() if "door" in (c.get("roles") or [])),
+                    next(iter(config.cameras)))
         for n in list(config.cameras):
-            if n == door:
-                config.cameras[n] = {**config.cameras[n], "url": 0}
-            else:
-                config.cameras.pop(n)
+            config.cameras[n] = {**config.cameras[n], "url": WEBCAM}
+        want = str(sim.get("camera") or door).lower()
+        sim["camera"] = next((n for n in config.cameras if n.lower() == want), door)
+        sim["webcam"] = True
+        config.door_scanners = [dict(sc, camera=sc.get("camera") if sc.get("camera") in config.cameras else door)
+                                for sc in config.door_scanners]
     else:
         config.cameras = {}
-    config.door_scanners = [dict(sc, camera=next(iter(config.cameras))) for sc in config.door_scanners] \
-        if config.cameras else []
+        config.door_scanners = []
     config.web = {**config.web, "enabled": True}
     config.web.pop("token_env", None)
     return sims
 
 
 def run(config, mic: bool = False, base_port: int = 9100, real_backends: bool = False,
-        webcam: bool = False) -> None:
+        webcam: bool = False, room: str | None = None, camera: str | None = None) -> None:
+    config.extra["sim"] = {"mic": mic, "webcam": False, "camera": camera}
+    if room:
+        config.sources.setdefault("local_mic", {})["room"] = room.lower()
     sims = prepare(config, base_port, real_backends, webcam)
     print("\nSimulated device nodes (open them to see lights switch and to flip sensors):")
     for name, s in sims.items():

@@ -113,6 +113,12 @@ and the fingerprint sensor.
    you can see when it mishears. It stops listening while it's talking, so it doesn't hear itself
    through the laptop speakers (with headphones: `local_mic: { mute_while_speaking: false }`).
 
+   With the webcam too: `simulate --mic --webcam`. The dashboard's **Laptop (testing)** card moves
+   them while it runs: "Microphone is in" picks the room you're pretending to stand in ("lights on"
+   switches that room, and it's that person's assistant), and "Webcam is" picks which camera it
+   pretends to be (the front door camera scans faces; others watch for people, packages and pets;
+   "off" unplugs it). Start somewhere specific with `--room bedroom --camera "front door"`.
+
 ### 0.5 The door scanner with your webcam
 
 1. Download the face models into `models/face/` (the two `curl` lines in `deploy/install.sh`).

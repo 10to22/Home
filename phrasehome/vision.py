@@ -108,6 +108,8 @@ class CameraFeed:
 
     def start(self) -> None:
         self._running = True
+        if str(self.url) == "sim:webcam":
+            return  # fed by the laptop's webcam when it's placed here (simulator.Placement)
         threading.Thread(target=self._loop, daemon=True).start()
 
     def stop(self) -> None:
