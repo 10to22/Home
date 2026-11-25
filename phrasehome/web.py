@@ -115,6 +115,9 @@ class WebServer:
             extra["sim"] = h.sim.status()
         if h.assistant is not None:
             extra["ai"] = {"mode": h.assistant.mode, "model": h.assistant.model}
+        if getattr(h, "voice_id", None) is not None:
+            extra["voices"] = {**h.voice_id.status(),
+                               "names": [i.name for i in h.instances.all.values() if not i.main]}
         if getattr(h, "alarm", None):
             extra["alarm"] = h.alarm.state
         if getattr(h, "rooms", None):
@@ -399,6 +402,14 @@ class WebServer:
         if path == "/api/agenda/cancel":
             inst = h.instances.get(body.get("person"), asker=h.instances.main)
             return {"cancelled": len(h.instances.cancel(inst, body["id"]))}
+        if path in ("/api/voice/learn", "/api/voice/forget"):  # who's talking
+            if getattr(h, "voice_id", None) is None:
+                raise RuntimeError("voice recognition is off (voice_id: in config.yaml)")
+            if path.endswith("learn"):
+                h.voice_id.start_learning(str(body["person"]), int(body.get("sentences", 6)))
+            else:
+                h.voice_id.forget(str(body["person"]))
+            return {"voices": h.voice_id.status()}
         if path == "/api/ai":  # the smart / fast switch
             if h.assistant is None:
                 raise RuntimeError("the AI isn't on")

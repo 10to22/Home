@@ -161,10 +161,6 @@ class Engine:
                 m.room, m.notify = room, reply
                 self.dispatcher.submit(m)
             return
-        self._heard(source, room, text, result.get("result") or [])  # (not in privacy mode)
-        confirm = getattr(self.dispatcher, "confirm", None)
-        if confirm is not None and text and confirm.answer(room, text):
-            return  # that was the yes/no to "did you say ...?"
         person = None
         vid = getattr(self.dispatcher, "voice_id", None)
         if vid is not None and result.get("spk") and text:
@@ -174,6 +170,10 @@ class Engine:
                 rooms = getattr(self.dispatcher, "rooms", None)
                 if rooms and room:
                     rooms.saw(person, room, "voice")
+        self._heard(source, room, text, result.get("result") or [], person)  # (not in privacy mode)
+        confirm = getattr(self.dispatcher, "confirm", None)
+        if confirm is not None and text and confirm.answer(room, text):
+            return  # that was the yes/no to "did you say ...?"
         if self.router and text and self.router.handle(source, room, text, audio, reply,
                                                        person=person, lang=L.lang, woke=woke):
             return
@@ -193,12 +193,12 @@ class Engine:
             self._live[source] = (text, _t.monotonic())
             self.dispatcher.events.live("hearing", room=room, text=text)
 
-    def _heard(self, source: str, room: str | None, text: str, words: list) -> None:
+    def _heard(self, source: str, room: str | None, text: str, words: list, person: str | None = None) -> None:
         self._live.pop(source, None)
         if self.config.settings.log_heard and text:
             ws = [{"word": w.get("word", ""), "conf": round(float(w.get("conf", 1.0)), 2)} for w in words]
             conf = sum(w["conf"] for w in ws) / len(ws) if ws else None
-            self.dispatcher.events.live("heard", room=room, text=text, words=ws,
+            self.dispatcher.events.live("heard", room=room, text=text, words=ws, person=person,
                                         confidence=round(conf, 2) if conf is not None else None)
 
     def _spot(self, source: str, room: str | None, pcm: bytes) -> bool:
@@ -271,11 +271,11 @@ class Engine:
                 m.room, m.notify = room, reply
                 self.dispatcher.submit(m)
             return
-        self._heard(source, room, text, words)
+        person = self._who(clip, L, room)
+        self._heard(source, room, text, words, person)
         confirm = getattr(self.dispatcher, "confirm", None)
         if confirm is not None and confirm.answer(room, text):
             return
-        person = self._who(clip, L, room)
         first = (re.findall(r"[a-zA-Z']+", text) or [""])[0]
         sp = self.spotters.get(source)
         woke = bool(sp and sp.heard_recently(_t.monotonic(), window=len(clip) / 32000 + 3)

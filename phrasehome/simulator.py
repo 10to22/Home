@@ -305,6 +305,9 @@ def voice_missing(config) -> list[str]:
         fixes.append(".venv/bin/pip install -e '.[audio]'")
     if not config.resolve_path(config.settings.model_path).exists():
         fixes.append(".venv/bin/phrasehome download-models")
+    vid = config.extra.get("voice_id")
+    if vid is not None and not config.resolve_path((vid or {}).get("model_path", "models/vosk-model-spk-0.4")).exists():
+        fixes.append(".venv/bin/phrasehome download-models --voice-id")
     if str(config.settings.recognizer).lower() == "whisper" and not importlib.util.find_spec("faster_whisper"):
         fixes.append(".venv/bin/pip install -e '.[whisper]' && .venv/bin/phrasehome download-models --whisper")
     return fixes

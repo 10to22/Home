@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 from .config import ConfigError, load_config
@@ -564,6 +565,36 @@ def _cmd_voice_id(args) -> int:
             for p, vs in v.prints.items():
                 print(f"{p:<16} {len(vs)} samples")
             return 0
+        if args.action == "record":  # say a few sentences into this computer's microphone
+            import tempfile
+            import wave
+
+            import sounddevice as sd
+
+            lines = ["The kitchen lights are on and the coffee is ready.",
+                     "Remind me to take the bins out on Tuesday night.",
+                     "What's the weather going to be like tomorrow morning?",
+                     "Turn the living room lamp down to thirty percent.",
+                     "I'm heading out now, lock up behind me please.",
+                     "Set a timer for twelve minutes for the pasta."]
+            vecs = []
+            for i, line in enumerate(lines, 1):
+                print(f"[{i}/{len(lines)}] Say: \"{line}\"  (recording in 1 s, for 4 s)")
+                time.sleep(1)
+                data = sd.rec(4 * 16000, samplerate=16000, channels=1, dtype="int16")
+                sd.wait()
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                    with wave.open(f.name, "wb") as w:
+                        w.setnchannels(1)
+                        w.setsampwidth(2)
+                        w.setframerate(16000)
+                        w.writeframes(data.tobytes())
+                    try:
+                        vecs.append(v.vector_from_wav(f.name))
+                    except ValueError as e:
+                        print(f"  skipped: {e}")
+            print(f"{args.person}: {v.enroll(args.person, vecs)} samples")
+            return 0
         vecs = [v.vector_from_wav(f) for f in args.files]
         print(f"{args.person}: {v.enroll(args.person, vecs)} samples")
     finally:
@@ -915,7 +946,7 @@ def main(argv: list[str] | None = None) -> int:
     ir.set_defaults(fn=_cmd_ir)
 
     vi = sub.add_parser("voice-id", help="teach the house who's who by voice (from recordings)")
-    vi.add_argument("action", choices=["enroll", "list"], nargs="?", default="list")
+    vi.add_argument("action", choices=["enroll", "list", "record"], nargs="?", default="list")
     vi.add_argument("person", nargs="?")
     vi.add_argument("files", nargs="*", help="WAV recordings (3+ seconds each)")
     vi.set_defaults(fn=_cmd_voice_id)

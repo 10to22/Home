@@ -41,6 +41,9 @@ svg.plan rect.handle{fill:var(--acc)}
 <section class="card wide"><h2>House <button class="x" id="editBtn" onclick="toggleEdit()">edit layout</button></h2><svg class="plan" id="plan" viewBox="0 0 100 60"></svg><div class="mute" id="planHelp" style="display:none">Drag rooms to move them, drag the blue corner to resize, then <button onclick="savePlan()">Save layout</button></div></section>
 <section class="card"><h2>Doors</h2><div id="doors"></div></section>
 <section class="card"><h2>Routines</h2><div class="chips" id="routines"></div></section>
+<section class="card" id="voiceCard" style="display:none"><h2>Voices</h2><div id="voiceList"></div>
+<div class="row"><select id="voiceWho"></select><button onclick="post('/api/voice/learn',{person:voiceWho.value,sentences:6})">Learn my voice</button></div>
+<div class="mute">Press it, then say any six sentences near a microphone.</div></section>
 <section class="card" id="simCard" style="display:none"><h2>Laptop (testing)</h2>
 <div class="row" id="simMicRow"><span>Microphone is in</span><select id="simMic" onchange="post('/api/sim',{mic_room:this.value})"></select></div>
 <div class="row" id="simCamRow"><span>Webcam is</span><select id="simCam" onchange="post('/api/sim',{camera:this.value})"></select></div>
@@ -113,6 +116,11 @@ function drag(ev,name,kind){const pt=plan.createSVGPoint(),m=plan.getScreenCTM()
 function fillSel(el,opts,val){const key=opts.map(o=>o[0]).join('|');
  if(el.dataset.opts!==key){el.innerHTML=opts.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('');el.dataset.opts=key}
  if(document.activeElement!==el)el.value=val??''}
+function drawVoices(){const v=S.voices;voiceCard.style.display=v?'':'none';if(!v)return;
+ voiceList.innerHTML=Object.entries(v.people).map(([p,n])=>`<div class="row"><span>${esc(p)} <span class=mute>${n} samples</span></span>${btn('Forget',()=>{if(confirm('Forget '+p+"'s voice?"))post('/api/voice/forget',{person:p})})}</div>`).join('')
+  ||'<div class=mute>No voices learned yet.</div>';
+ if(v.learning)voiceList.innerHTML+=`<div class="mute">Learning ${esc(v.learning.person)}: say ${v.learning.left} more sentence${v.learning.left==1?'':'s'}</div>`;
+ fillSel(voiceWho,v.names.map(n=>[n.toLowerCase(),n]),voiceWho.value||(v.names[0]||'').toLowerCase())}
 function drawSim(){const m=S.sim;simCard.style.display=m?'':'none';if(!m)return;
  simMicRow.style.display=m.mic?'':'none';fillSel(simMic,m.rooms.map(r=>[r,r]),m.mic_room);
  simCamRow.style.display=m.webcam?'':'none';fillSel(simCam,[['','off (unplugged)'],...m.cameras.map(c=>[c,'the '+c+' camera'])],m.camera);
@@ -128,7 +136,7 @@ async function load(){
  priv.textContent=S.private?'Mics paused - resume':'Pause mics 1h';
  freakTop.innerHTML=(S.freak||[]).map(f=>`<span class="pill bad">freak mode: ${esc(f.room)}, ${f.minutes_left} min left</span> `+btn('End',()=>post('/api/freak',{action:'off',room:f.room}))).join(' ');
  alarmTop.innerHTML=S.alarm?`<span class="pill ${S.alarm=='disarmed'?'':'bad'}">alarm ${esc(S.alarm)}</span> `+(S.alarm=='disarmed'?btn('Arm',()=>post('/api/alarm',{action:'arm'})):btn('Disarm',()=>post('/api/alarm',{action:'disarm'}))):'';
- drawCams();drawSim();if(!editing)drawPlan();
+ drawCams();drawSim();drawVoices();if(!editing)drawPlan();
  doors.innerHTML=Object.entries(S.doors).map(([d,s])=>`<div class="row"><span>${esc(d)} <span class="pill ${s}">${s}</span></span><span>
   ${btn('Lock',()=>post('/api/door',{door:d,state:'locked'}))}${S.api_unlock?btn('Unlock',()=>post('/api/door',{door:d,state:'unlocked'})):''}</span></div>`).join('')||'<span class=mute>No doors configured</span>';
  routines.innerHTML=S.routines.map(n=>btn(esc(n.replace(/_/g,' ')),()=>post('/api/routine',{name:n}))).join('')||'<span class=mute>None yet</span>';
@@ -165,7 +173,8 @@ function heardWords(e){  // words it wasn't sure of are underlined, so you can s
  return e.words.map(w=>w.conf<0.6?`<span title="${Math.round(w.conf*100)}% sure" style="text-decoration:underline wavy var(--warn)">${esc(w.word)}</span>`:esc(w.word)).join(' ')}
 function liveLine(e){const r=e.room||((e.rooms||[])[0])||'';const at=r&&r!=='hub'?' in '+esc(r):'';
  const t={hearing:`Hearing${at}: <i>${esc(e.text)}…</i>`,
-  heard:`Heard${at}: “${heardWords(e)}”`+(e.confidence!=null?` <span class=mute>(${Math.round(e.confidence*100)}% sure)</span>`:''),
+  heard:`Heard${at}${e.person?' from '+esc(e.person):''}: “${heardWords(e)}”`+(e.confidence!=null?` <span class=mute>(${Math.round(e.confidence*100)}% sure)</span>`:''),
+  voice_learning:`Learning ${esc(e.person)}'s voice: ${e.done} of ${e.total} sentences`+(e.done>=e.total?' — done':''),
   thinking:`Thinking${at}: ${esc(e.question)}`,searching:`Searching the web: ${esc(e.query)}`,
   saying:`Saying${at}: ${esc(e.text)}`}[e.kind];
  if(t)live.innerHTML=t}

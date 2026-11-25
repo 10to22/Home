@@ -162,6 +162,22 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Forget strangers | `remember_unknown: false` |
 | Backups | `phrasehome backup`: one private file with config, face bank, reminders and recordings |
 
+## Hearing and understanding
+
+| Feature | How |
+|---|---|
+| Whisper | `settings: {recognizer: whisper}`: sentences are cut out of the audio, cleaned up and written down by Whisper, primed with your names, rooms and commands |
+| Noise cleanup | `noise_cleanup: true`: rumble out, steady background down, volume evened out |
+| The AI's name | A listener that only knows "house" catches it even when the transcript says "how's" |
+| Live words | The dashboard shows words as you say them, then the sentence with unsure words underlined, and who said it |
+| Did you mean | Near misses: the AI picks the command you most likely meant |
+| Confirm risky things | Locks, alarm, freak mode, away, lockdown, panic, fire, leaving: "Did you say ...?" when unsure. Fire goes ahead if nobody answers |
+| History + teaching | `/history`: everything heard and done, searchable; pick "It meant..." to teach a misheard sentence |
+| Speech test | `phrasehome speech-test --record` then `phrasehome speech-test`: word accuracy and commands right, per recognizer |
+| Speak while thinking | Answers are spoken sentence by sentence as they're written |
+| Smart / fast | `assistant: {mode: fast}` or the dashboard's AI switch: qwen3:4b / Claude Haiku instead of qwen3:8b / Claude Opus |
+| Who said it | Voices card: "Learn my voice", then six sentences; keeps learning when sure; says nobody when two voices are too alike |
+
 ## Testing on a laptop
 
 | Feature | How |
