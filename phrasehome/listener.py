@@ -352,8 +352,9 @@ def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config
         return
     words = result.get("result") or []
     conf = sum(w.get("conf", 1.0) for w in words) / len(words) if words else 1.0
-    if config.settings.log_heard:
+    if config.settings.log_heard:  # (off by default, for privacy)
         log.info("heard%s: %r (conf %.2f)", f" [{room}]" if room else "", text, conf)
+        dispatcher.events.live("heard", room=room, text=text, confidence=round(conf, 2))
     if conf < config.settings.min_confidence:
         return
     m = matcher.match(text)

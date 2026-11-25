@@ -437,6 +437,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(401, {"error": "token required"})
         if u.path == "/api/status":
             return self._send(200, self.web.status())
+        if u.path == "/api/live":
+            return self._live()
         if u.path == "/api/alarms":
             return self._send(200, self.web.alarms_get())
         if u.path == "/api/meals":
@@ -459,6 +461,44 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._send(200, f.read_bytes(), "image/jpeg")
             return self._send(404, {"error": "not found"})
         self._send(404, {"error": "not found"})
+
+    def _live(self) -> None:
+        """Server-sent events: every house event the moment it happens, plus live-only updates
+        (heard / thinking / searching / saying). The dashboard refreshes on these instead of waiting."""
+        import queue as _queue
+        import time as _t
+
+        q: _queue.Queue = _queue.Queue(maxsize=500)
+
+        def on_event(ev: dict) -> None:
+            try:
+                q.put_nowait(ev)
+            except _queue.Full:
+                pass
+
+        events = self.web.home.events
+        events.subscribe(on_event)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(b"retry: 2000\n\n")
+            self.wfile.flush()
+            end = _t.monotonic() + 3600  # the browser reconnects by itself
+            while _t.monotonic() < end:
+                try:
+                    ev = q.get(timeout=15)
+                except _queue.Empty:
+                    self.wfile.write(b": still here\n\n")
+                    self.wfile.flush()
+                    continue
+                self.wfile.write(b"data: " + json.dumps(ev, default=str).encode() + b"\n\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            events.unsubscribe(on_event)
 
     def _mjpeg(self, feed) -> None:
         """Live view: a multipart JPEG stream (works in any browser <img>), for up to 10 minutes."""

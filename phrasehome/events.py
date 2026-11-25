@@ -45,6 +45,22 @@ class EventLog:
         """Call fn(event) for every new event (keep it quick; hand slow work to a thread)."""
         self._subscribers.append(fn)
 
+    def unsubscribe(self, fn) -> None:
+        try:
+            self._subscribers.remove(fn)
+        except ValueError:
+            pass
+
+    def live(self, kind: str, /, **data: Any) -> None:
+        """A moment-to-moment update for live screens (what was heard, what's being said): sent to
+        subscribers like an event, but never saved."""
+        ev = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "kind": kind, "live": True, **data}
+        for fn in list(self._subscribers):
+            try:
+                fn(ev)
+            except Exception:
+                pass
+
     def query(self, kind: str | None = None, since: str | None = None, limit: int = 50) -> list[dict]:
         with self._lock:
             evs = list(self.recent)

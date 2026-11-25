@@ -165,3 +165,42 @@ def test_normal_listening_still_runs_commands(cfg, monkeypatch):
     e.dispatcher = types.SimpleNamespace(state=types.SimpleNamespace(is_private=lambda r: False))
     e.feed("local", "kitchen", b"\x00\x00" * 100, None)
     assert handled == ["lights on"]
+
+
+# ---------- live updates ----------
+def test_live_stream_sends_events_as_they_happen(tmp_path):
+    import threading
+    import time
+
+    import requests
+
+    from phrasehome.dispatcher import Dispatcher
+    from phrasehome.web import WebServer
+
+    (tmp_path / "c.yaml").write_text(CFG)
+    cfg = load_config(tmp_path / "c.yaml")
+    cfg.web = {"port": 0, "host": "127.0.0.1"}
+    cfg.data_dir = str(tmp_path / "data")
+    home = Dispatcher(cfg)
+    web = WebServer(home)
+    web.start()
+    got = []
+
+    def read():
+        with requests.get(f"http://127.0.0.1:{web.port}/api/live", stream=True, timeout=10) as r:
+            for line in r.iter_lines(chunk_size=1):
+                if line.startswith(b"data: "):
+                    got.append(json.loads(line[6:]))
+                    if len(got) == 2:
+                        return
+
+    t = threading.Thread(target=read, daemon=True)
+    t.start()
+    time.sleep(0.5)
+    home.events.log("door.locked", door="front")
+    home.events.live("heard", room="kitchen", text="lights on")
+    t.join(5)
+    assert [e["kind"] for e in got] == ["door.locked", "heard"] and got[1]["live"] is True
+    assert not home.events.query("heard")  # live-only updates are never saved
+    web.stop()
+    home.close()

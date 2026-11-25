@@ -777,6 +777,8 @@ class Voice:
 
             audio_out.speaking_text = text or ""
             self._hushed = False
+            if home is not None and text:
+                home.events.live("saying", rooms=[t or "hub" for t in targets], text=text)
             # make the audio once per voice (most rooms share one), then play everywhere at once
             made: dict[str, Path | None] = {}
             plays = []

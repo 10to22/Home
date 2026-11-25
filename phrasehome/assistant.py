@@ -379,6 +379,7 @@ who came to the door and when.
             from .websearch import format_results, read_page
 
             self._read_web.add(key)
+            home.events.live("searching", room=room, query=args.get("query") or args.get("url", ""))
             if name == "web_search":
                 return format_results(args["query"], self.search.search(args["query"]))
             return read_page(args["url"])
@@ -706,6 +707,7 @@ class AssistantRouter:
     def _answer(self, question: str, room: str | None, reply, person: str | None = None,
                 source: str | None = None) -> None:
         log.info("assistant%s <- %r", f" [{room}]" if room else "", question)
+        self.assistant.home.events.live("thinking", room=room, question=question)
         try:
             answer = self.assistant.ask(question, room, person=person) if person else \
                 self.assistant.ask(question, room)

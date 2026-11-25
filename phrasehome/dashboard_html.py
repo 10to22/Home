@@ -49,7 +49,7 @@ svg.plan rect.handle{fill:var(--acc)}
 <form onsubmit="heard(event)"><input id="cmdText" placeholder="Type a command, e.g. lights on"><select id="cmdRoom"></select><button>Run</button></form>
 <form onsubmit="say(event)"><input id="sayText" placeholder="Dinner's ready!"><select id="sayRoom"></select><button>Say</button></form>
 <form id="askForm" onsubmit="ask(event)"><input id="askText" placeholder="Ask the house..."><button class="primary">Ask</button></form>
-<div id="answer" class="mute"></div></section>
+<div id="answer" class="mute"></div><div id="live" class="mute" style="margin-top:4px"></div></section>
 <section class="card" id="weatherCard" style="display:none"><h2>Weather</h2><div id="weather"></div></section>
 <section class="card"><h2>Who's home</h2><div id="people"></div></section>
 <div id="rooms" style="display:contents"></div>
@@ -157,5 +157,16 @@ async function load(){
  devices.innerHTML=(S.offline.length?`<div class="row bad">Offline: ${S.offline.map(esc).join(', ')}</div>`:'')+devs.join('')||'<span class=mute>All good</span>';
  events.innerHTML=S.events.map(e=>`<div class="row"><span>${e.photo?`<img class=scan src="/api/photo?f=${encodeURIComponent(e.photo)}">`:''}<b>${esc(e.kind)}</b> ${esc(e.name||e.description||e.detected||e.result||e.door||e.node||e.person||e.appliance||e.mode||e.message||e.text||e.question||'')} ${e.result&&e.name?esc(e.result):''}</span><span class=mute>${esc(e.time.slice(5,16))}</span></div>`).join('');
 }
-load();setInterval(()=>{if(!editing)load()},5000);
+let liveOn=false,liveT=null,tick=0;
+function liveLine(e){const r=e.room||((e.rooms||[])[0])||'';const at=r&&r!=='hub'?' in '+esc(r):'';
+ const t={heard:`Heard${at}: “${esc(e.text)}”`,thinking:`Thinking${at}: ${esc(e.question)}`,
+  searching:`Searching the web: ${esc(e.query)}`,saying:`Saying${at}: ${esc(e.text)}`}[e.kind];
+ if(t)live.innerHTML=t}
+function startLive(){if(!window.EventSource)return;const es=new EventSource('/api/live');
+ es.onopen=()=>{liveOn=true};es.onerror=()=>{liveOn=false};
+ es.onmessage=m=>{let e;try{e=JSON.parse(m.data)}catch(_){return}
+  if(e.live){liveLine(e);return}
+  clearTimeout(liveT);liveT=setTimeout(()=>{if(!editing)load()},150)}}  // something happened: show it now
+load();startLive();
+setInterval(()=>{if(!editing&&(!liveOn||++tick%6==0))load()},5000);  // a backup, in case the live link drops
 </script></html>"""

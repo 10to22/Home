@@ -124,6 +124,10 @@ async function save(e){e.preventDefault();
 async function toggle(a){await api('/api/alarms/save',{instance:a.instance,id:a.id,off:!a.off});load()}
 async function ringNow(a){if(await api('/api/alarms/ring',{instance:a.instance,id:a.id}))setTimeout(load,1500)}
 async function act(what,room){await api('/api/alarms/'+what,{room});setTimeout(load,500)}
-load();setInterval(load,3000);
+let liveOn=false,liveT=null;
+if(window.EventSource){const es=new EventSource('/api/live');es.onopen=()=>{liveOn=true};es.onerror=()=>{liveOn=false};
+ es.onmessage=m=>{let e;try{e=JSON.parse(m.data)}catch(_){return}
+  if(!e.live&&/^(wake|agenda|alarm|voice)/.test(e.kind||'')){clearTimeout(liveT);liveT=setTimeout(load,150)}}}
+load();setInterval(()=>{if(!liveOn)load()},3000);setInterval(load,20000);
 </script>
 """
