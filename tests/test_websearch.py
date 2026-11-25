@@ -14,7 +14,7 @@ from tests.test_local_ai import FakeOllama, home, ollama  # noqa: F401  (fixture
 
 def test_duckduckgo(monkeypatch):
     class DDGS:
-        def text(self, query, max_results=10):
+        def text(self, query, max_results=10, backend="auto"):
             assert query == "raptors score" and max_results == 3
             return [{"title": "Raptors win", "href": "https://example.com/r", "body": "Raptors beat the Knicks 110-99."}]
 
@@ -131,3 +131,40 @@ def test_search_can_be_turned_off(tmp_path, ollama):
     names = [t["name"] for t in a._tools(h.instances.main)]
     assert a.search is None and "web_search" not in names
     h.close()
+
+
+def test_search_tries_other_sites_when_one_is_empty_or_blocked(monkeypatch):
+    tried = []
+
+    class DDGS:
+        def text(self, query, max_results=10, backend="auto"):
+            tried.append(backend)
+            if backend == "auto":
+                raise RuntimeError("No results found.")
+            if backend == "duckduckgo":
+                raise RuntimeError("202 Ratelimit")
+            return [{"title": "Found", "href": "https://f.example", "body": "via " + backend}]
+
+    monkeypatch.setitem(sys.modules, "ddgs", types.SimpleNamespace(DDGS=DDGS))
+    hits = WebSearch().search("news today")
+    assert tried == ["auto", "duckduckgo", "brave"] and hits[0]["snippet"] == "via brave"
+
+
+def test_nothing_anywhere_is_no_results_not_an_error(monkeypatch):
+    class DDGS:
+        def text(self, query, max_results=10, backend="auto"):
+            raise RuntimeError("No results found.")
+
+    monkeypatch.setitem(sys.modules, "ddgs", types.SimpleNamespace(DDGS=DDGS))
+    assert WebSearch().search("xyzzy plugh") == []
+    assert format_results("xyzzy plugh", []).startswith("No results for 'xyzzy plugh'. Try again")
+
+
+def test_every_site_failing_is_explained(monkeypatch):
+    class DDGS:
+        def text(self, query, max_results=10, backend="auto"):
+            raise RuntimeError("connection refused")
+
+    monkeypatch.setitem(sys.modules, "ddgs", types.SimpleNamespace(DDGS=DDGS))
+    with pytest.raises(SearchError, match="every search site failed"):
+        WebSearch().search("q")

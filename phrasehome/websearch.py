@@ -44,12 +44,15 @@ class WebSearch:
         self.url = str(cfg.get("url", "http://localhost:8888")).rstrip("/")
         self.key = cfg.get("api_key") or os.environ.get(str(cfg.get("api_key_env", "BRAVE_API_KEY")), "")
         self.results = int(cfg.get("results", 5))
+        # for engine: duckduckgo, the search sites to try in order
+        self.sites = [str(x) for x in cfg.get("sites", ["auto", "duckduckgo", "brave", "mojeek", "wikipedia"])]
         self.timeout = float(cfg.get("timeout", 15))
 
     def search(self, query: str) -> list[dict[str, str]]:
         query = str(query).strip()[:300]
         if not query:
             return []
+        log.info("web search: %s", query)
         if self.engine in ("duckduckgo", "ddg"):
             return self._duckduckgo(query)
         if self.engine == "searxng":
@@ -59,15 +62,27 @@ class WebSearch:
         raise SearchError(f"unknown search engine {self.engine!r} (duckduckgo, searxng or brave)")
 
     def _duckduckgo(self, query: str) -> list[dict[str, str]]:
+        """The free, no-key search (the ddgs package). Search sites sometimes block it for a bit or
+        come back empty, so it tries several in turn and stops at the first with results."""
         try:
             from ddgs import DDGS
         except ImportError:
             raise SearchError("web search needs the ddgs package: .venv/bin/pip install ddgs") from None
-        try:
-            hits = DDGS().text(query, max_results=self.results)
-        except Exception as e:
-            raise SearchError(f"DuckDuckGo search failed ({e}). If this keeps happening, use searxng or brave") from None
-        return [{"title": h.get("title", ""), "url": h.get("href", ""), "snippet": h.get("body", "")} for h in hits]
+        errors = []
+        for site in self.sites:
+            try:
+                hits = DDGS().text(query, max_results=self.results, backend=site)
+            except Exception as e:
+                if "no results" not in str(e).lower():
+                    errors.append(f"{site}: {e}")
+                continue
+            if hits:
+                return [{"title": h.get("title", ""), "url": h.get("href", ""), "snippet": h.get("body", "")}
+                        for h in hits]
+        if errors and len(errors) == len(self.sites):
+            raise SearchError(f"every search site failed ({errors[-1]}). If this keeps happening, use searxng "
+                              "or brave (see websearch.py)")
+        return []  # nothing anywhere: the AI is told, and can try other words
 
     def _searxng(self, query: str) -> list[dict[str, str]]:
         import requests
@@ -99,7 +114,8 @@ class WebSearch:
 
 def format_results(query: str, hits: list[dict[str, str]]) -> str:
     if not hits:
-        return f"{UNTRUSTED}\nNo results for {query!r}."
+        return (f"No results for {query!r}. Try again with fewer or different words, or answer from what you "
+                f"know and say you couldn't check.")
     lines = [UNTRUSTED, f"Results for {query!r}:"]
     for i, h in enumerate(hits, 1):
         snippet = re.sub(r"<[^>]+>", "", h.get("snippet") or "").strip()
