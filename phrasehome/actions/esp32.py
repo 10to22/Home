@@ -47,6 +47,22 @@ class Esp32Backend(Backend):
             raise ValueError(f"backend '{name}': add at least one node under `nodes:`")
         self.token = cfg.get("token") or os.environ.get(cfg.get("token_env", "PHRASEHOME_TOKEN"), "")
         self.timeout = float(cfg.get("timeout", 4))
+        self._down: dict[str, float] = {}  # host -> when to try again (it didn't answer)
+
+    def _http(self, method: str, host: str, path: str, **kw):
+        """One request to a node. A node that didn't answer is skipped for 30 s, so an unplugged
+        module (or one you don't own yet) doesn't stall every command for the full timeout."""
+        import time
+
+        if self._down.get(host, 0) > time.monotonic():
+            raise requests.ConnectionError(f"{host} isn't answering (offline?)")
+        try:
+            r = requests.request(method, f"http://{host}{path}", timeout=self.timeout, **kw)
+        except (requests.ConnectionError, requests.Timeout):
+            self._down[host] = time.monotonic() + 30
+            raise
+        self._down.pop(host, None)
+        return r
 
     def _hosts(self, node: str) -> list[tuple[str, str]]:
         node = node.lower()
@@ -59,7 +75,7 @@ class Esp32Backend(Backend):
     def get_state(self, node: str, channel: str) -> dict[str, Any]:
         """Read one channel from a node, e.g. {"name": "lock", "on": true}."""
         (_, host), = self._hosts(node)
-        r = requests.get(f"http://{host}/api/status", timeout=self.timeout)
+        r = self._http("GET", host, "/api/status")
         r.raise_for_status()
         for ch in r.json().get("channels", []):
             if ch.get("name", "").lower() == channel.lower():
@@ -93,7 +109,7 @@ class Esp32Backend(Backend):
                 params["bits"] = code["bits"]
             if code.get("repeat"):
                 params["repeat"] = code["repeat"]
-            r = requests.post(f"http://{host}/api/ir/send", params=params, headers=headers, timeout=self.timeout)
+            r = self._http("POST", host, "/api/ir/send", params=params, headers=headers)
             r.raise_for_status()
             sent.append(str(name))
         return "sent " + ", ".join(sent)
@@ -118,8 +134,7 @@ class Esp32Backend(Backend):
         done, errors = [], []
         for name, host in self._hosts(str(node)):
             try:
-                r = requests.post(f"http://{host}/api/set", params=params, headers=headers,
-                                  timeout=self.timeout)
+                r = self._http("POST", host, "/api/set", params=params, headers=headers)
                 if r.status_code == 404 and node == "all":
                     continue  # that node has no such channel
                 r.raise_for_status()

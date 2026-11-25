@@ -34,6 +34,7 @@ class Doors:
         self.doors = home.config.doors
         self.path = Path(home.config.resolve_path(home.config.data_dir)) / "doors.json"
         self._lock = threading.Lock()
+        self._sensor_warned: set[str] = set()
         try:
             self._state: dict[str, str] = json.loads(self.path.read_text())
         except (OSError, ValueError):
@@ -60,9 +61,13 @@ class Doors:
                 want_on = str(sensor.get("locked_when", "on")).lower() in ("on", "true")
                 st = LOCKED if bool(ch.get("on")) == want_on else UNLOCKED
                 self._remember(door, st)
+                self._sensor_warned.discard(door)
                 return st
             except Exception as e:
-                log.warning("can't read %s door sensor (%s); using last known state", door, e)
+                if door not in self._sensor_warned:  # once, not on every question
+                    self._sensor_warned.add(door)
+                    log.warning("can't read the %s door's sensor (%s); using the last known state",
+                                door, str(e).split(" (Caused by")[0][:120])
         return self._state.get(door, UNKNOWN)
 
     def states(self) -> dict[str, str]:

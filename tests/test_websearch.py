@@ -105,7 +105,10 @@ def test_a_new_conversation_can_use_locks_again(home, ollama, monkeypatch):
     ollama.say(tool_calls=[{"function": {"name": "web_search", "arguments": {"query": "q"}}}])
     ollama.say("Nothing found.")
     home.assistant.ask("search", room="kitchen")
-    home.assistant._convos["kitchen"] = (0.0, home.assistant._convos["kitchen"][1])  # long ago: it ends
+    import time
+
+    long_ago = time.monotonic() - home.assistant.memory_seconds - 1  # the conversation has ended
+    home.assistant._convos["kitchen"] = (long_ago, home.assistant._convos["kitchen"][1])
     ollama.say(tool_calls=[{"function": {"name": "run_command", "arguments": {"command": "lockdown"}}}])
     ollama.say("Locked down.")
     home.assistant.ask("lockdown", room="kitchen")

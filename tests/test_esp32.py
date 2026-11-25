@@ -198,3 +198,23 @@ def test_speaker_commands_in_example():
     assert m.match("bedroom speaker bluetooth").slots == {"room": "bedroom"}
     assert m.match("volume fifty percent everywhere").slots == {"level": "50"}
     assert m.match("louder").command.name == "volume_up"
+
+
+def test_offline_node_is_skipped_quickly(monkeypatch):
+    """An unplugged module (or one you don't own yet) fails once, then fails fast for 30 s."""
+    import requests
+
+    from phrasehome.actions.esp32 import Esp32Backend
+
+    calls = []
+
+    def boom(method, url, **kw):
+        calls.append(url)
+        raise requests.ConnectionError("Failed to resolve")
+
+    monkeypatch.setattr(requests, "request", boom)
+    b = Esp32Backend("esp", {"nodes": {"front door": "phrasehome-front-door.local"}}, None)
+    for _ in range(3):
+        with pytest.raises(requests.ConnectionError):
+            b.get_state("front door", "lock")
+    assert len(calls) == 1  # only the first one actually waited on the network
