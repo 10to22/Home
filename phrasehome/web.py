@@ -113,6 +113,8 @@ class WebServer:
         extra["freak"] = h.freak.status()
         if getattr(h, "sim", None):
             extra["sim"] = h.sim.status()
+        if h.assistant is not None:
+            extra["ai"] = {"mode": h.assistant.mode, "model": h.assistant.model}
         if getattr(h, "alarm", None):
             extra["alarm"] = h.alarm.state
         if getattr(h, "rooms", None):
@@ -397,6 +399,10 @@ class WebServer:
         if path == "/api/agenda/cancel":
             inst = h.instances.get(body.get("person"), asker=h.instances.main)
             return {"cancelled": len(h.instances.cancel(inst, body["id"]))}
+        if path == "/api/ai":  # the smart / fast switch
+            if h.assistant is None:
+                raise RuntimeError("the AI isn't on")
+            return {"mode": h.assistant.set_mode(body.get("mode", "smart")), "model": h.assistant.model}
         if path == "/api/sim":  # simulate: move the laptop's mic / webcam
             if not getattr(h, "sim", None):
                 raise RuntimeError("only while simulating")

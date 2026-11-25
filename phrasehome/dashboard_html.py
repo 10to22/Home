@@ -34,6 +34,7 @@ svg.plan rect.handle{fill:var(--acc)}
 <a href="/meals" class="pill" style="padding:6px 10px">Meal planner</a> <a href="/alarms" class="pill" style="padding:6px 10px">Alarms</a> <a href="/history" class="pill" style="padding:6px 10px">History</a>
 <span id="alarmTop"></span><span id="freakTop"></span>
 <select id="mode" onchange="post('/api/mode',{mode:this.value})"></select>
+<select id="aiMode" title="AI: smart = best answers, fast = quicker" style="display:none" onchange="post('/api/ai',{mode:this.value})"><option value="smart">AI: smart</option><option value="fast">AI: fast</option></select>
 <button id="priv" onclick="post('/api/privacy',{on:!S.private,minutes:60})"></button></div></header>
 <main>
 <section class="card wide" id="camCard" style="display:none"><h2>Cameras <button class="x" onclick="toggleCams()" id="camToggle">pause</button></h2><div class="cams" id="cams"></div></section>
@@ -123,6 +124,7 @@ async function load(){
  if(r.status==401){const t=prompt('Dashboard token');if(t){document.cookie='ph_token='+encodeURIComponent(t)+';max-age=31536000;path=/';load()}return}
  S=await r.json();A=[];
  mode.innerHTML=S.modes.map(m=>`<option ${m==S.mode?'selected':''}>${m}</option>`).join('');
+ aiMode.style.display=S.ai?'':'none';if(S.ai&&document.activeElement!==aiMode){aiMode.value=S.ai.mode;aiMode.title='AI model: '+S.ai.model}
  priv.textContent=S.private?'Mics paused - resume':'Pause mics 1h';
  freakTop.innerHTML=(S.freak||[]).map(f=>`<span class="pill bad">freak mode: ${esc(f.room)}, ${f.minutes_left} min left</span> `+btn('End',()=>post('/api/freak',{action:'off',room:f.room}))).join(' ');
  alarmTop.innerHTML=S.alarm?`<span class="pill ${S.alarm=='disarmed'?'':'bad'}">alarm ${esc(S.alarm)}</span> `+(S.alarm=='disarmed'?btn('Arm',()=>post('/api/alarm',{action:'arm'})):btn('Disarm',()=>post('/api/alarm',{action:'disarm'}))):'';

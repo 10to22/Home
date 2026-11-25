@@ -845,6 +845,7 @@ class Voice:
         from . import audio_out
 
         self._hushed = True
+        self.hush_count = getattr(self, "hush_count", 0) + 1  # also stops an answer still being spoken
         n = audio_out.hush_local()
         home = getattr(self.config, "home", None)
         if home is not None:

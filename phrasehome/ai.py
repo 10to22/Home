@@ -30,6 +30,8 @@ def _client(home):
 
 
 def _model(home) -> str:
+    if home.assistant is not None:
+        return home.assistant.model  # follows the smart/fast switch
     return home.config.assistant.get("model", "claude-opus-5-5")
 
 
@@ -48,7 +50,10 @@ def ask(home, prompt: str, images: list[bytes] | None = None, system: str = "",
         output_config["format"] = {"type": "json_schema", "schema": schema}
     kwargs: dict[str, Any] = dict(
         model=_model(home), max_tokens=16000, messages=[{"role": "user", "content": content}],
-        output_config=output_config, betas=["server-side-fallback-2026-07-01"], fallbacks="default")
+        output_config=output_config)
+    from .assistant import fallback_kw
+
+    kwargs.update(fallback_kw(kwargs["model"]))
     if system:
         kwargs["system"] = system
     try:

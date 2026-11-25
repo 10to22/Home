@@ -66,6 +66,14 @@ PERSONAS["aussie_uncut"] = PERSONAS["aussie"] + (
 CLEAN_PERSONA = {"aussie_uncut": "aussie"}  # kids' rooms
 
 
+# Claude models that take the server-side fallback for refusals (Haiku doesn't)
+FALLBACK_MODELS = {"claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
+
+
+def fallback_kw(model: str) -> dict:
+    return {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if model in FALLBACK_MODELS else {}
+
+
 def _strict(name: str, description: str, props: dict, required: list[str]) -> dict:
     return {"name": name, "description": description, "strict": True,
             "input_schema": {"type": "object", "properties": props, "required": required,
@@ -77,7 +85,9 @@ class Assistant:
         self.home = home
         cfg = home.config.assistant
         self.names = [normalize(n) for n in cfg.get("names", ["house"])]
-        self.model = cfg.get("model", "claude-opus-5-5")
+        self.smart_model = cfg.get("model", "claude-opus-5-5")
+        self.fast_model = cfg.get("fast_model", "claude-haiku-5-5")  # Claude's quick one (mode: fast)
+        self.mode = "fast" if str(cfg.get("mode", "smart")).lower() == "fast" else "smart"
         self.effort = cfg.get("effort", "low")  # quick spoken answers; raise for harder questions
         self.allow_unlock = bool(cfg.get("allow_unlock", False))
         from .local_ai import is_local, make_client
@@ -100,9 +110,28 @@ class Assistant:
         if client is None:
             client = make_client(cfg)  # Claude, or a local model (provider: local)
         self.client = client
+        if self.local and hasattr(client, "mode"):
+            client.mode = self.mode
         self._convos: dict[str, tuple[float, list]] = {}
         self._lock = threading.Lock()
         self._profiles: dict[str, tuple[str, list]] = {}
+
+    @property
+    def model(self) -> str:
+        if self.local:
+            return getattr(self.client, "model", "local")
+        return self.fast_model if self.mode == "fast" else self.smart_model
+
+    def set_mode(self, mode: str) -> str:
+        """'smart' (best answers) or 'fast' (quicker answers): from config, or the dashboard."""
+        self.mode = "fast" if str(mode).lower() == "fast" else "smart"
+        if self.local and hasattr(self.client, "mode"):
+            self.client.mode = self.mode
+            if getattr(self, "_warmed", False):  # the house warmed up at start: load the new model too
+                self.warm_up([None])
+        log.info("AI is now %s (%s)", self.mode, self.model)
+        self.home.events.log("ai.mode", mode=self.mode, model=self.model)
+        return self.mode
 
     def warm_up(self, rooms: list[str | None] | None = None) -> None:
         """Load the model and let it read the house's instructions once, in the background, so the
@@ -125,6 +154,7 @@ class Assistant:
             log.info("AI ready (%.0f s to load)", time.monotonic() - t0)
 
         if self.local:
+            self._warmed = True
             threading.Thread(target=go, daemon=True).start()
 
     # ---------- addressing ----------
@@ -524,7 +554,7 @@ who came to the door and when.
             return self.home.instances.all[person]
         return self.home.instances.for_room(room)
 
-    def ask(self, question: str, room: str | None = None, person: str | None = None) -> str:
+    def ask(self, question: str, room: str | None = None, person: str | None = None, on_text=None) -> str:
         inst = self.instance_for(room, person)
         system, tools = self.profile(inst)
         with self._lock:
@@ -537,25 +567,29 @@ who came to the door and when.
             messages.append({"role": "user", "content": [
                 {"type": "text", "text": self.context(inst, room, person)},
                 {"type": "text", "text": question}]})
-            answer = self._loop(messages, room, inst, system, tools)
+            answer = self._loop(messages, room, inst, system, tools, on_text=on_text)
             self._convos[key] = (time.monotonic(), messages)
             self.home.events.log("assistant", room=room, instance=inst.id, question=question,
                                  answer=answer[:300])
             return answer
 
-    def _loop(self, messages: list, room: str | None, inst, system: str, tools: list) -> str:
+    def _loop(self, messages: list, room: str | None, inst, system: str, tools: list,
+              on_text=None) -> str:
+        """on_text: called with pieces of the answer as they're written (to start speaking early)."""
         used_web = False
+        stream = getattr(self.client.beta.messages, "stream", None) if on_text else None
         for _ in range(10):
-            resp = self.client.beta.messages.create(
-                model=self.model,
-                max_tokens=16000,
-                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-                tools=tools,
-                messages=messages,
-                output_config={"effort": self.effort},
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
-            )
+            kw = dict(model=self.model, max_tokens=16000,
+                      system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                      tools=tools, messages=messages, output_config={"effort": self.effort},
+                      **({} if self.local else fallback_kw(self.model)))
+            if stream is not None:
+                with stream(**kw) as st:
+                    for piece in st.text_stream:
+                        on_text(piece)
+                    resp = st.get_final_message()
+            else:
+                resp = self.client.beta.messages.create(**kw)
             messages.append({"role": "assistant", "content": resp.content})
             if resp.stop_reason == "refusal":
                 return "Sorry, I can't help with that."
@@ -578,6 +612,65 @@ who came to the door and when.
                                     "content": f"Error: {e}", "is_error": True})
             messages.append({"role": "user", "content": results})
         return "Sorry, that took too many steps. Try asking a simpler way."
+
+
+class SentenceSpeaker:
+    """Says the answer one sentence at a time while the rest is still being written, so the
+    house starts talking sooner. Stops if told to shut up, and after a few sentences."""
+
+    def __init__(self, voice, room: str | None, max_sentences: int = 4, max_chars: int = 500) -> None:
+        import queue as _queue
+
+        self.voice, self.room = voice, room
+        self.buf, self.said, self.chars, self.spoke = "", 0, 0, False
+        self.max_sentences, self.max_chars = max_sentences, max_chars
+        self.hushes = getattr(voice, "hush_count", 0)
+        self.q: _queue.Queue = _queue.Queue()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    @property
+    def hushed(self) -> bool:
+        return getattr(self.voice, "hush_count", 0) != self.hushes
+
+    def feed(self, piece: str) -> None:
+        self.buf += piece
+        while True:
+            m = re.search(r"(?<=[.!?])\s+|\n+", self.buf)
+            if not m:
+                return
+            sentence, self.buf = self.buf[: m.start()], self.buf[m.end():]
+            self._say(sentence)
+
+    def _say(self, sentence: str) -> None:
+        sentence = spoken(sentence) if sentence.strip() else ""
+        if not sentence or sentence == "Done." or self.hushed:
+            return
+        if self.said >= self.max_sentences or self.chars + len(sentence) > self.max_chars:
+            return
+        self.said += 1
+        self.chars += len(sentence)
+        self.spoke = True
+        self.q.put(sentence)
+
+    def _run(self) -> None:
+        while True:
+            sentence = self.q.get()
+            if sentence is None:
+                return
+            if not self.hushed:
+                try:
+                    self.voice.speak(sentence, room=self.room)
+                except Exception as e:
+                    log.error("couldn't say %r: %s", sentence, e)
+
+    def finish(self, timeout: float = 120) -> None:
+        """Say whatever's left, and wait until it's all been said."""
+        if self.buf.strip():
+            self._say(self.buf)
+            self.buf = ""
+        self.q.put(None)
+        self.thread.join(timeout)
 
 
 def spoken(text: str) -> str:
@@ -717,13 +810,15 @@ class AssistantRouter:
         log.info("assistant%s <- %r", f" [{room}]" if room else "", question)
         self.assistant.home.events.live("thinking", room=room, question=question)
         try:
-            answer = self.assistant.ask(question, room, person=person) if person else \
-                self.assistant.ask(question, room)
+            speaker = SentenceSpeaker(self.assistant.home.voice, room)
+            answer = self.assistant.ask(question, room, person=person, on_text=speaker.feed)
+            speaker.finish()
             log.info("assistant -> %r", answer)
             h = getattr(self.assistant.home, "history", None)
             if h:
                 h.add(kind="ai", room=room, person=person, question=question, answer=answer)
-            self.assistant.home.voice.speak(answer, room=room)
+            if not speaker.spoke:
+                self.assistant.home.voice.speak(answer, room=room)
             if reply:
                 reply("done")
             if self.assistant.continuous and source:

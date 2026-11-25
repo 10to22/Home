@@ -5,7 +5,8 @@ assistant:
   local:
     url: http://localhost:11434    # where Ollama runs. On the Pi, point at a laptop/desktop on
                                    # your Wi-Fi running Ollama (a Pi on its own is very slow)
-    model: qwen3:8b                # needs a model that can use tools; qwen3:4b is about twice as fast
+    model: qwen3:8b                # "smart": needs a model that can use tools
+    fast_model: qwen3:4b           # "fast" (assistant: {mode: fast}, or the dashboard's AI switch)
     vision_model: qwen2.5vl:7b     # optional, for camera questions (what's at the door, packages)
     timeout: 180
 
@@ -153,26 +154,89 @@ class _Messages:
                max_tokens: int = 2048, output_config: dict | None = None, **_ignored: Any) -> _Obj:
         return self._c.chat(messages, system, tools, max_tokens, output_config or {})
 
+    def stream(self, *, messages: list, system: Any = None, tools: list | None = None,
+               max_tokens: int = 2048, output_config: dict | None = None, **_ignored: Any) -> "_Stream":
+        """Like the Claude SDK's: `with ... as s: for text in s.text_stream: ...; s.get_final_message()`."""
+        return _Stream(self._c, self._c.body(messages, system, tools, max_tokens, output_config or {}, stream=True))
+
+
+class _Stream:
+    def __init__(self, client: "LocalClient", body: dict) -> None:
+        self._c, self._body, self._resp = client, body, None
+        self._content, self._calls, self._last = "", [], {}
+        self.text_stream = self._texts()
+
+    def __enter__(self) -> "_Stream":
+        self._resp = self._c.post(self._body, stream=True)
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._resp is not None:
+            self._resp.close()
+
+    def _texts(self):
+        in_think = False
+        for line in self._resp.iter_lines():
+            if not line:
+                continue
+            data = json.loads(line)
+            msg = data.get("message") or {}
+            self._calls += msg.get("tool_calls") or []
+            piece = msg.get("content") or ""
+            self._content += piece
+            if data.get("done"):
+                self._last = data
+            # don't pass on a model's <think>...</think> notes (they'd be read out)
+            out = ""
+            while piece:
+                if in_think:
+                    i = piece.find("</think>")
+                    if i < 0:
+                        piece = ""
+                    else:
+                        piece, in_think = piece[i + 8:], False
+                else:
+                    i = piece.find("<think>")
+                    if i < 0:
+                        out, piece = out + piece, ""
+                    else:
+                        out, piece, in_think = out + piece[:i], piece[i + 7:], True
+            if out:
+                yield out
+
+    def get_final_message(self) -> _Obj:
+        for _ in self.text_stream:  # finish reading if the caller stopped early
+            pass
+        return from_ollama({**self._last, "message": {"content": self._content, "tool_calls": self._calls}})
+
 
 class LocalClient:
-    """Answers `client.messages.create(...)` / `client.beta.messages.create(...)` like the Claude
-    SDK does, using a model running in Ollama."""
+    """Answers `client.messages.create(...)` / `.stream(...)` (and the same under `.beta`) like the
+    Claude SDK does, using a model running in Ollama."""
 
     def __init__(self, cfg: dict | None = None) -> None:
         self.cfg = {**DEFAULTS, **(cfg or {})}
         self.url = str(self.cfg["url"]).rstrip("/")
-        self.model = str(self.cfg["model"])
+        self.smart_model = str(self.cfg["model"])
+        self.fast_model = str(self.cfg.get("fast_model") or "qwen3:4b")
+        self.mode = "smart"
         self.vision_model = str(self.cfg.get("vision_model") or "")
         self.messages = _Messages(self)
         self.beta = _Obj(messages=self.messages)
 
-    def chat(self, messages: list, system: Any, tools: list | None, max_tokens: int,
-             output_config: dict) -> _Obj:
-        import requests
+    @property
+    def model(self) -> str:
+        return self.fast_model if self.mode == "fast" else self.smart_model
 
+    @model.setter
+    def model(self, name: str) -> None:
+        self.smart_model = str(name)
+
+    def body(self, messages: list, system: Any, tools: list | None, max_tokens: int, output_config: dict,
+             stream: bool = False) -> dict:
         msgs, has_images = to_ollama(system, messages)
         model = self.vision_model if has_images and self.vision_model else self.model
-        body: dict[str, Any] = {"model": model, "messages": msgs, "stream": False, "think": False,
+        body: dict[str, Any] = {"model": model, "messages": msgs, "stream": stream, "think": False,
                                 "keep_alive": self.cfg["keep_alive"],
                                 "options": {"num_predict": min(int(max_tokens), int(self.cfg["max_tokens"])),
                                             "num_ctx": int(self.cfg["num_ctx"])}}
@@ -182,9 +246,21 @@ class LocalClient:
         fmt = output_config.get("format") or {}
         if fmt.get("type") == "json_schema":
             body["format"] = fmt["schema"]
+        return body
+
+    def chat(self, messages: list, system: Any, tools: list | None, max_tokens: int,
+             output_config: dict) -> _Obj:
+        r = self.post(self.body(messages, system, tools, max_tokens, output_config))
+        return from_ollama(r.json())
+
+    def post(self, body: dict, stream: bool = False):
+        import requests
+
+        model = body["model"]
         for attempt in range(2):
             try:
-                r = requests.post(f"{self.url}/api/chat", json=body, timeout=float(self.cfg["timeout"]))
+                r = requests.post(f"{self.url}/api/chat", json=body, timeout=float(self.cfg["timeout"]),
+                                  stream=stream)
             except requests.ConnectionError:
                 raise LocalAIError(f"can't reach Ollama at {self.url}. Is it running? (open the Ollama app, "
                                    f"or run `ollama serve`)") from None
@@ -192,7 +268,7 @@ class LocalClient:
                 raise LocalAIError(f"{model} took longer than {self.cfg['timeout']}s. Try a smaller model "
                                    f"(e.g. qwen3:4b) or a faster computer") from None
             if r.ok:
-                return from_ollama(r.json())
+                return r
             err = _error_text(r)
             if "not found" in err and "model" in err:
                 raise LocalAIError(f"the model {model} isn't downloaded. Run:  ollama pull {model}")

@@ -140,7 +140,7 @@ def test_addressing(home):
 def test_router_name_then_question(home):
     answered = []
     ai = Assistant(home, client=FakeClient())
-    ai.ask = lambda q, room=None, person=None: answered.append((q, room)) or "Sunny."
+    ai.ask = lambda q, room=None, person=None, on_text=None: answered.append((q, room)) or "Sunny."
     heard = iter(["house", "what's the weather"])
     router = AssistantRouter(ai, transcribe=lambda pcm: next(heard))
     assert router.handle("mic1", "kitchen", "house", b"\0\0", None)  # name alone
