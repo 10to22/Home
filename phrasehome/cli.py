@@ -746,6 +746,24 @@ def _cmd_download_models(args) -> int:
     return 0
 
 
+def _cmd_speech_test(args) -> int:
+    from . import speechtest
+
+    cfg = load_config(args.config)
+    if args.record or args.tts:
+        items = speechtest.choose_phrases(cfg, args.n)
+        if args.record:
+            print(f"Say each phrase normally, from where you'd usually stand. {len(items)} phrases.")
+            out = speechtest.record(cfg, items, args.seconds)
+        else:
+            out = speechtest.synthesize(cfg, items)
+        print(f"\nSaved {len(items)} clips in {out}. Scoring them now...")
+    speechtest.score(cfg)
+    print("\nChange something (whisper, a bigger model, noise_cleanup, teach words on the History page), "
+          "then run `phrasehome speech-test` again to compare.")
+    return 0
+
+
 def _cmd_ai_check(args) -> int:
     """Is the AI linked? Sends one tiny question and explains any problem."""
     import os
@@ -940,6 +958,13 @@ def main(argv: list[str] | None = None) -> int:
     dm.add_argument("--big", action="store_true", help="also a bigger, more accurate speech model (128 MB)")
     dm.add_argument("--whisper", action="store_true", help="also Whisper, the most accurate (needs .[whisper])")
     dm.set_defaults(fn=_cmd_download_models)
+
+    st = sub.add_parser("speech-test", help="measure how well the house hears you (record, then score)")
+    st.add_argument("--record", action="store_true", help="say a set of phrases into the microphone first")
+    st.add_argument("--tts", action="store_true", help="have the house's voice say them instead (quick)")
+    st.add_argument("-n", type=int, default=15, help="how many phrases")
+    st.add_argument("--seconds", type=float, default=3.5, help="recording length per phrase")
+    st.set_defaults(fn=_cmd_speech_test)
 
     ac = sub.add_parser("ai-check", help="check that the AI (Claude) is linked: key, model, a test question")
     ac.set_defaults(fn=_cmd_ai_check)
