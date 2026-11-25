@@ -36,6 +36,12 @@ class Settings:
     default_backend: str | None = None
     language: str = "en"  # the main language; other rooms can use others (see `languages:`)
     log_heard: bool = False  # log everything heard (handy for tuning; off for privacy)
+    # "vosk": fast, light (the Pi's default). "whisper": far more accurate (pip install faster-whisper):
+    # sentences are cut out of the audio, cleaned up and written down by Whisper (see hearing.py).
+    recognizer: str = "vosk"
+    whisper_model: str = ""  # default: small.en on a Mac, base.en elsewhere
+    noise_cleanup: bool = True  # remove rumble and steady background noise, even out the volume
+    vad_silence: float = 0.6  # seconds of quiet that end a sentence (whisper)
 
 
 # Built-in backends, picked automatically from the action's keys:

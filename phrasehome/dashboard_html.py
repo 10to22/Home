@@ -158,9 +158,14 @@ async function load(){
  events.innerHTML=S.events.map(e=>`<div class="row"><span>${e.photo?`<img class=scan src="/api/photo?f=${encodeURIComponent(e.photo)}">`:''}<b>${esc(e.kind)}</b> ${esc(e.name||e.description||e.detected||e.result||e.door||e.node||e.person||e.appliance||e.mode||e.message||e.text||e.question||'')} ${e.result&&e.name?esc(e.result):''}</span><span class=mute>${esc(e.time.slice(5,16))}</span></div>`).join('');
 }
 let liveOn=false,liveT=null,tick=0;
+function heardWords(e){  // words it wasn't sure of are underlined, so you can see where it mishears
+ if(!(e.words||[]).length)return esc(e.text);
+ return e.words.map(w=>w.conf<0.6?`<span title="${Math.round(w.conf*100)}% sure" style="text-decoration:underline wavy var(--warn)">${esc(w.word)}</span>`:esc(w.word)).join(' ')}
 function liveLine(e){const r=e.room||((e.rooms||[])[0])||'';const at=r&&r!=='hub'?' in '+esc(r):'';
- const t={heard:`Heard${at}: “${esc(e.text)}”`,thinking:`Thinking${at}: ${esc(e.question)}`,
-  searching:`Searching the web: ${esc(e.query)}`,saying:`Saying${at}: ${esc(e.text)}`}[e.kind];
+ const t={hearing:`Hearing${at}: <i>${esc(e.text)}…</i>`,
+  heard:`Heard${at}: “${heardWords(e)}”`+(e.confidence!=null?` <span class=mute>(${Math.round(e.confidence*100)}% sure)</span>`:''),
+  thinking:`Thinking${at}: ${esc(e.question)}`,searching:`Searching the web: ${esc(e.query)}`,
+  saying:`Saying${at}: ${esc(e.text)}`}[e.kind];
  if(t)live.innerHTML=t}
 function startLive(){if(!window.EventSource)return;const es=new EventSource('/api/live');
  es.onopen=()=>{liveOn=true};es.onerror=()=>{liveOn=false};

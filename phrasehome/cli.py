@@ -731,6 +731,17 @@ def _cmd_download_models(args) -> int:
     if args.big:
         print(f"To use the bigger model, set this under settings: in config.yaml:\n"
               f"  model_path: models/{MODELS['big'][0]}")
+    if args.whisper:
+        from .hearing import Whisper
+
+        name = cfg.settings.whisper_model or ""
+        print("Getting Whisper ready (downloads the model once)...")
+        try:
+            w = Whisper(name)
+        except Exception as e:
+            print(f"couldn't get Whisper: {e}", file=sys.stderr)
+            return 1
+        print(f"Whisper {w.name}: ready. Turn it on under settings: in config.yaml:\n  recognizer: whisper")
     print("Ready. Try:  .venv/bin/phrasehome simulate --mic")
     return 0
 
@@ -927,6 +938,7 @@ def main(argv: list[str] | None = None) -> int:
     dm = sub.add_parser("download-models", help="download the offline speech model (for a laptop)")
     dm.add_argument("--voice-id", action="store_true", help="also the model for recognizing who's talking")
     dm.add_argument("--big", action="store_true", help="also a bigger, more accurate speech model (128 MB)")
+    dm.add_argument("--whisper", action="store_true", help="also Whisper, the most accurate (needs .[whisper])")
     dm.set_defaults(fn=_cmd_download_models)
 
     ac = sub.add_parser("ai-check", help="check that the AI (Claude) is linked: key, model, a test question")

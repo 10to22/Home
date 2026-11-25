@@ -667,10 +667,16 @@ class AssistantRouter:
 
     def handle(self, source: str, room: str | None, text: str, pcm: bytes,
                reply: Callable[[str], None] | None, person: str | None = None,
-               lang: str | None = None) -> bool:
-        """Return True if the AI took this utterance (so it isn't also matched as a command)."""
+               lang: str | None = None, confidence: float | None = None, woke: bool = False) -> bool:
+        """Return True if the AI took this utterance (so it isn't also matched as a command).
+        pcm: the audio, to write the question down in full (empty when `text` already is: Whisper).
+        woke: the dedicated name listener heard "house" though the transcript misheard it."""
         now = time.monotonic()
         rest = self.assistant.addressed(text, room)
+        if rest is None and woke:
+            words = normalize(text).split()
+            rest = " ".join(words[1:])  # the first word was the misheard name
+        self._confidence = confidence
         following_up = self._follow_up.get(source, 0) > now
         if rest is None and not following_up:
             return False
@@ -687,7 +693,7 @@ class AssistantRouter:
             question = full
         else:
             question = self.assistant.strip_name(self._transcribe(pcm, lang), room) if pcm else (rest or text)
-        if self._unclear(question, bool(pcm)):
+        if self._unclear(question, bool(pcm) or confidence is not None):
             log.info("assistant: couldn't make out %r", question)
             self.assistant.home.voice.speak("didnt_catch", room=room)
             self._follow_up[source] = time.monotonic() + self.assistant.follow_up_seconds  # just say it again
@@ -701,7 +707,9 @@ class AssistantRouter:
         words = [w for w in re.findall(r"[a-z']+", question.lower()) if w != "unk"]
         if not words:
             return True
-        conf = getattr(self.transcribe, "last_confidence", None) if spoken else None
+        conf = getattr(self, "_confidence", None)
+        if conf is None and spoken:
+            conf = getattr(self.transcribe, "last_confidence", None)
         return conf is not None and conf < self.assistant.min_confidence
 
     def _answer(self, question: str, room: str | None, reply, person: str | None = None,

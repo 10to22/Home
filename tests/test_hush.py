@@ -157,6 +157,7 @@ def test_normal_listening_still_runs_commands(cfg, monkeypatch):
 
     e = Engine.__new__(Engine)
     e.config, e.buffers, e._stops, e.router = cfg, {}, None, None
+    e.cleaners, e.whisper, e.spotters, e._live, e._names = {}, None, {}, {}, []
     e._recognizer = lambda source, room=None: Rec()
     s = cfg.settings
     lang = types.SimpleNamespace(lang="en", matcher=Matcher(expand(cfg.commands, cfg.slots), s.match_mode,

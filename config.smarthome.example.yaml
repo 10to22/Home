@@ -13,6 +13,10 @@ settings:
   min_confidence: 0.6
   cooldown_seconds: 2
   arbitration_seconds: 0.6
+  recognizer: vosk                  # whisper: far more accurate (pip install -e '.[whisper]', then
+                                    #   phrasehome download-models --whisper); vosk: lighter, for a Pi
+  # whisper_model: small.en         # base.en is faster, medium.en more accurate
+  noise_cleanup: true               # rumble out, background down, volume evened out
   restrict_vocabulary: false        # false: hears any word (questions, "fire", "story"...). true: only
                                     # the words in your commands (stricter, fewer mishearings of commands)
   block_words: ["don't", "dont", "do not", "not", "never"]
