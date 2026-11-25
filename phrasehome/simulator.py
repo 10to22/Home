@@ -353,8 +353,23 @@ def prepare(config, base_port: int = 9100, real_backends: bool = False, webcam: 
     return sims
 
 
+def port_busy(port: int, host: str = "127.0.0.1") -> bool:
+    import socket
+
+    with socket.socket() as sk:
+        sk.settimeout(0.5)
+        return sk.connect_ex((host, port)) == 0
+
+
 def run(config, mic: bool = False, base_port: int = 9100, real_backends: bool = False,
         webcam: bool = False, room: str | None = None, camera: str | None = None) -> None:
+    web_port = int(config.web.get("port", 8800))
+    for p in (web_port, base_port):
+        if p and port_busy(p):
+            print(f"Port {p} is already in use: another `phrasehome simulate` (or `run`) is probably still running,\n"
+                  f"and your browser would be showing that old one. Stop it with Control+C in its window, or run:\n"
+                  f"  pkill -f 'phrasehome.*(simulate|run)'\nthen start this again.")
+            raise SystemExit(1)
     config.extra["sim"] = {"mic": mic, "webcam": False, "camera": camera}
     if room:
         config.sources.setdefault("local_mic", {})["room"] = room.lower()
@@ -362,7 +377,8 @@ def run(config, mic: bool = False, base_port: int = 9100, real_backends: bool = 
     print("\nSimulated device nodes (open them to see lights switch and to flip sensors):")
     for name, s in sims.items():
         print(f"  {name:<14} http://localhost:{s.port}")
-    print(f"Dashboard: http://localhost:{config.web.get('port', 8800)}  (type commands in 'Say or ask')")
+    print(f"Dashboard: http://localhost:{config.web.get('port', 8800)}  (type commands in 'Say or ask'; "
+          "move the laptop's mic and webcam on its 'Laptop (testing)' card)")
     if not real_backends:
         print("Online backends (Google, phone alerts, speakers...) are replaced by the log.")
     print()

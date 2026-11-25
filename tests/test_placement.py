@@ -128,3 +128,23 @@ def test_laptop_mic_uses_the_room_it_was_moved_to(monkeypatch):
     opts["room"] = "bedroom"  # what Placement.move_mic does
     cb["f"](b"\x10\x27" * 100, 100, None, None)
     assert [g[1] for g in got] == ["living room", "bedroom"]
+
+
+def test_simulate_refuses_to_start_beside_an_old_one(tmp_path, capsys):
+    import socket
+
+    from phrasehome.simulator import run
+
+    sk = socket.socket()
+    sk.bind(("127.0.0.1", 0))
+    sk.listen()
+    port = sk.getsockname()[1]
+    cfg = load_config(ROOT / "config.smarthome.example.yaml")
+    cfg.data_dir = str(tmp_path)
+    cfg.web = {**cfg.web, "port": port}
+    try:
+        with pytest.raises(SystemExit):
+            run(cfg, base_port=0)
+    finally:
+        sk.close()
+    assert f"Port {port} is already in use" in capsys.readouterr().out
