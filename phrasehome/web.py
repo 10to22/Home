@@ -143,25 +143,74 @@ class WebServer:
             if rest:
                 answer = ai.ask(rest, room)
                 h.voice.speak(answer, room=room)
+                if getattr(h, "history", None):
+                    h.history.add(kind="ai", room=room, question=rest, answer=answer, via="typed")
                 return {"assistant": answer}
         engine = getattr(h, "engine", None)
         if engine is not None:
             matcher = engine._lang(room).matcher
         else:
-            if getattr(self, "_matcher_n", None) != len(h.config.commands):
-                from .matcher import Matcher, expand
+            from .understanding import Aliases
+
+            key = (len(h.config.commands), len(Aliases(h.config).all()))
+            if getattr(self, "_matcher_n", None) != key:
+                from .matcher import Matcher
+                from .understanding import candidates_with_aliases
 
                 s = h.config.settings
-                self._matcher = Matcher(expand(h.config.commands, h.config.slots), s.match_mode,
+                self._matcher = Matcher(candidates_with_aliases(h.config), s.match_mode,
                                         s.match_threshold, s.block_words)
-                self._matcher_n = len(h.config.commands)
+                self._matcher_n = key
             matcher = self._matcher
         m = matcher.match(text)
         if not m:
+            if getattr(h, "history", None):
+                h.history.add(kind="none", room=room, heard=text, via="typed")
             return {"matched": None, "hint": "No command matches that. Start with the wake name to ask the AI."}
-        m.room = room
+        m.room, m.via = room, "typed"
+        if getattr(h, "history", None):
+            h.history.add(kind="command", room=room, heard=text, matched=m.command.name, via="typed")
         h.submit(m)
         return {"matched": m.command.name, "slots": m.slots}
+
+    # ---------- the History page ----------
+    def history_get(self, query: str = "") -> dict:
+        from .understanding import Aliases
+
+        h = self.home
+        hist = getattr(h, "history", None)
+        return {"enabled": bool(hist and hist.enabled), "days": hist.days if hist else 0,
+                "entries": hist.entries(query) if hist else [],
+                "commands": sorted((c.name, c.phrases[0]) for c in h.config.commands),
+                "aliases": Aliases(h.config).all()}
+
+    def history_post(self, what: str, body: dict) -> dict:
+        from .understanding import Aliases
+
+        h = self.home
+        if what == "teach":  # "what I said there means this command"
+            heard = body.get("heard")
+            if not heard and body.get("id") and getattr(h, "history", None):
+                e = h.history.get(str(body["id"]))
+                heard = (e or {}).get("heard")
+            item = Aliases(h.config).add(str(heard or ""), str(body["command"]))
+            self._reload_matchers()
+            return {"alias": item}
+        if what == "unteach":
+            ok = Aliases(h.config).remove(str(body["heard"]))
+            self._reload_matchers()
+            return {"removed": ok}
+        if what == "clear":
+            if getattr(h, "history", None):
+                h.history.clear()
+            return {"cleared": True}
+        raise KeyError(f"/api/history/{what}")
+
+    def _reload_matchers(self) -> None:
+        self._matcher_n = None
+        engine = getattr(self.home, "engine", None)
+        if engine is not None:
+            engine.reload()
 
     # ---------- floor plan ----------
     def _fp_path(self) -> Path:
@@ -385,6 +434,8 @@ class WebServer:
             return self.meals_post(path.rsplit("/", 1)[1], body)
         if path.startswith("/api/alarms/"):
             return self.alarms_post(path.rsplit("/", 1)[1], body)
+        if path.startswith("/api/history/"):
+            return self.history_post(path.rsplit("/", 1)[1], body)
         if path == "/api/event":
             kind = "".join(ch for ch in str(body.get("kind", "event")) if ch.isalnum() or ch in "_-")
             data = {k: v for k, v in body.items() if k not in ("kind", "token") and isinstance(v, (str, int, float, bool))}
@@ -433,6 +484,10 @@ class _Handler(BaseHTTPRequestHandler):
             from .dashboard_alarms import ALARMS_PAGE
 
             return self._send(200, ALARMS_PAGE, "text/html; charset=utf-8")
+        if u.path == "/history":
+            from .dashboard_history import HISTORY_PAGE
+
+            return self._send(200, HISTORY_PAGE, "text/html; charset=utf-8")
         if not self._authorized(q):
             return self._send(401, {"error": "token required"})
         if u.path == "/api/status":
@@ -441,6 +496,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._live()
         if u.path == "/api/alarms":
             return self._send(200, self.web.alarms_get())
+        if u.path == "/api/history":
+            return self._send(200, self.web.history_get(q.get("q", [""])[0]))
         if u.path == "/api/meals":
             if not getattr(self.web.home, "meals", None):
                 return self._send(404, {"error": "meal planner isn't running"})

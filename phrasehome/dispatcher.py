@@ -52,6 +52,10 @@ class Dispatcher:
         from .freak import Freak
 
         self.freak = Freak(self)
+        from .understanding import Confirmations, History
+
+        self.history = History(self)  # what was heard and done (History page)
+        self.confirm = Confirmations(self)  # "did you say lockdown?"
         self.backends: dict[str, Backend] = {}
         self._backend_errors: dict[str, Exception] = {}
         self._backend_lock = threading.Lock()

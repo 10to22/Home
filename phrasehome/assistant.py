@@ -720,6 +720,9 @@ class AssistantRouter:
             answer = self.assistant.ask(question, room, person=person) if person else \
                 self.assistant.ask(question, room)
             log.info("assistant -> %r", answer)
+            h = getattr(self.assistant.home, "history", None)
+            if h:
+                h.add(kind="ai", room=room, person=person, question=question, answer=answer)
             self.assistant.home.voice.speak(answer, room=room)
             if reply:
                 reply("done")

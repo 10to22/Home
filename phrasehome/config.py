@@ -42,6 +42,8 @@ class Settings:
     whisper_model: str = ""  # default: small.en on a Mac, base.en elsewhere
     noise_cleanup: bool = True  # remove rumble and steady background noise, even out the volume
     vad_silence: float = 0.6  # seconds of quiet that end a sentence (whisper)
+    confirm_commands: list[str] = field(default_factory=list)  # also ask "did you say ...?" for these
+    did_you_mean: bool = True  # near misses: let the AI pick the command you most likely meant
 
 
 # Built-in backends, picked automatically from the action's keys:
@@ -194,7 +196,7 @@ def normalize_action(action: dict[str, Any], default_backend: str | None,
 
 EXTRA_SECTIONS = ("weather", "alarm", "energy", "packages", "meals", "spotify", "commute", "rooms",
                   "tags", "beds", "pets", "voice_id", "languages", "diary", "watcher", "floorplan",
-                  "follow_lights", "smoke", "wake", "freak")
+                  "follow_lights", "smoke", "wake", "freak", "history")
 
 
 def load_config(path: str | Path) -> Config:

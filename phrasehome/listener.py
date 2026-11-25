@@ -29,10 +29,12 @@ class _Lang:
         s = config.settings
         self.lang = lang
         self.model = model
-        self.candidates = expand(config.commands, config.slots, lang)
+        from .understanding import CONFIRM_WORDS, candidates_with_aliases
+
+        self.candidates = candidates_with_aliases(config, lang)  # + sentences taught on the History page
         self.matcher = Matcher(self.candidates, s.match_mode, s.match_threshold, s.block_words)
         words = vocabulary(self.candidates)
-        words = words[:-1] + extra_words + words[-1:]  # the recognizer must know the wake names
+        words = words[:-1] + extra_words + CONFIRM_WORDS + words[-1:]  # wake names, yes/no
         self.grammar = json.dumps(words) if s.restrict_vocabulary else None
 
 
@@ -160,6 +162,9 @@ class Engine:
                 self.dispatcher.submit(m)
             return
         self._heard(source, room, text, result.get("result") or [])  # (not in privacy mode)
+        confirm = getattr(self.dispatcher, "confirm", None)
+        if confirm is not None and text and confirm.answer(room, text):
+            return  # that was the yes/no to "did you say ...?"
         person = None
         vid = getattr(self.dispatcher, "voice_id", None)
         if vid is not None and result.get("spk") and text:
@@ -267,6 +272,9 @@ class Engine:
                 self.dispatcher.submit(m)
             return
         self._heard(source, room, text, words)
+        confirm = getattr(self.dispatcher, "confirm", None)
+        if confirm is not None and confirm.answer(room, text):
+            return
         person = self._who(clip, L, room)
         first = (re.findall(r"[a-zA-Z']+", text) or [""])[0]
         sp = self.spotters.get(source)
@@ -507,11 +515,55 @@ def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config
     conf = sum(w.get("conf", 1.0) for w in words) / len(words) if words else 1.0
     if config.settings.log_heard:  # (off by default, for privacy)
         log.info("heard%s: %r (conf %.2f)", f" [{room}]" if room else "", text, conf)
+    history = getattr(dispatcher, "history", None)
     if conf < config.settings.min_confidence:
+        if history:
+            history.add(kind="unclear", room=room, person=person, heard=text, confidence=round(conf, 2))
         return
     m = matcher.match(text)
     if m:
         m.room, m.confidence, m.notify, m.person = room, conf, reply, person
-        if dispatcher.submit(m):
-            log.info("MATCH %s <- %r (score %.0f%s)", m.command.name, text, m.score,
-                     f", {room}" if room else "")
+        run_or_confirm(m, dispatcher, config)
+        return
+    if history:
+        history.add(kind="none", room=room, person=person, heard=text, confidence=round(conf, 2))
+    near = matcher.near(text) if config.settings.did_you_mean else []
+    if near:  # close to something: let the AI pick what was meant, without holding up listening
+        import threading
+
+        threading.Thread(target=_did_you_mean, args=(dispatcher, config, text, near, room, reply, person, conf),
+                         daemon=True).start()
+
+
+def run_or_confirm(m, dispatcher: Dispatcher, config: Config) -> None:
+    """Run a matched command, or for a risky one the house isn't sure of, ask first."""
+    from .understanding import is_risky, is_sure
+
+    history = getattr(dispatcher, "history", None)
+    confirm = getattr(dispatcher, "confirm", None)
+    if confirm is not None and not m.confirmed and is_risky(m.command, config) and not is_sure(m):
+        if history:
+            history.add(kind="asked", room=m.room, person=m.person, heard=m.heard, matched=m.command.name,
+                        confidence=round(m.confidence, 2), via=m.via)
+        confirm.ask(m)
+        return
+    if history:
+        history.add(kind="command", room=m.room, person=m.person, heard=m.heard, matched=m.command.name,
+                    confidence=round(m.confidence, 2), score=round(m.score), via=m.via)
+    if dispatcher.submit(m):
+        log.info("MATCH %s <- %r (score %.0f%s%s)", m.command.name, m.heard, m.score,
+                 f", {m.room}" if m.room else "", "" if m.via == "voice" else f", {m.via}")
+
+
+def _did_you_mean(dispatcher, config, text, near, room, reply, person, conf) -> None:
+    from .matcher import Match
+    from .understanding import did_you_mean
+
+    cand = did_you_mean(dispatcher, text, near)
+    if cand is None:
+        return
+    log.info("did you mean %r? -> %s", text, cand.command.name)
+    m = Match(cand.command, cand.text, dict(cand.slots), 80.0, text, room=room, person=person,
+              confidence=conf, notify=reply, via="did-you-mean")
+    dispatcher.events.live("meant", room=room, heard=text, command=cand.command.name)
+    run_or_confirm(m, dispatcher, config)

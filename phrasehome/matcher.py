@@ -44,6 +44,8 @@ class Match:
     person: str | None = None  # who said it, if their voice was recognized
     confidence: float = 1.0
     notify: Callable[[str], None] | None = None  # feedback to the mic: "matched"/"done"/"failed"
+    via: str = "voice"  # voice | typed | did-you-mean
+    confirmed: bool = False  # a risky command someone said yes to
 
 
 def expand(commands: list[Command], slots: dict[str, dict[str, str]],
@@ -125,3 +127,17 @@ class Matcher:
         if self._blocked(heard, cand.text):
             return None
         return Match(cand.command, cand.text, cand.slots, score, heard)
+
+    def near(self, text: str, floor: float = 60.0, n: int = 5) -> list[tuple[float, Candidate]]:
+        """Commands that almost matched (between `floor` and the threshold), best first, one per command."""
+        heard = normalize(text)
+        words = [w for w in heard.split() if w != "unk"]
+        if not words or len(words) > 10:
+            return []
+        best: dict[str, tuple[float, Candidate]] = {}
+        for cand in self.candidates:
+            score = self._score(words, cand)
+            if floor <= score < self.threshold and score > best.get(cand.command.name, (0, None))[0]:
+                if not self._blocked(heard, cand.text):
+                    best[cand.command.name] = (score, cand)
+        return sorted(best.values(), key=lambda x: -x[0])[:n]
