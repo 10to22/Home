@@ -13,7 +13,8 @@ settings:
   min_confidence: 0.6
   cooldown_seconds: 2
   arbitration_seconds: 0.6
-  restrict_vocabulary: true
+  restrict_vocabulary: false        # false: hears any word (questions, "fire", "story"...). true: only
+                                    # the words in your commands (stricter, fewer mishearings of commands)
   block_words: ["don't", "dont", "do not", "not", "never"]
   default_backend: esp
   log_heard: false

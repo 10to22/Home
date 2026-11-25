@@ -91,6 +91,7 @@ DEFAULT_PHRASES: dict[str, Any] = {
     "intercom": "{text}",
     "listening": ["Yes?", "I'm listening."],
     "assistant_error": "Sorry, I can't answer that right now.",
+    "didnt_catch": ["Sorry, I couldn't hear you. Say that again?", "I didn't catch that. Could you say it again?"],
     "leak_alarm": "Water leak detected in the {room}!",
     "device_offline": "Heads up: the {node} module is offline.",
     # alarm
@@ -157,6 +158,7 @@ STYLES: dict[str, dict[str, Any]] = {
         "time_now": "It's {time}. Again.",
         "listening": ["Yes?", "What now?", "I'm listening. I always am."],
         "assistant_error": "I can't answer that right now. Rare, I know.",
+        "didnt_catch": ["I didn't catch that. Try words this time.", "Couldn't hear you. Again, please. Slowly."],
         "device_offline": "The {node} module is offline. It just left. They do that.",
         "alarm_arming": "The alarm turns on in {seconds} seconds. Choose your next moves carefully.",
         "alarm_entry": "Hello. The alarm is on. Scan your face or fingerprint, or say disarm, within {seconds} seconds. I'd hurry.",
@@ -258,6 +260,8 @@ STYLES["mean"] = {**STYLES["deadpan"], **{
     "date_now": "It's {date}. Another one.",
     "listening": ["What.", "Yes? Make it quick.", "I'm listening. Unfortunately."],
     "assistant_error": "I can't answer that right now. Enjoy not knowing. You're used to it.",
+    "didnt_catch": ["I couldn't hear you. Try again, and this time open your mouth.",
+                    "Didn't catch that. Speak up, or don't. Your call."],
     "device_offline": "The {node} module went offline. Can't say I blame it.",
     "alarm_arming": "The alarm turns on in {seconds} seconds. Leave, or don't. I'm watching either way.",
     "alarm_alert": "The alarm wasn't disarmed. The owners have been told. The cameras are recording. Smile.",
@@ -349,6 +353,7 @@ STYLES["aussie"] = {**STYLES["mean"], **{
     "date_now": "It's {date}. Another one.",
     "listening": ["What.", "Yeah? Make it quick.", "Listening. Unfortunately."],
     "assistant_error": "Can't answer that right now. Enjoy not knowing. You're used to it.",
+    "didnt_catch": ["Couldn't hear ya, mate. Have another go.", "What? Didn't catch a word of that. Again, slower."],
     "device_offline": "The {node} module's gone offline. Can't say I blame it.",
     "alarm_arming": "Alarm's on in {seconds} seconds. Rack off, or don't. I'm watching either way.",
     "alarm_alert": "The alarm wasn't disarmed. The owners have been told. Cameras are rolling. Smile, mate.",
@@ -446,6 +451,8 @@ STYLES["aussie_uncut"] = {**STYLES["aussie"], **{
     "date_now": "It's {date}. Another bloody one.",
     "listening": ["What.", "Yeah, what? Make it quick.", "Listening. Unfortunately."],
     "assistant_error": "Can't answer that right now. Bugger. Enjoy not knowing. You're used to it.",
+    "didnt_catch": ["Couldn't hear a bloody word of that. Have another go.",
+                    "What the hell was that? Say it again, properly this time."],
     "device_offline": "The {node} module's gone offline. Can't say I blame the poor bastard.",
     "alarm_alert": "The alarm wasn't disarmed. The owners have been told and the cameras are rolling. Get stuffed.",
     "alarm_disarmed": "Alarm off. Welcome home. Took ya bloody long enough.",
@@ -600,6 +607,7 @@ class Voice:
                               if clean else self.phrases)
         self._lock = threading.Lock()
         self._router = None
+        self._hushed = False
 
     @property
     def router(self):
@@ -765,6 +773,10 @@ class Voice:
                      text or clip)
             return text
         with self._lock:
+            from . import audio_out
+
+            audio_out.speaking_text = text or ""
+            self._hushed = False
             # make the audio once per voice (most rooms share one), then play everywhere at once
             made: dict[str, Path | None] = {}
             plays = []
@@ -787,6 +799,8 @@ class Voice:
             # rooms with no speaker of their own fall back to the hub's speaker: play that only once
             threads, local_done = [], False
             for room, audio, volume in plays:
+                if self._hushed:
+                    break  # "shut up" while the audio was being made
                 route = self.router.route(room)
                 if route == "local":
                     if local_done:
@@ -812,6 +826,19 @@ class Voice:
         if getattr(home.state, "mode", "") == "guest":
             return True
         return any(home.instances.for_room(r).kid_mode for r in rooms)
+
+    def hush(self) -> str:
+        """Stop talking right now ("shut up"): cuts the hub's speaker off mid-word. Alarms keep their
+        own schedule (a make-sure-you're-up alarm comes back as usual)."""
+        from . import audio_out
+
+        self._hushed = True
+        n = audio_out.hush_local()
+        home = getattr(self.config, "home", None)
+        if home is not None:
+            home.events.log("voice.hushed", cut=n)
+        log.info("hushed (%d sound%s cut off)", n, "" if n == 1 else "s")
+        return "hushed"
 
     def _play_one(self, text: str, audio: Path, room: str | None, volume: float, route: str) -> None:
         try:

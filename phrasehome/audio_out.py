@@ -25,8 +25,24 @@ _quiet_until = 0.0
 _busy_lock = threading.Lock()
 
 
+_procs: set = set()  # players running right now (killed by "shut up")
+speaking_text = ""  # what the hub's speaker is saying, to tell "shut up" from its own echo
+
+
 def local_busy() -> bool:
     return _busy > 0 or time.monotonic() < _quiet_until
+
+
+def hush_local() -> int:
+    """Stop the hub's speaker mid-word. Returns how many sounds were cut off."""
+    with _busy_lock:
+        procs = list(_procs)
+    for p in procs:
+        try:
+            p.kill()
+        except OSError:
+            pass
+    return len(procs)
 
 
 def _speaking(on: bool) -> None:
@@ -136,10 +152,20 @@ class AudioRouter:
                             f"volume={volume:.2f}", str(tmp)], capture_output=True, timeout=60)
             path = tmp
         _speaking(True)
+        proc = None
         try:
             cmd = [str(c).replace("{file}", str(path)) for c in self.player]
-            subprocess.run(cmd, capture_output=True, timeout=120)
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            with _busy_lock:
+                _procs.add(proc)
+            try:
+                proc.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                proc.kill()
         finally:
+            if proc is not None:
+                with _busy_lock:
+                    _procs.discard(proc)
             _speaking(False)
             if tmp:
                 tmp.unlink(missing_ok=True)

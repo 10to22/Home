@@ -8,9 +8,10 @@ unless a phrase matches, and then only the command text goes to the backend.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import queue
-from typing import Callable
+from typing import Any, Callable
 
 from .config import Config
 from .dispatcher import Dispatcher
@@ -64,6 +65,7 @@ class Engine:
         self.langs = {lang: _Lang(lang, m, self.config, extra) for lang, m in self.models.items()}
         self.recognizers: dict[str, tuple[str, object]] = {}
         self.buffers: dict[str, bytearray] = {}
+        self._stops = None
 
     @property
     def matcher(self) -> Matcher:
@@ -99,6 +101,9 @@ class Engine:
                 smoke.feed(room or source, pcm)  # beep patterns only, even in privacy mode
             except Exception as e:
                 log.debug("smoke listener: %s", e)
+        if source == "local" and self._hub_talking():
+            self._while_talking(source, room, pcm, reply)
+            return
         rec = self._recognizer(source, room)
         L = self._lang(room)
         buf = self.buffers.setdefault(source, bytearray())
@@ -134,6 +139,55 @@ class Engine:
                 return
             handle_result(result, L.matcher, self.dispatcher, self.config,
                           room=room, reply=reply, person=person)
+
+    # ---------- "shut up" while the house is talking (the hub's own microphone) ----------
+    def _hub_talking(self) -> bool:
+        from .audio_out import local_busy
+
+        return bool((self.config.sources.get("local_mic") or {}).get("mute_while_speaking", True)) and local_busy()
+
+    def _stop_phrases(self) -> list[tuple[re.Pattern, Any]]:
+        """Phrases that may cut in while the house talks: "shut up" and friends, alarm stop/snooze."""
+        if getattr(self, "_stops", None) is None:
+            out = []
+            for cmd in self.config.commands:
+                a = cmd.action
+                if a.get("hush") or (a.get("backend") == "alarm" and str(a.get("alarm")).lower() in ("stop", "snooze")):
+                    for p in cmd.phrases:
+                        words = re.findall(r"[a-z']+", p.lower())
+                        if words and "{" not in p:
+                            out.append((re.compile(r"\b" + r"\s+".join(map(re.escape, words)) + r"\b"), cmd))
+            out.sort(key=lambda x: -len(x[0].pattern))  # "stop talking" before "stop"
+            self._stops = out
+        return self._stops
+
+    def _while_talking(self, source: str, room: str | None, pcm: bytes, reply: Reply | None) -> None:
+        """The mic hears the house and you at once, so look for a stop phrase anywhere in what's heard
+        so far (not a clean sentence), and act on it straight away, mid-word."""
+        from . import audio_out
+
+        rec = self._recognizer(source, room)
+        if rec.AcceptWaveform(pcm):
+            text = json.loads(rec.Result()).get("text", "")
+        else:
+            text = json.loads(rec.PartialResult()).get("partial", "")
+        text = text.lower().strip()
+        if not text:
+            return
+        said = " ".join(re.findall(r"[a-z']+", audio_out.speaking_text.lower()))
+        for pattern, cmd in self._stop_phrases():
+            if not pattern.search(text) or pattern.search(said):  # the house saying it isn't you saying it
+                continue
+            log.info("heard %r while talking: stopping", text)
+            self.dispatcher.voice.hush()
+            rec.Reset()
+            self.buffers.get(source, bytearray()).clear()
+            if cmd.action.get("backend") == "alarm":  # "stop" / "snooze" while the alarm talks
+                from .matcher import Match
+
+                self.dispatcher.submit(Match(command=cmd, phrase=cmd.phrases[0], slots={}, score=100.0,
+                                             heard=text, room=room, confidence=1.0, notify=reply))
+            return
 
 
 def listen(config: Config, dry_run: bool = False) -> None:
@@ -176,6 +230,7 @@ def listen(config: Config, dry_run: bool = False) -> None:
 
             assistant = Assistant(dispatcher)
             dispatcher.assistant = assistant
+            assistant.warm_up([dispatcher.default_room()])  # the first question shouldn't wait for loading
             router = AssistantRouter(assistant, Transcriber(config.assistant, model, s.sample_rate,
                                                             models, s.language))
             log.info("AI assistant on: say \"%s, ...\"", assistant.names[0])
@@ -261,11 +316,8 @@ def _open_local_mic(config: Config, opts: dict, put):
 
     import numpy as np
 
-    from .audio_out import local_busy
-
     room = opts.get("room")
     room = str(room).lower() if room else None
-    mute = opts.get("mute_while_speaking", True)  # false if you use headphones
     # `opts` is the config's local_mic section: its room is read for every chunk, so moving the
     # laptop to another room on the dashboard (simulate) takes effect straight away
     check = {"until": _time.monotonic() + 10, "loudest": 0, "done": False}
@@ -279,9 +331,7 @@ def _open_local_mic(config: Config, opts: dict, put):
                 if check["loudest"] < 30:
                     log.warning("the microphone is only giving silence. On a Mac: System Settings > Privacy & "
                                 "Security > Microphone > allow Terminal, then quit and reopen Terminal")
-        if mute and local_busy():
-            return  # the house is talking: don't listen to itself
-        r = opts.get("room")
+        r = opts.get("room")  # while the house talks, the engine only listens for "shut up" (_while_talking)
         put(("local", str(r).lower() if r else None, data, None))
 
     stream = sd.RawInputStream(

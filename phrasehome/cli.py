@@ -395,8 +395,8 @@ def _cmd_ask(args) -> int:
             if q:
                 answer = ai.ask(q, room=args.room)
                 print(f"{ai.names[0]}: {answer}")
-                if args.speak:
-                    home.voice.speak(answer)
+                if not args.quiet:
+                    home.voice.speak(answer, room=args.room)  # in the house's voice
     finally:
         home.close()
     return 0
@@ -673,6 +673,8 @@ MODELS = {
                "speech recognition (40 MB)"),
     "voice-id": ("vosk-model-spk-0.4", "https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip",
                  "telling voices apart (13 MB)"),
+    "big": ("vosk-model-en-us-0.22-lgraph", "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22-lgraph.zip",
+            "more accurate speech recognition (128 MB)"),
 }
 
 
@@ -713,7 +715,7 @@ def _cmd_download_models(args) -> int:
     cfg = load_config(args.config)
     models = cfg.resolve_path("models")
     Path(models).mkdir(parents=True, exist_ok=True)
-    want = ["speech"] + (["voice-id"] if args.voice_id else [])
+    want = ["speech"] + (["voice-id"] if args.voice_id else []) + (["big"] if args.big else [])
     for key in want:
         name, url, what = MODELS[key]
         if (Path(models) / name).is_dir():
@@ -726,6 +728,9 @@ def _cmd_download_models(args) -> int:
             print(f"couldn't download {name}: {e}\nDownload {url} yourself and unzip it into {models}/", file=sys.stderr)
             return 1
         print(f"{name}: done")
+    if args.big:
+        print(f"To use the bigger model, set this under settings: in config.yaml:\n"
+              f"  model_path: models/{MODELS['big'][0]}")
     print("Ready. Try:  .venv/bin/phrasehome simulate --mic")
     return 0
 
@@ -899,7 +904,8 @@ def main(argv: list[str] | None = None) -> int:
     ak = sub.add_parser("ask", help="type a question to the AI assistant")
     ak.add_argument("question", nargs="*")
     ak.add_argument("--room", help="pretend you're speaking from this room")
-    ak.add_argument("--speak", action="store_true", help="also say the answer out loud")
+    ak.add_argument("--quiet", action="store_true", help="only print the answer, don't say it out loud")
+    ak.add_argument("--speak", action="store_true", help=argparse.SUPPRESS)  # speaking is the default now
     ak.add_argument("--dry-run", action="store_true", help="don't really control anything")
     ak.set_defaults(fn=_cmd_ask)
 
@@ -920,6 +926,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dm = sub.add_parser("download-models", help="download the offline speech model (for a laptop)")
     dm.add_argument("--voice-id", action="store_true", help="also the model for recognizing who's talking")
+    dm.add_argument("--big", action="store_true", help="also a bigger, more accurate speech model (128 MB)")
     dm.set_defaults(fn=_cmd_download_models)
 
     ac = sub.add_parser("ai-check", help="check that the AI (Claude) is linked: key, model, a test question")

@@ -51,7 +51,7 @@ BUILTIN_BACKENDS = {"speak": "voice", "door": "doors", "routine": "routine", "ti
                     "alarm": "alarm", "mode": "mode", "presence": "presence", "ask": "assistant",
                     "privacy": "privacy", "dnd": "dnd", "if": "logic", "report": "report",
                     "security": "security", "plug": "energy", "spotify": "spotify",
-                    "pet": "pets", "voiceid": "voiceid", "freak": "freak"}
+                    "pet": "pets", "voiceid": "voiceid", "freak": "freak", "hush": "voice"}
 RESERVED = set(BUILTIN_BACKENDS.values())
 
 
@@ -125,26 +125,43 @@ def _normalize_slots(raw: dict[str, Any]) -> dict[str, dict[str, str]]:
 # Commands for built-in features, so they work without editing config.yaml. Skipped when your
 # config already has a command with the same name or the same action. `settings:
 # builtin_commands: false` turns them all off.
+HUSH_PHRASES = ["shut up", "shut it", "shut up house", "be quiet", "quiet", "stop talking", "shush", "hush",
+                "enough", "silence", "zip it", "pipe down", "stop it", "cut it out", "okay stop", "nobody asked",
+                "shut your mouth", "give it a rest"]
 BUILTIN_COMMANDS = [
     ("freak_on", ["freak mode", "freak mode on", "we're getting freaky"], {"backend": "freak", "freak": "on"}),
     ("freak_off", ["freak mode off", "end freak mode", "freak mode over"], {"backend": "freak", "freak": "off"}),
+    ("hush", HUSH_PHRASES, {"backend": "voice", "hush": True}),  # also heard while the house is talking
+    # only if the config has a fire_mode routine. Also puts "fire" in the recognizer's vocabulary,
+    # so it isn't heard as "five".
+    ("fire", ["fire", "there's a fire", "fire fire", "fire fire fire", "house fire", "something's on fire",
+              "help fire"], {"backend": "routine", "routine": "fire_mode"}),
 ]
+NEEDS_ROUTINE = {"fire": "fire_mode"}
 
 
 def _is_on(v: Any) -> bool:
     return str(v).lower() in ("on", "true", "start", "yes")
 
 
-def missing_builtin_commands(commands: list["Command"]) -> list["Command"]:
+def _identity(action: dict) -> tuple | None:
+    """What a command does, to spot a config command that already covers a built-in one."""
+    if action.get("hush"):
+        return ("hush",)
+    if action.get("routine"):
+        return ("routine", str(action["routine"]))
+    if action.get("backend") == "freak" or "freak" in action:
+        return ("freak", _is_on(action.get("freak")))
+    return None
+
+
+def missing_builtin_commands(commands: list["Command"], routines=()) -> list["Command"]:
     have_names = {c.name for c in commands}
-    have_actions = {(c.action.get("backend"), _is_on(c.action.get(c.action.get("backend"), "")))
-                    for c in commands}
-    out = []
-    for name, phrases, action in BUILTIN_COMMANDS:
-        key = (action["backend"], _is_on(action[action["backend"]]))
-        if name not in have_names and key not in have_actions:
-            out.append(Command(name=name, phrases=list(phrases), action=dict(action)))
-    return out
+    have = {_identity(c.action) for c in commands} - {None}
+    return [Command(name=name, phrases=list(phrases), action=dict(action))
+            for name, phrases, action in BUILTIN_COMMANDS
+            if name not in have_names and _identity(action) not in have
+            and (name not in NEEDS_ROUTINE or NEEDS_ROUTINE[name] in routines)]
 
 
 def normalize_action(action: dict[str, Any], default_backend: str | None,
@@ -215,7 +232,7 @@ def load_config(path: str | Path) -> Config:
     if not commands:
         raise ConfigError("no commands defined")
     if data.get("settings", {}).get("builtin_commands", True) is not False:
-        commands += missing_builtin_commands(commands)
+        commands += missing_builtin_commands(commands, set(data.get("routines") or {}))
 
     sources = data.get("sources") or {"local_mic": {}}
     for name in sources:

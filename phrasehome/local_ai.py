@@ -5,7 +5,7 @@ assistant:
   local:
     url: http://localhost:11434    # where Ollama runs. On the Pi, point at a laptop/desktop on
                                    # your Wi-Fi running Ollama (a Pi on its own is very slow)
-    model: qwen3:8b                # needs a model that can use tools; qwen3:4b for slow computers
+    model: qwen3:8b                # needs a model that can use tools; qwen3:4b is about twice as fast
     vision_model: qwen2.5vl:7b     # optional, for camera questions (what's at the door, packages)
     timeout: 180
 
@@ -26,7 +26,9 @@ from typing import Any
 log = logging.getLogger("phrasehome.local_ai")
 
 DEFAULTS = {"url": "http://localhost:11434", "model": "qwen3:8b", "vision_model": "", "timeout": 180,
-            "keep_alive": "30m", "max_tokens": 2048}
+            "keep_alive": "30m", "max_tokens": 2048,
+            # the house's instructions + tools are ~4-5k tokens: Ollama's default (often 4096) would cut them off
+            "num_ctx": 16384}
 
 
 class LocalAIError(RuntimeError):
@@ -172,7 +174,8 @@ class LocalClient:
         model = self.vision_model if has_images and self.vision_model else self.model
         body: dict[str, Any] = {"model": model, "messages": msgs, "stream": False, "think": False,
                                 "keep_alive": self.cfg["keep_alive"],
-                                "options": {"num_predict": min(int(max_tokens), int(self.cfg["max_tokens"]))}}
+                                "options": {"num_predict": min(int(max_tokens), int(self.cfg["max_tokens"])),
+                                            "num_ctx": int(self.cfg["num_ctx"])}}
         otools = to_ollama_tools(tools)
         if otools:
             body["tools"] = otools

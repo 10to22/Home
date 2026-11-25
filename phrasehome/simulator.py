@@ -406,6 +406,7 @@ def run(config, mic: bool = False, base_port: int = 9100, real_backends: bool = 
             from .assistant import Assistant
 
             home.assistant = Assistant(home)
+            home.assistant.warm_up([home.default_room()])
         except Exception as e:
             log.warning("AI assistant off: %s", e)
     services = start_services(home)  # first: cameras, sensors, dashboard...

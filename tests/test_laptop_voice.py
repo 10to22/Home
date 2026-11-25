@@ -70,13 +70,25 @@ def test_hub_speaker_marks_itself_busy(home_audio):
 def home_audio(monkeypatch):
     monkeypatch.setattr(audio_out, "_quiet_until", 0.0)
     seen = []
-    monkeypatch.setattr(audio_out.subprocess, "run", lambda *a, **k: seen.append(audio_out.local_busy()))
+
+    class Proc:
+        def __init__(self, *a, **k):
+            seen.append(audio_out.local_busy())
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(audio_out.subprocess, "Popen", Proc)
     r = audio_out.AudioRouter.__new__(audio_out.AudioRouter)
     r.play_local, r.player = True, ["afplay", "{file}"]
     return r, seen
 
 
-def test_laptop_mic_ignores_the_house_talking(monkeypatch):
+def test_laptop_mic_keeps_listening_while_the_house_talks(monkeypatch):
+    """Audio still flows while the house talks: the engine only listens for "shut up" then."""
     from phrasehome import listener
 
     captured = {}
@@ -88,20 +100,13 @@ def test_laptop_mic_ignores_the_house_talking(monkeypatch):
         def start(self):
             pass
 
-    monkeypatch.setattr(audio_out, "_busy", 0)  # the house isn't talking
-    monkeypatch.setattr(audio_out, "_quiet_until", 0.0)
     monkeypatch.setitem(sys.modules, "sounddevice", types.SimpleNamespace(RawInputStream=Stream))
+    monkeypatch.setattr(audio_out, "local_busy", lambda: True)
     cfg = types.SimpleNamespace(settings=types.SimpleNamespace(sample_rate=16000, device=None))
     got = []
     listener._open_local_mic(cfg, {"room": "Living Room"}, got.append)
-    loud = (b"\x10\x27" * 4000)  # some sound
-    captured["callback"](loud, 4000, None, None)
+    captured["callback"](b"\x10\x27" * 4000, 4000, None, None)
     assert got and got[-1][:2] == ("local", "living room")
-    monkeypatch.setattr(audio_out, "local_busy", lambda: True)  # now it is
-    n = len(got)
-    listener._open_local_mic(cfg, {"room": "living room"}, got.append)
-    captured["callback"](loud, 4000, None, None)
-    assert len(got) == n  # dropped while the house was talking
 
 
 def test_simulate_mic_lists_what_is_missing(tmp_path, monkeypatch, capsys):

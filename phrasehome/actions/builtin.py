@@ -71,6 +71,8 @@ class VoiceBackend(_Builtin):
     Without rooms it speaks in the room that triggered it (or the hub's own speaker)."""
 
     def run(self, action: dict[str, Any], phrase: str) -> str:
+        if action.get("hush"):  # "shut up"
+            return self.home.voice.hush()
         values = _ctx(action, "speak", "rooms", "everywhere", "urgent")
         rooms = action.get("rooms")
         if isinstance(rooms, str):
