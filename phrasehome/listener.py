@@ -253,14 +253,32 @@ def _open_local_mic(config: Config, opts: dict, put):
         import sounddevice as sd
     except (ImportError, OSError) as e:
         raise SystemExit(
-            f"Audio dependencies missing ({e}). Run deploy/install.sh, or: "
-            "sudo apt install libportaudio2 && pip install 'phrasehome[audio]'"
+            f"Audio dependencies missing ({e}). On a Mac: .venv/bin/pip install -e '.[audio]' "
+            "(and if that's not enough: brew install portaudio). On the Pi: deploy/install.sh"
         )
+    import time as _time
+
+    import numpy as np
+
+    from .audio_out import local_busy
+
     room = opts.get("room")
     room = str(room).lower() if room else None
+    mute = opts.get("mute_while_speaking", True)  # false if you use headphones
+    check = {"until": _time.monotonic() + 10, "loudest": 0, "done": False}
 
     def on_audio(indata, frames, time_info, status) -> None:
-        put(("local", room, bytes(indata), None))
+        data = bytes(indata)
+        if not check["done"]:  # a Mac without microphone permission gives silence, not an error
+            check["loudest"] = max(check["loudest"], int(np.abs(np.frombuffer(data, dtype=np.int16)).max(initial=0)))
+            if _time.monotonic() > check["until"]:
+                check["done"] = True
+                if check["loudest"] < 30:
+                    log.warning("the microphone is only giving silence. On a Mac: System Settings > Privacy & "
+                                "Security > Microphone > allow Terminal, then quit and reopen Terminal")
+        if mute and local_busy():
+            return  # the house is talking: don't listen to itself
+        put(("local", room, data, None))
 
     stream = sd.RawInputStream(
         samplerate=config.settings.sample_rate, blocksize=4000,

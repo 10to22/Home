@@ -668,6 +668,68 @@ def _ai_check_local(a: dict) -> int:
     return 1 if missing else 0
 
 
+MODELS = {
+    "speech": ("vosk-model-small-en-us-0.15", "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+               "speech recognition (40 MB)"),
+    "voice-id": ("vosk-model-spk-0.4", "https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip",
+                 "telling voices apart (13 MB)"),
+}
+
+
+def _download_zip(url: str, models: "Path", name: str) -> None:
+    import shutil
+    import tempfile
+    import zipfile
+    from pathlib import Path
+
+    import requests
+
+    with tempfile.TemporaryDirectory() as tmp:
+        z = Path(tmp) / "m.zip"
+        with requests.get(url, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            total, got = int(r.headers.get("content-length") or 0), 0
+            with z.open("wb") as f:
+                for chunk in r.iter_content(1 << 20):
+                    f.write(chunk)
+                    got += len(chunk)
+                    if total:
+                        print(f"\r  {got * 100 // total}%", end="", flush=True)
+        print()
+        out = Path(tmp) / "x"
+        with zipfile.ZipFile(z) as zf:
+            for m in zf.namelist():  # nothing may land outside the folder
+                if not (out / m).resolve().is_relative_to(out.resolve()):
+                    raise SystemExit(f"refusing a strange file in the download: {m}")
+            zf.extractall(out)
+        src = out / name if (out / name).is_dir() else next(p for p in out.iterdir() if p.is_dir())
+        shutil.move(str(src), str(models / name))
+
+
+def _cmd_download_models(args) -> int:
+    """Download the offline models a laptop needs (the Pi's install.sh does this for you)."""
+    from pathlib import Path
+
+    cfg = load_config(args.config)
+    models = cfg.resolve_path("models")
+    Path(models).mkdir(parents=True, exist_ok=True)
+    want = ["speech"] + (["voice-id"] if args.voice_id else [])
+    for key in want:
+        name, url, what = MODELS[key]
+        if (Path(models) / name).is_dir():
+            print(f"{name}: already there")
+            continue
+        print(f"Downloading {name}, for {what}...")
+        try:
+            _download_zip(url, Path(models), name)
+        except Exception as e:
+            print(f"couldn't download {name}: {e}\nDownload {url} yourself and unzip it into {models}/", file=sys.stderr)
+            return 1
+        print(f"{name}: done")
+    print("Ready. Try:  .venv/bin/phrasehome simulate --mic")
+    return 0
+
+
 def _cmd_ai_check(args) -> int:
     """Is the AI linked? Sends one tiny question and explains any problem."""
     import os
@@ -853,6 +915,10 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--port", type=int, default=8080)
     a.add_argument("--no-browser", action="store_true", help="print the URL instead of opening it")
     a.set_defaults(fn=_cmd_auth_google)
+
+    dm = sub.add_parser("download-models", help="download the offline speech model (for a laptop)")
+    dm.add_argument("--voice-id", action="store_true", help="also the model for recognizing who's talking")
+    dm.set_defaults(fn=_cmd_download_models)
 
     ac = sub.add_parser("ai-check", help="check that the AI (Claude) is linked: key, model, a test question")
     ac.set_defaults(fn=_cmd_ai_check)

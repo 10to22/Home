@@ -255,6 +255,9 @@ def run(config, mic: bool = False, base_port: int = 9100, real_backends: bool = 
     if mic:
         from .listener import listen
 
+        config.settings.log_heard = True  # show what it hears, so you can tell when it mishears
+        print("Listening on this computer's microphone. Say \"lights on\", \"set a timer for one minute\", or "
+              f"\"{(config.assistant.get('names') or ['house'])[0]}, ...\" to ask the AI. Control+C to stop.\n")
         listen(config)
         return
     from .dispatcher import Dispatcher

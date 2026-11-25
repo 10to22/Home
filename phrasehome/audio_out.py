@@ -12,9 +12,29 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 log = logging.getLogger("phrasehome.audio")
+
+# While the hub's own speaker is talking (and a moment after), its own microphone ignores what it
+# hears, so a laptop doesn't hear itself and react to its own voice.
+_busy = 0
+_quiet_until = 0.0
+_busy_lock = threading.Lock()
+
+
+def local_busy() -> bool:
+    return _busy > 0 or time.monotonic() < _quiet_until
+
+
+def _speaking(on: bool) -> None:
+    global _busy, _quiet_until
+    with _busy_lock:
+        _busy += 1 if on else -1
+        if not on:
+            _quiet_until = time.monotonic() + 0.5  # the room's echo dies down
 
 
 def convert(audio: Path, rate: int, channels: int, volume: float = 1.0) -> bytes:
@@ -110,9 +130,11 @@ class AudioRouter:
             subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(audio), "-af",
                             f"volume={volume:.2f}", str(tmp)], capture_output=True, timeout=60)
             path = tmp
+        _speaking(True)
         try:
             cmd = [str(c).replace("{file}", str(path)) for c in self.player]
             subprocess.run(cmd, capture_output=True, timeout=120)
         finally:
+            _speaking(False)
             if tmp:
                 tmp.unlink(missing_ok=True)

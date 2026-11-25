@@ -92,18 +92,26 @@ and the fingerprint sensor.
 
 ### 0.4 Talk to it (laptop microphone)
 
-1. Download the speech model: <https://alphacephei.com/vosk/models> → `vosk-model-small-en-us-0.15`,
-   unzip into `models/`.
-2. Install audio support. macOS: `brew install portaudio`. Ubuntu/WSL: `sudo apt install libportaudio2 espeak-ng ffmpeg`.
-   Then `.venv/bin/pip install -e '.[audio]'`.
-3. In config.yaml, `sources: local_mic: { room: living room }` is the room your laptop pretends to be.
-4. Run it:
+1. Install audio support and download the offline speech model (40 MB):
+
+   ```bash
+   .venv/bin/pip install -e '.[audio]'
+   .venv/bin/phrasehome download-models
+   ```
+
+   (Ubuntu/WSL also needs `sudo apt install libportaudio2 espeak-ng ffmpeg`. On a Mac, only if the
+   first command isn't enough: `brew install portaudio`.)
+2. In config.yaml, `sources: local_mic: { room: living room }` is the room your laptop pretends to be.
+3. Run it:
 
    ```bash
    .venv/bin/phrasehome simulate --mic
    ```
 
-   Then say "lights on", "set a timer for one minute", "lockdown". Set `log_heard: true` to see what it hears.
+   The first time, the Mac asks to let Terminal use the microphone: allow it. Then say "lights on",
+   "set a timer for one minute", "lockdown", or "house, ..." for the AI. What it hears is printed, so
+   you can see when it mishears. It stops listening while it's talking, so it doesn't hear itself
+   through the laptop speakers (with headphones: `local_mic: { mute_while_speaking: false }`).
 
 ### 0.5 The door scanner with your webcam
 
