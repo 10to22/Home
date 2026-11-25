@@ -60,10 +60,12 @@ class Dispatcher:
             for name in config.backends:  # build up front so config problems show at startup
                 try:
                     self.backend(name)
-                except ModuleNotFoundError as e:  # an optional add-on that isn't installed
-                    extra = {"google_assistant": "google"}.get(config.backends[name].get("type"), "")
-                    log.warning("%s isn't installed, so backend %r is off%s", e.name, name,
-                                f" (pip install -e '.[{extra}]' to turn it on)" if extra else "")
+                except ModuleNotFoundError as e:  # an optional add-on that isn't installed: just a note
+                    if config.backends[name].get("type") == "google_assistant":
+                        log.info("note: Google Home control is off (only needed for Google Home devices like a "
+                                 "TV or vacuum; nothing else needs it)")
+                    else:
+                        log.info("note: backend %r is off (the optional %s package isn't installed)", name, e.name)
                 except Exception as e:
                     log.error("backend %s unavailable: %s", name, e)
         self._last_fired: dict[tuple[str, str | None], float] = {}
