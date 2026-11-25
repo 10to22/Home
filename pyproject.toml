@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-audio = ["vosk>=0.3.45", "sounddevice>=0.4"]
+audio = ["vosk>=0.3.44", "sounddevice>=0.4"]  # 0.3.45 has no Mac build
 google = ["gassist-text>=0.1.0", "google-auth-oauthlib>=1.0"]
 vision = ["opencv-python-headless>=4.8,<5", "numpy>=1.24"]  # OpenCV 5 dropped the Caffe loader the camera detector uses
 ai = ["anthropic>=0.100", "ddgs>=9"]  # ddgs: web search for the local AI
