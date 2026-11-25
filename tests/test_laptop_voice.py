@@ -102,3 +102,23 @@ def test_laptop_mic_ignores_the_house_talking(monkeypatch):
     listener._open_local_mic(cfg, {"room": "living room"}, got.append)
     captured["callback"](loud, 4000, None, None)
     assert len(got) == n  # dropped while the house was talking
+
+
+def test_simulate_mic_lists_what_is_missing(tmp_path, monkeypatch, capsys):
+    import importlib.util
+
+    from phrasehome.config import load_config
+    from phrasehome.simulator import voice_missing
+
+    (tmp_path / "config.yaml").write_text("""
+backends: { dev: { type: log } }
+settings: { default_backend: dev }
+commands:
+  - { phrases: [hello], action: { backend: dev } }
+""")
+    cfg = load_config(tmp_path / "config.yaml")
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda n, *a: None if n == "vosk" else real(n, *a))
+    assert voice_missing(cfg) == [".venv/bin/pip install -e '.[audio]'", ".venv/bin/phrasehome download-models"]
+    (tmp_path / "models/vosk-model-small-en-us-0.15").mkdir(parents=True)
+    assert voice_missing(cfg) == [".venv/bin/pip install -e '.[audio]'"]

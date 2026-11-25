@@ -296,6 +296,18 @@ class Placement:
                 "camera": self.camera, "cameras": self.cameras(), "error": self.error}
 
 
+def voice_missing(config) -> list[str]:
+    """What the laptop microphone still needs, as the commands that fix it."""
+    import importlib.util
+
+    fixes = []
+    if not (importlib.util.find_spec("vosk") and importlib.util.find_spec("sounddevice")):
+        fixes.append(".venv/bin/pip install -e '.[audio]'")
+    if not config.resolve_path(config.settings.model_path).exists():
+        fixes.append(".venv/bin/phrasehome download-models")
+    return fixes
+
+
 def prepare(config, base_port: int = 9100, real_backends: bool = False, webcam: bool = False):
     """Start simulated nodes for the config and point the config at them. Returns the nodes."""
     raw = yaml.safe_load(config.base_dir.joinpath(config.source_name).read_text()) if \
@@ -355,6 +367,13 @@ def run(config, mic: bool = False, base_port: int = 9100, real_backends: bool = 
         print("Online backends (Google, phone alerts, speakers...) are replaced by the log.")
     print()
     if mic:
+        missing = voice_missing(config)
+        if missing:
+            print("The microphone can't start yet. In the phrasehome folder, run:")
+            for fix in missing:
+                print(f"  {fix}")
+            print("Then run this again.")
+            raise SystemExit(1)
         from .listener import listen
 
         config.settings.log_heard = True  # show what it hears, so you can tell when it mishears

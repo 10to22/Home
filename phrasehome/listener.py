@@ -140,7 +140,8 @@ def listen(config: Config, dry_run: bool = False) -> None:
     try:
         import vosk
     except ImportError as e:
-        raise SystemExit(f"Vosk missing ({e}). Run deploy/install.sh or pip install 'phrasehome[audio]'")
+        raise SystemExit(f"Vosk (the speech recognizer) isn't installed ({e}). In the phrasehome folder run:\n"
+                         "  .venv/bin/pip install -e '.[audio]'\n(on the Pi, deploy/install.sh does it)")
 
     s = config.settings
     vosk.SetLogLevel(-1)
