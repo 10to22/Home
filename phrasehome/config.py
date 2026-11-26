@@ -127,12 +127,16 @@ def _normalize_slots(raw: dict[str, Any]) -> dict[str, dict[str, str]]:
 
     slots: dict[str, dict[str, str]] = {}
     for name, values in (raw or {}).items():
-        if isinstance(values, dict) and set(values) == {"numbers"}:
-            # {numbers: [1, 120]} -> "one": "1", ... "one hundred twenty": "120"
+        if isinstance(values, dict) and "numbers" in values and set(values) <= {"numbers", "halves"}:
+            # {numbers: [1, 120]} -> "one": "1", ... "one hundred twenty": "120"; halves: "... and a half"
             lo, hi = (int(x) for x in values["numbers"])
             slots[name] = {number_words(n): str(n) for n in range(lo, hi + 1)}
             if lo <= 1 <= hi:
                 slots[name]["a"] = "1"  # "a minute"
+            if values.get("halves"):
+                from .understanding_plus import add_halves
+
+                slots[name] = add_halves(slots[name])
         elif isinstance(values, list):
             slots[name] = {str(v): str(v) for v in values}
         elif isinstance(values, dict):
@@ -208,7 +212,10 @@ def normalize_action(action: dict[str, Any], default_backend: str | None,
 
 EXTRA_SECTIONS = ("weather", "alarm", "energy", "packages", "meals", "spotify", "commute", "rooms",
                   "tags", "beds", "pets", "voice_id", "languages", "diary", "watcher", "floorplan",
-                  "follow_lights", "smoke", "wake", "freak", "history")
+                  "follow_lights", "smoke", "wake", "freak", "history",
+                  # the newer features (hearing_plus, understanding_plus, extras/*)
+                  "hearing", "groups", "relative", "safety", "upkeep", "privacy", "comfort", "family", "facts",
+                  "notify_rules", "backup", "guests", "homework", "ai_extras")
 
 
 def load_config(path: str | Path) -> Config:

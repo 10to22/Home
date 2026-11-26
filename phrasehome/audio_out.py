@@ -53,6 +53,17 @@ def _speaking(on: bool) -> None:
             _quiet_until = time.monotonic() + 0.5  # the room's echo dies down
 
 
+def _far_end(path: Path, volume: float) -> None:
+    """Tell the echo canceller what's about to come out of the hub's speaker (hearing: {echo_cancel})."""
+    from .hearing_plus import far_end
+
+    if far_end.listening:
+        try:
+            far_end.playing(convert(path, 16000, 1, volume))
+        except Exception as e:
+            log.debug("echo reference: %s", e)
+
+
 def convert(audio: Path, rate: int, channels: int, volume: float = 1.0) -> bytes:
     """Any audio file -> raw 16-bit PCM (needs ffmpeg)."""
     cmd = ["ffmpeg", "-loglevel", "error", "-i", str(audio)]
@@ -154,6 +165,7 @@ class AudioRouter:
         _speaking(True)
         proc = None
         try:
+            _far_end(path, volume)
             cmd = [str(c).replace("{file}", str(path)) for c in self.player]
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             with _busy_lock:

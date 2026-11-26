@@ -909,7 +909,9 @@ class AssistantRouter:
         woke: the dedicated name listener heard "house" though the transcript misheard it."""
         now = time.monotonic()
         rest = self.assistant.addressed(text, room)
+        guessed = False
         if rest is None and woke:
+            guessed = True
             words = normalize(text).split()
             while words and words[0] in ("hey", "ok", "okay", "hi"):
                 words = words[1:]
@@ -935,6 +937,16 @@ class AssistantRouter:
             return True
         if rest and self._command(rest, room, reply, person, lang, confidence):
             return True
+        if guessed and not pcm and getattr(self.assistant, "home", None) is not None:
+            from .wordbank import quick_intent
+
+            if not quick_intent(rest or ""):
+                # it half-heard the name and the rest isn't clear: a short "go on?" beep, not a guess
+                if self._claim(source, "__name__"):
+                    self.assistant.home.voice.speak("go_on_sound", room=room)
+                    self._listen_for(source, "name")
+                log.info("assistant: half-heard the name in %r; asked to go on", text)
+                return True
         if rest is not None and all(w == "unk" for w in rest.split()):
             # only the name was heard clearly; the question may be in this audio or the next utterance
             full = self.assistant.strip_name(self._transcribe(pcm, lang), room)

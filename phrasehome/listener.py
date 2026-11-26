@@ -140,7 +140,11 @@ class Engine:
                 smoke.feed(room or source, pcm)  # beep patterns only, even in privacy mode
             except Exception as e:
                 log.debug("smoke listener: %s", e)
-        if source == "local" and self._hub_talking():
+        plus = self._plus()
+        pcm = plus.pre(source, room, pcm)  # mic health, echo cancelling, the room's noise, direction
+        if not pcm:
+            return
+        if source == "local" and self._hub_talking() and not plus.echo_on(source):
             self._while_talking(source, room, pcm, reply)
             return
         if self.config.settings.noise_cleanup:
@@ -163,7 +167,8 @@ class Engine:
         result = json.loads(rec.Result())
         audio = bytes(buf)
         buf.clear()
-        text = result.get("text", "").strip()
+        text = plus.fix_text(result.get("text", "").strip())  # learned accent fixes
+        result["text"] = text
         if self.dispatcher.state.is_private(room):
             # Privacy mode: nothing is logged, matched or sent to the AI, except the
             # command that turns privacy off (otherwise you could never say it).
@@ -194,7 +199,18 @@ class Engine:
                                                        person=person, lang=L.lang, woke=woke):
             return
         handle_result(result, L.matcher, self.dispatcher, self.config,
-                      room=room, reply=reply, person=person, unknown_voice=unknown)
+                      room=room, reply=reply, person=person, unknown_voice=unknown,
+                      needs_name=plus.name_needed(source, room, person))
+        plus.after(audio)  # keep the clip of a misheard sentence, if asked to
+
+    def _plus(self):
+        """hearing_plus.py: made on first use (also for engines built without __init__ in tests)."""
+        p = self.__dict__.get("_hearing_plus")
+        if p is None:
+            from .hearing_plus import HearingPlus
+
+            p = self.__dict__["_hearing_plus"] = HearingPlus(self)
+        return p
 
     def _try_command(self, text: str, room: str | None, reply: Reply | None, person: str | None = None,
                      lang: str | None = None, confidence: float | None = None, source: str | None = None) -> bool:
@@ -211,13 +227,14 @@ class Engine:
         conf = 1.0 if confidence is None else float(confidence)
         if conf < self.config.settings.min_confidence:
             return False
-        matches = correction(text, L.matcher, self.dispatcher, self.config, room) or \
-            commands_in(text, L.matcher, self.config)
-        if not matches:
+        found = find_commands(text, L.matcher, self.dispatcher, self.config, room, allow_teach=True)
+        if found is None:
             return False
-        for m in matches:
-            m.room, m.notify, m.person, m.confidence = room, reply, person, conf
-            run_or_confirm(m, self.dispatcher, self.config)
+        matches, delays, say = found
+        if say:
+            self.dispatcher.voice.speak(say, room=room)
+            return True
+        run_all(matches, delays, self.dispatcher, self.config, room, reply, person, conf)
         return True
 
     # ---------- live words, the AI's name, Whisper ----------
@@ -316,6 +333,7 @@ class Engine:
         L = self._lang(room)
         audio = clean(clip) if self.config.settings.noise_cleanup else clip
         text, conf, words = self.whisper.transcribe(audio, self.prompt, L.lang)
+        text = self._plus().fix_text(text)
         if not text:
             return
         result = {"text": text, "result": words}
@@ -341,8 +359,10 @@ class Engine:
                                               confidence=conf, woke=woke):
             return
         unknown = bool(self.__dict__.pop("_voice_heard", False) and person is None)
+        plus = self._plus()
         handle_result(result, L.matcher, self.dispatcher, self.config, room=room, reply=reply, person=person,
-                      unknown_voice=unknown)
+                      unknown_voice=unknown, needs_name=plus.name_needed(source, room, person))
+        plus.after(clip)
 
     def _who(self, clip: bytes, L, room: str | None) -> str | None:
         """Voice ID for a whole sentence (Whisper mode)."""
@@ -567,8 +587,9 @@ def _open_local_mic(config: Config, opts: dict, put):
 
 def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config: Config,
                   room: str | None = None, reply: Reply | None = None,
-                  person: str | None = None, unknown_voice: bool = False) -> None:
-    """unknown_voice: voice ID heard a voice it doesn't know (a guest, the TV)."""
+                  person: str | None = None, unknown_voice: bool = False, needs_name: str | None = None) -> None:
+    """unknown_voice: voice ID heard a voice it doesn't know (a guest, the TV). needs_name: why a command
+    without the name is ignored right now (the TV is on, or the voice came from its direction)."""
     text = result.get("text", "").strip()
     if not text or text == "[unk]":
         return
@@ -581,7 +602,20 @@ def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config
         if history:
             history.add(kind="unclear", room=room, person=person, heard=text, confidence=round(conf, 2))
         return
-    matches = correction(text, matcher, dispatcher, config, room) or commands_in(text, matcher, config)
+    found = find_commands(text, matcher, dispatcher, config, room)
+    matches, delays, say = found if found is not None else ([], [], None)
+    if say:
+        dispatcher.voice.speak(say, room=room)
+        return
+    if matches and needs_name:
+        from .attention import is_safety_command
+
+        if not all(is_safety_command(m.command) for m in matches):
+            log.info("not running %r without the name: %s", text, needs_name)
+            if history:
+                history.add(kind="needs_name", room=room, heard=text, matched=matches[0].command.name,
+                            why=needs_name, confidence=round(conf, 2))
+            return
     if matches and unknown_voice:
         from .attention import is_safety_command, strangers_need_name
 
@@ -592,9 +626,7 @@ def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config
                             confidence=round(conf, 2))
             return
     if matches:
-        for m in matches:
-            m.room, m.confidence, m.notify, m.person = room, conf, reply, person
-            run_or_confirm(m, dispatcher, config)
+        run_all(matches, delays, dispatcher, config, room, reply, person, conf)
         return
     if history:
         history.add(kind="none", room=room, person=person, heard=text, confidence=round(conf, 2))
@@ -607,6 +639,46 @@ def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config
 
 
 _JOINERS = re.compile(r"\s+(?:and then|and also|and|then|also|plus)\s+")
+
+
+def find_commands(text: str, matcher: Matcher, dispatcher, config: Config, room: str | None,
+                  allow_teach: bool = False):
+    """Everything `text` asks for: (matches, delay in seconds for each, something to say) or None.
+    A correction ("no, I meant the bedroom"), then understanding_plus.py (numbers, "brighter", "turn them
+    off", "upstairs", "... in five minutes", "when I say ..." when allow_teach), then plain commands."""
+    fix = correction(text, matcher, dispatcher, config, room)
+    if fix:
+        return fix, [0.0] * len(fix), None
+    teaching = re.match(r"^(?:when|whenever|if) (?:i|we) say ", text.lower())
+    try:
+        from .understanding_plus import understand
+
+        # making a new command needs the house's name: "when I say ..." in conversation isn't for it
+        got = None if (teaching and not allow_teach) else understand(text, matcher, dispatcher, config, room)
+    except Exception as e:
+        log.error("understanding %r: %s", text, e)
+        got = None
+    if got is not None:
+        return got
+    plain = commands_in(text, matcher, config)
+    return (plain, [0.0] * len(plain), None) if plain else None
+
+
+def run_all(matches: list, delays: list, dispatcher, config: Config, room, reply, person, conf: float) -> None:
+    """Run each match now, or later for "... in five minutes"."""
+    from . import clock
+
+    for m, delay in zip(matches, delays or [0.0] * len(matches)):
+        m.room, m.confidence, m.notify, m.person = room, conf, reply, person
+        if delay > 0:
+            log.info("%s in %.0f s", m.command.name, delay)
+            dispatcher.timeline.call_in(delay, lambda m=m: run_or_confirm(m, dispatcher, config))
+            try:
+                dispatcher.voice.speak(f"Okay, {clock.spoken_duration(delay)} from now.", room=room)
+            except Exception as e:
+                log.debug("say later: %s", e)
+        else:
+            run_or_confirm(m, dispatcher, config)
 
 
 def commands_in(text: str, matcher: Matcher, config: Config | None = None) -> list:
@@ -742,6 +814,9 @@ def run_or_confirm(m, dispatcher: Dispatcher, config: Config) -> None:
         import time as _t
 
         dispatcher.__dict__.setdefault("_last_command", {})[m.room] = (_t.monotonic(), m)
+        levels = dispatcher.__dict__.setdefault("_levels", {})  # for "brighter" / "a bit warmer"
+        for slot, value in (m.slots or {}).items():
+            levels[(m.command.name, m.room, slot)] = levels[(m.command.name, None, slot)] = value
         log.info("MATCH %s <- %r (score %.0f%s%s)", m.command.name, m.heard, m.score,
                  f", {m.room}" if m.room else "", "" if m.via == "voice" else f", {m.via}")
 

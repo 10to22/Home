@@ -4,6 +4,10 @@
     phrasehome speech-test --tts        or let the house's own voice say them (quick, less realistic)
     phrasehome speech-test              score the saved clips with Vosk and Whisper, as set up now
 
+Everyone in the family (family_test.py):
+    phrasehome family-test --record --person sam -n 50     Sam says 50 of your commands
+    phrasehome family-test                                 score everyone; what each voice gets wrong
+
 Prints, for each recognizer: word accuracy (100% = every word right), how many clips ran the right
 command, and the time per sentence. Saved clips stay, so run it again after any change.
 """
@@ -20,8 +24,9 @@ from typing import Callable
 RATE = 16000
 
 
-def folder(config) -> Path:
-    return Path(config.resolve_path(config.data_dir)) / "speech-test"
+def folder(config, person: str | None = None) -> Path:
+    base = Path(config.resolve_path(config.data_dir)) / "speech-test"
+    return base / "people" / person.lower() if person else base
 
 
 def word_error_rate(expected: str, heard: str) -> float:
@@ -75,8 +80,8 @@ def _read_wav(path: Path) -> bytes:
         return w.readframes(w.getnframes())
 
 
-def save_set(config, items: list[dict], get_audio: Callable[[dict, int], bytes]) -> Path:
-    out = folder(config)
+def save_set(config, items: list[dict], get_audio: Callable[[dict, int], bytes], person: str | None = None) -> Path:
+    out = folder(config, person)
     out.mkdir(parents=True, exist_ok=True)
     manifest = []
     for i, item in enumerate(items, 1):
@@ -90,7 +95,7 @@ def save_set(config, items: list[dict], get_audio: Callable[[dict, int], bytes])
     return out
 
 
-def record(config, items: list[dict], seconds: float = 3.5, show=print) -> Path:
+def record(config, items: list[dict], seconds: float = 3.5, show=print, person: str | None = None) -> Path:
     import sounddevice as sd
 
     def get(item, i):
@@ -100,7 +105,7 @@ def record(config, items: list[dict], seconds: float = 3.5, show=print) -> Path:
         sd.wait()
         return data.tobytes()
 
-    return save_set(config, items, get)
+    return save_set(config, items, get, person)
 
 
 def synthesize(config, items: list[dict], show=print) -> Path:
@@ -159,11 +164,12 @@ def recognizers(config) -> dict[str, Callable[[bytes], str]]:
     return out
 
 
-def score(config, hear: dict[str, Callable[[bytes], str]] | None = None, show=print) -> dict[str, dict]:
+def score(config, hear: dict[str, Callable[[bytes], str]] | None = None, show=print,
+          person: str | None = None) -> dict[str, dict]:
     from .matcher import Matcher
     from .understanding import candidates_with_aliases
 
-    out = folder(config)
+    out = folder(config, person)
     try:
         items = json.loads((out / "manifest.json").read_text())
     except (OSError, ValueError):

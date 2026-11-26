@@ -19,6 +19,7 @@ SOUNDS: dict[str, list[tuple[float, float]]] = {
     "reminder_sound": [(784, 0.15), (0, 0.03), (1046.5, 0.25)],
     "siren": [(700 + 300 * (i % 2), 0.25) for i in range(8)],
     "listening_sound": [(1318.5, 0.08)],
+    "go_on_sound": [(987.8, 0.07), (0, 0.03), (1318.5, 0.11)],  # "go on?": half-heard the name
 }
 
 

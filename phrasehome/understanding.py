@@ -48,6 +48,7 @@ class History:
         if not self.enabled:
             return None
         e = {"id": uuid.uuid4().hex[:8], "time": time.strftime("%Y-%m-%d %H:%M:%S"), **entry}
+        self.last = e  # the listener keeps this sentence's audio when asked to (hearing_plus.keep_clip)
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a") as f:
@@ -109,6 +110,15 @@ class Aliases:
         items = [a for a in self.all() if a["heard"] != heard]
         item = {"heard": heard, "command": command, "slots": dict(slots or {}),
                 "added": time.strftime("%Y-%m-%d %H:%M:%S")}
+        meant = meant_text(self.config, command, slots)
+        if meant:
+            item["meant"] = meant
+            try:  # "kitten" was "kitchen": after twice, fixed everywhere (hearing_plus.AccentFixes)
+                from .hearing_plus import AccentFixes
+
+                AccentFixes(self.config).learn(heard, meant)
+            except Exception as e:
+                log.debug("accent fixes: %s", e)
         items.append(item)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(items, indent=1))
@@ -129,6 +139,20 @@ class Aliases:
         cmds = {c.name: c for c in self.config.commands}
         return [Candidate(a["heard"], cmds[a["command"]], dict(a.get("slots") or {}))
                 for a in self.all() if a.get("command") in cmds]
+
+
+def meant_text(config, command: str, slots: dict | None = None) -> str | None:
+    """The command's first phrase with these slot values, as words ("turn on the kitchen lights")."""
+    from .matcher import expand
+
+    cmd = next((c for c in config.commands if c.name == command), None)
+    if cmd is None:
+        return None
+    want = {k: str(v) for k, v in (slots or {}).items()}
+    for c in expand([cmd], config.slots):
+        if {k: str(v) for k, v in c.slots.items()} == want:
+            return c.text
+    return None
 
 
 def candidates_with_aliases(config, lang: str | None = None) -> list:
