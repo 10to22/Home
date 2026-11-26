@@ -202,7 +202,7 @@ class Confirmations:
             deadline, m = cur
             if time.monotonic() > deadline:
                 return False
-            said = normalize(text)
+            said = _without_name(self.home, normalize(text))  # "house, yes" / "yes house"
             yes = said in YES or any(said.startswith(y + " ") for y in YES)
             no = said in NO or any(said.startswith(n + " ") for n in NO)
             if not (yes or no):
@@ -233,6 +233,18 @@ class Confirmations:
         h = getattr(self.home, "history", None)
         if h:
             h.add(kind="confirm", room=m.room, heard=m.heard, matched=m.command.name, answer=answer)
+
+
+def _without_name(home, said: str) -> str:
+    """Drop the house's name (and "hey") from the start or end of a short answer."""
+    a = getattr(home, "assistant", None)
+    names = {w for n in (getattr(a, "names", None) or ["house", "home"]) for w in n.split()} | {"hey", "ok", "okay"}
+    words = said.split()
+    while len(words) > 1 and words[0] in names:
+        words = words[1:]
+    while len(words) > 1 and words[-1] in names:
+        words = words[:-1]
+    return " ".join(words)
 
 
 # ---------- did you mean ----------

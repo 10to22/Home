@@ -49,6 +49,8 @@ class Settings:
     phrase_variants: bool = True
     # "lock the front door and turn off the lights": run both (every part must be a command)
     multi_commands: bool = True
+    # "no, I meant the bedroom": also undo the wrong one (lights on -> off) when there's an opposite command
+    correction_undo: bool = True
     # what notices the house's name: "vosk" (the speech recognizer, default), "openwakeword" (a real
     # wake word engine: pip install openwakeword, then wake_models: a trained "hey home" model), "off"
     wake_engine: str = "vosk"

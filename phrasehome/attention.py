@@ -141,6 +141,18 @@ def say_minutes(minutes: float) -> str:
     return "a minute" if m == 1 else f"{m} minutes"
 
 
+# ---------- "say that again" ----------
+SAY_AGAIN = re.compile(r"^(?:sorry |pardon |what )?(?:say that again|say it again|repeat that|repeat it|"
+                       r"can you repeat that|could you repeat that|what did you say|what was that|come again|"
+                       r"pardon|sorry what|say again|one more time|i didn't catch that|i missed that)(?: please)?$")
+SAY_AGAIN_WORDS = sorted(set("say that again it repeat can could you what did was come pardon sorry one more "
+                             "time i didn't catch missed please".split()))
+
+
+def say_again(said: str) -> bool:
+    return bool(SAY_AGAIN.match(said.strip()))
+
+
 # ---------- "I wasn't talking to you" ----------
 NOT_FOR_YOU = re.compile(
     r"^(?:no |sorry |oops )?(?:i wasn't talking to you|i was not talking to you|we weren't talking to you|"

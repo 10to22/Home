@@ -203,9 +203,9 @@ class Assistant:
         words = {w for n in self.names for w in n.split()}
         for inst in self.home.instances.all.values():
             words |= {w for n in inst.wake_names for w in normalize(n).split()}
-        from .attention import NOT_FOR_YOU_WORDS, QUIET_WORDS
+        from .attention import NOT_FOR_YOU_WORDS, QUIET_WORDS, SAY_AGAIN_WORDS
 
-        return sorted(words | {"hey", "ok"} | set(QUIET_WORDS) | set(NOT_FOR_YOU_WORDS))
+        return sorted(words | {"hey", "ok"} | set(QUIET_WORDS) | set(NOT_FOR_YOU_WORDS) | set(SAY_AGAIN_WORDS))
 
     # ---------- what Claude knows and can do, per instance ----------
     def profile(self, inst) -> tuple[str, list]:
@@ -793,7 +793,26 @@ class AssistantRouter:
         if not hasattr(self, "quiet"):
             self.quiet = Quiet()
             self._last_answer: dict[str | None, tuple[float, str]] = {}
+            self._last_said: dict[str | None, tuple[float, str]] = {}  # the answer itself, for "say that again"
             self._ignored: dict[str | None, tuple[float, str]] = {}
+            self._claims: list[tuple[float, str, str]] = []  # (time, source, what): one answer per question
+            self._claims_lock = threading.Lock()
+
+    CLAIM_SECONDS = 3.0
+
+    def _claim(self, source: str, what: str) -> bool:
+        """Several mics heard the same thing ("house, what's the weather" in the kitchen and the hall):
+        only the first one gets an answer. False if another mic already has it."""
+        self._state()
+        now = time.monotonic()
+        with self._claims_lock:
+            self._claims = [c for c in self._claims if now - c[0] < self.CLAIM_SECONDS]
+            for t, src, other in self._claims:
+                if src != source and (other == what or _similar(other, what)):
+                    log.info("assistant: %s heard %r too; %s is answering", source, what, src)
+                    return False
+            self._claims.append((now, source, what))
+        return True
 
     @staticmethod
     def _recent(store: dict, room, seconds: float) -> str | None:
@@ -804,7 +823,7 @@ class AssistantRouter:
                    lang, confidence) -> bool | None:
         """"I wasn't talking to you", "stop listening", and quiet rooms. True/False when handled here
         (taken / not for the AI), None to carry on."""
-        from .attention import not_for_you, quiet_request, say_minutes
+        from .attention import not_for_you, quiet_request, say_again, say_minutes
 
         self._state()
         home = getattr(self.assistant, "home", None)
@@ -826,6 +845,11 @@ class AssistantRouter:
             h = getattr(home, "history", None)
             if h:
                 h.add(kind="not_for_me", room=room, person=person, heard=last)
+            return True
+        said_last = self._recent(self._last_said, room, 300 if rest is not None else 30)
+        if said_last is not None and say_again(said):
+            if self._claim(source, "say again"):
+                home.voice.speak(said_last, room=room)
             return True
         if rest is not None:
             q = quiet_request(rest)
@@ -917,6 +941,8 @@ class AssistantRouter:
             if not full.strip() and owner:
                 return False
             if not full.strip():
+                if not self._claim(source, "__name__"):
+                    return True  # another mic already said "Yes?"
                 if reply:
                     reply("matched")
                 self._listen_for(source, "name")
@@ -940,6 +966,8 @@ class AssistantRouter:
         # answering the house's own question ("which door?") needs no check; anything else must be a
         # task or a question, or it's ignored ("house party was fun")
         check = kind != "reply" and getattr(self.assistant, "only_requests", True)
+        if not self._claim(source, normalize(question)):
+            return True  # another mic heard the same question and is answering it
         threading.Thread(target=self._answer, args=(question, room, reply, person, source, check),
                          daemon=True).start()
         return True
@@ -1001,6 +1029,7 @@ class AssistantRouter:
             if not speaker.spoke:
                 self.assistant.home.voice.speak(answer, room=room)
             self._last_answer[room] = (time.monotonic(), question)  # for "I wasn't talking to you"
+            self._last_said[room] = (time.monotonic(), answer)  # for "say that again"
             if reply:
                 reply("done")
             cont = self.assistant.continuous

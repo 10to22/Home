@@ -435,8 +435,17 @@ voices it doesn't know (guests, the TV) from running commands without the name; 
 alarm and "fire" still work for anyone.
 
 **"No, I meant the bedroom."** Right after a command (25 seconds), "no, I meant the bedroom", "not the
-kitchen, the bedroom" or "actually, turn off the lights" runs it again the right way. The first one isn't
-undone, so turn it off yourself if it matters.
+kitchen, the bedroom" or "actually, turn off the lights" runs it again the right way. If your config has
+the opposite command ("turn off the {room} lights"), the wrong one is turned back off first; locks, the
+alarm and routines are never undone. `settings: {correction_undo: false}` to leave it as it is.
+
+**"Say that again."** Right after an answer, "what did you say?", "say that again" or "pardon?" repeats it
+straight away, without asking the AI again (with the name: up to five minutes later).
+
+**One answer, however many mics.** When the kitchen and the hall both hear "house, what's the weather",
+only one answers. Commands already worked this way.
+
+**"Did you say lockdown?"** "Yes, house" and "hey home, no" count as the answer.
 
 **A real wake word engine (optional).** The speech recognizer notices the name well when you're close.
 For across-the-room or over music, use openWakeWord: `pip install openwakeword`, then

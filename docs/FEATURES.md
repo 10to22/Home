@@ -19,7 +19,9 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | **Stop listening** | "house, stop listening for 20 minutes": the AI stays quiet in that room; commands still work |
 | **Learns from mistakes** | "I wasn't talking to you" teaches it; ignored-then-repeated teaches it the other way |
 | **Speaker rules** | `no_name_needed: [sam]` in Sam's own rooms; `strangers_need_name` for guests and the TV |
-| **"No, I meant the bedroom"** | Re-runs the last command with the right room (or whatever slot) |
+| **"No, I meant the bedroom"** | Re-runs the last command with the right room (or whatever slot), and turns the wrong one back off when there's an opposite command |
+| **"Say that again"** | Repeats the last answer instantly, no AI call |
+| **One answer per question** | Two mics hearing the same question get one answer, not two |
 | **Wake word engine** | Optional openWakeWord with your own "hey home" model, for across-the-room hearing |
 | **Word bank** | Each phrase also matches "switch on ...", "... on", "put the ... on" and more; "could you please ... for me" is fine |
 | **Own voice per room** | `voice: {piper_model, speed, volume}` per instance |

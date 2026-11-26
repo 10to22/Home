@@ -684,7 +684,43 @@ def correction(text: str, matcher: Matcher, dispatcher, config: Config, room: st
     slots = {**prev.slots, name: value}
     phrase = prev.phrase
     log.info("correction: %s with %s=%s instead of %s", prev.command.name, name, value, prev.slots.get(name))
-    return [Match(prev.command, phrase, slots, 90.0, said, via="correction")]
+    out = []
+    undo = _opposite(prev.command, config) if getattr(config.settings, "correction_undo", True) else None
+    if undo is not None:  # "kitchen lights on" was wrong: turn them back off first
+        log.info("correction: undoing with %s", undo.name)
+        out.append(Match(undo, undo.phrases[0], dict(prev.slots), 90.0, said, via="correction"))
+    out.append(Match(prev.command, phrase, slots, 90.0, said, via="correction"))
+    return out
+
+
+_FLIP = {"on": "off", "off": "on", "true": "false", "false": "true", "start": "stop", "stop": "start",
+         "up": "down", "down": "up", "open": "close", "close": "open"}
+
+
+def _flipped(v):
+    if isinstance(v, bool):
+        return not v
+    if isinstance(v, str):
+        if v.lower() in _FLIP:
+            return _FLIP[v.lower()]
+        return re.sub(r"\b(on|off)\b", lambda m: _FLIP[m.group(1)], v)
+    if isinstance(v, dict):
+        return {k: _flipped(x) for k, x in v.items()}
+    return v
+
+
+def _opposite(cmd, config: Config):
+    """The command that undoes `cmd` (lights on <-> lights off), if the config has one. Never for locks,
+    the alarm or routines: those stay as they are."""
+    from .understanding import is_risky
+
+    a = cmd.action
+    if is_risky(cmd, config) or a.get("backend") in ("routine", "doors", "security", "mode", "freak", "privacy"):
+        return None
+    want = _flipped(a)
+    if want == a:
+        return None
+    return next((c for c in config.commands if c.name != cmd.name and c.action == want), None)
 
 
 def run_or_confirm(m, dispatcher: Dispatcher, config: Config) -> None:

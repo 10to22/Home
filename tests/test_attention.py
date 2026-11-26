@@ -204,3 +204,76 @@ def test_openwakeword_spotter():
     assert sp.feed(chunk, 2.0)  # frames 2 and 3: heard
     assert sp.heard_recently(4.0, window=3) and not sp.heard_recently(9.0, window=3)
     assert sp.model.models == ["models/hey_home.onnx"]
+
+
+# ---------- one answer when several mics hear the same question ----------
+def test_two_mics_one_answer(home):
+    router, asked = _router(home)
+    assert router.handle("kitchen_mic", "kitchen", "house what's the weather", b"", None)
+    assert router.handle("hall_mic", "hall", "house what's the weather", b"", None)  # taken, not answered again
+    _wait()
+    assert asked == ["what's the weather"]
+    assert router.handle("hall_mic", "hall", "house what time is it", b"", None)  # a different question
+    _wait()
+    assert asked == ["what's the weather", "what time is it"]
+    router._claims.clear()  # later on, the same question gets a new answer
+    assert router.handle("hall_mic", "hall", "house what's the weather", b"", None)
+    _wait()
+    assert asked[-1] == "what's the weather" and len(asked) == 3
+
+
+# ---------- "say that again" ----------
+def test_say_that_again(home):
+    router, asked = _router(home, answers=("Sunny, twenty degrees.",))
+    assert router.handle("mic1", "kitchen", "house what's the weather", b"", None)
+    _wait()
+    home.spoken.clear()
+    assert router.handle("mic1", "kitchen", "what did you say", b"", None)  # no name needed right after
+    assert home.spoken == ["Sunny, twenty degrees."] and asked == ["what's the weather"]  # no AI call
+    assert router.handle("mic1", "kitchen", "house say that again", b"", None)
+    assert home.spoken[-1] == "Sunny, twenty degrees."
+    assert not router.handle("mic1", "bedroom", "what did you say", b"", None)  # nothing said in there
+
+
+# ---------- corrections undo the wrong one ----------
+def test_correction_turns_the_wrong_one_back_off(home, monkeypatch):
+    from phrasehome.config import Command
+
+    home.config.commands.append(Command("room_lights_off", ["turn off the {room} lights"],
+                                        {"backend": "dev", "node": "{room}", "channel": "lights", "state": False}))
+    sent = []
+    monkeypatch.setattr(home, "submit", lambda m: sent.append(m) or True)
+    m = _matcher(home.config)
+    first = m.match("turn on the kitchen lights")
+    first.room = "kitchen"
+    run_or_confirm(first, home, home.config)
+    fix = correction("no i meant the bedroom", m, home, home.config, "kitchen")
+    assert [(x.command.name, x.slots) for x in fix] == [("room_lights_off", {"room": "kitchen"}),
+                                                        ("room_lights_on", {"room": "bedroom"})]
+    home.config.settings.correction_undo = False
+    assert len(correction("no i meant the bedroom", m, home, home.config, "kitchen")) == 1
+
+
+def test_no_undo_for_locks(home):
+    from phrasehome.listener import _opposite
+
+    lockdown = next(c for c in home.config.commands if c.name == "lockdown")
+    assert _opposite(lockdown, home.config) is None
+
+
+# ---------- "house, yes" ----------
+def test_yes_with_the_name_answers_did_you_say(home):
+    from phrasehome.understanding import Confirmations
+
+    ran = []
+    home.submit = lambda m: ran.append(m.command.name) or True
+    c = Confirmations(home)
+    home.timeline = types.SimpleNamespace(call_in=lambda *a, **k: None)
+    m = _matcher(home.config).match("lockdown")
+    m.room = "kitchen"
+    c.ask(m)
+    assert c.answer("kitchen", "yes house")
+    assert ran == ["lockdown"]
+    c.ask(m)
+    assert c.answer("kitchen", "hey home no")
+    assert ran == ["lockdown"]
