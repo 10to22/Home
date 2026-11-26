@@ -64,10 +64,12 @@ def test_guess_from_the_words():
 
 
 # ---------- picking a mood ----------
-def test_moods_are_off_unless_asked_for(tmp_path):
+def test_moods_are_on_unless_turned_off(tmp_path):
     m = VoiceModeler(make_cfg(tmp_path, "{engine: none}"))
-    assert not m.enabled and m.pick("wake_nag", "Get up.", explicit="cheeky") is None
-    assert m.prompt_hint() == ""
+    assert m.enabled and m.pick("wake_nag", "Get up.") == "annoyed" and "[cheeky]" in m.prompt_hint()
+    off = VoiceModeler(make_cfg(tmp_path / "off", "{engine: none, emotion: false}"))
+    assert not off.enabled and off.pick("wake_nag", "Get up.", explicit="cheeky") is None
+    assert off.prompt_hint() == ""
 
 
 def test_safety_lines_are_always_clear(tmp_path):
@@ -111,7 +113,7 @@ def test_tuning_is_clamped_saved_and_reset(tmp_path):
 
 
 def test_options_from_the_dashboard_win_over_config(tmp_path):
-    cfg = make_cfg(tmp_path, "{engine: none}")
+    cfg = make_cfg(tmp_path, "{engine: none, emotion: false}")
     m = VoiceModeler(cfg)
     m.set_options(enabled=True, accent="aussie")
     m2 = VoiceModeler(cfg)
@@ -128,7 +130,7 @@ def test_options_from_the_dashboard_win_over_config(tmp_path):
 def test_engine_params(tmp_path):
     m = VoiceModeler(make_cfg(tmp_path, "{engine: none, emotion: true, accent: en_AU}"))
     piper = m.engine_params("piper", "cheeky", speed=1.0)
-    assert piper["length_scale"] < 1 and piper["noise_scale"] > 0.667 and piper["post"]["pitch"] == 1.0
+    assert piper["length_scale"] < 1 and piper["noise_scale"] > 0.667 and piper["post"]["pitch"] == 1.5
     calm = m.engine_params("piper", "calm")
     assert calm["length_scale"] > 1 and calm["sentence_silence"] > 0.2
     esp = m.engine_params("espeak", "cheerful")
@@ -394,3 +396,25 @@ def test_voice_page_and_api(tmp_path):
         assert ctype == "audio/wav" and audio[:4] == b"RIFF"
     finally:
         web.stop()
+
+
+
+def test_moods_are_far_enough_apart_to_hear():
+    from phrasehome.voice_style import EMOTIONS
+
+    def k(m, n, d):
+        return EMOTIONS[m].get(n, d)
+
+    assert k("cheerful", "pitch", 0) - k("annoyed", "pitch", 0) >= 5  # semitones between happy and fed up
+    assert k("urgent", "rate", 1) - k("calm", "rate", 1) >= 0.25
+    assert k("soft", "volume", 0) <= -4
+
+
+def test_untagged_sentences_get_a_mood_from_their_words():
+    from phrasehome.voice_style import guess
+
+    assert guess("You left the back door open again.") == "annoyed"
+    assert guess("Nice one, you nailed it.") == "cheerful"
+    assert guess("Take your time, no rush.") == "calm"
+    assert guess("Hurry, the bus leaves in 5 minutes.") == "urgent"
+    assert guess("The kettle is on.") is None

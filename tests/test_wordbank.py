@@ -153,3 +153,73 @@ def test_listener_runs_named_commands_and_respects_confidence(home, monkeypatch)
     assert not e._try_command("lock unk door", "kitchen", None, source="mic1")  # half heard: AI writes it down
     assert not e._try_command("what's the weather", "kitchen", None, source="mic1")
     assert len(ran) == 2
+
+
+# ---------- the bigger vocabulary (vocabulary.py) ----------
+def test_slang_and_other_wordings():
+    v = variants("turn on the {room} lights", None)
+    for said in ("flick the {room} lights on", "whack the {room} lights on", "chuck on the {room} lights",
+                 "pop the {room} lights on", "power up the {room} lights"):
+        assert said in v, said
+    assert "crank the volume" in variants("turn up the volume", None)
+    assert "kettle on" in variants("put on the kettle", None) and "put on the jug" in variants("put on the kettle", None)
+    assert "get the dishwasher going" in variants("start the dishwasher", None)
+    assert "turn off the telly" in variants("turn off the tv", None)
+    assert "night night" in variants("good night", None) and "off to bed" in variants("goodnight", None)
+
+
+def test_everyday_verbs_arent_mistaken_for_things():
+    for p in ("hold on", "wake up", "calm down", "kill time", "come on", "back off"):
+        assert variants(p, None) == [], p
+    v = variants("play some music", None)
+    assert "put on some music" in v and not any("the some" in x for x in v)
+    assert not any("the some" in x for x in variants("turn on some music", None))
+
+
+def test_small_vocabulary_keeps_the_most_common():
+    few, many = variants("turn on the {room} lights"), variants("turn on the {room} lights", None)
+    assert len(few) == 6 and len(many) > 20 and few == many[:6]
+
+
+def test_rooms_have_their_other_names(home):
+    m = _matcher(home.config)
+    rooms = home.config.slots["room"]
+    assert m.match("turn on the kitchen lights").slots == {"room": rooms["kitchen"]}
+    from phrasehome.wordbank import place_names
+
+    more = place_names({"room": {"living room": "living", "bathroom": "bath", "lounge": "den"}})["room"]
+    assert more["front room"] == "living" and more["loo"] == "bath" and more["dunny"] == "bath"
+    assert more["lounge"] == "den"  # a name the house already uses keeps its own meaning
+
+
+def test_lounge_means_the_living_room(home):
+    home.config.slots["room"]["living room"] = "living_room"
+    m = _matcher(home.config)
+    got = m.match("could you flick the lounge lights on mate")
+    assert got.command.name == "room_lights_on" and got.slots == {"room": "living_room"}
+    home.config.settings.phrase_variants = False
+    assert _matcher(home.config).match("turn on the lounge lights") is None
+
+
+def test_more_filler_and_questions():
+    assert strip_filler("oi mate turn off the kitchen lights cheers") == "turn off the kitchen lights"
+    assert strip_filler("be a legend and lock the doors rn") == "lock the doors"
+    assert quick_intent("i want to know who won the game") == "question"
+    assert quick_intent("are we out of milk") == "question"
+    assert quick_intent("any chance you could lock up") == "task"
+    assert quick_intent("flick the lights off") == "task"
+    assert quick_intent("fire in the kitchen") is None  # never a command word
+
+
+def test_fast_matching_picks_the_same_as_before(home):
+    from phrasehome.matcher import Matcher
+
+    cands = candidates_with_aliases(home.config)
+    fast = Matcher(cands, "utterance", 85)
+    slow = Matcher(cands, "utterance", 85)
+    slow.mode = "slow"  # the plain loop
+    slow._score = lambda w, c: __import__("rapidfuzz").fuzz.ratio(" ".join(w), c.text)
+    for said in ("switch the kitchen lights on", "lockdown", "turn on the bedroom light", "make me a sandwich",
+                 "please lock the doors for me"):
+        a, b = fast.match(said), slow.match(said)
+        assert (a and (a.command.name, a.slots, a.phrase)) == (b and (b.command.name, b.slots, b.phrase)), said

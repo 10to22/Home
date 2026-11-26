@@ -157,11 +157,14 @@ def meant_text(config, command: str, slots: dict | None = None) -> str | None:
 
 def candidates_with_aliases(config, lang: str | None = None) -> list:
     from .matcher import expand
+    from .wordbank import BIG_VARIANTS
 
     s = config.settings
     english = str(lang or s.language or "en").lower().startswith("en")
+    # a fixed vocabulary (the Pi) keeps the dozen most common wordings per phrase; open vocabulary all of them
+    limit = 12 if getattr(s, "restrict_vocabulary", True) else BIG_VARIANTS
     return (expand(config.commands, config.slots, lang, variants=bool(getattr(s, "phrase_variants", True))
-                   and english) + Aliases(config).candidates())
+                   and english, limit=limit) + Aliases(config).candidates())
 
 
 # ---------- risky commands ----------

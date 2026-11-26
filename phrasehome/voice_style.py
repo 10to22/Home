@@ -46,20 +46,21 @@ KNOBS: dict[str, tuple[float, float, float]] = {
 }
 
 EMOTIONS: dict[str, dict[str, Any]] = {
+    # strong enough to hear on any engine (Mac voices, Piper, eSpeak): speed, pitch, pauses, loudness
     "neutral": {"about": "plain and even"},
-    "calm": {"rate": 0.94, "pitch": -0.5, "pause": 1.25, "lively": 0.75, "volume": -1.0, "exaggeration": 0.35,
-             "about": "relaxed and warm, a bit slower"},
-    "clear": {"rate": 0.88, "pitch": 0.0, "pause": 1.5, "lively": 0.6, "volume": 2.0, "exaggeration": 0.3,
+    "calm": {"rate": 0.88, "pitch": -1.0, "pause": 1.4, "lively": 0.7, "volume": -1.5, "exaggeration": 0.35,
+             "about": "relaxed and warm, slower"},
+    "clear": {"rate": 0.86, "pitch": 0.0, "pause": 1.5, "lively": 0.6, "volume": 2.0, "exaggeration": 0.3,
               "about": "safety announcements: slow, steady and easy to understand"},
-    "cheeky": {"rate": 1.05, "pitch": 1.0, "pause": 0.9, "lively": 1.35, "exaggeration": 0.8,
+    "cheeky": {"rate": 1.08, "pitch": 1.5, "pause": 0.85, "lively": 1.5, "exaggeration": 0.9,
                "about": "playful, a grin in the voice"},
-    "annoyed": {"rate": 1.07, "pitch": -1.5, "pause": 0.85, "lively": 1.2, "volume": 1.0, "exaggeration": 0.9,
+    "annoyed": {"rate": 1.12, "pitch": -2.5, "pause": 0.75, "lively": 1.3, "volume": 2.0, "exaggeration": 1.0,
                 "about": "exasperated, clipped"},
-    "cheerful": {"rate": 1.06, "pitch": 2.0, "pause": 0.95, "lively": 1.3, "exaggeration": 0.75,
+    "cheerful": {"rate": 1.08, "pitch": 3.0, "pause": 0.9, "lively": 1.5, "volume": 1.0, "exaggeration": 0.85,
                  "about": "bright and upbeat"},
-    "urgent": {"rate": 1.1, "pitch": 1.0, "pause": 0.75, "lively": 1.1, "volume": 3.0, "exaggeration": 0.7,
+    "urgent": {"rate": 1.16, "pitch": 1.5, "pause": 0.7, "lively": 1.2, "volume": 3.5, "exaggeration": 0.8,
                "about": "quick and alert"},
-    "soft": {"rate": 0.92, "pitch": -1.0, "pause": 1.2, "lively": 0.7, "volume": -4.0, "exaggeration": 0.35,
+    "soft": {"rate": 0.9, "pitch": -1.5, "pause": 1.25, "lively": 0.7, "volume": -5.0, "exaggeration": 0.35,
              "about": "quiet-hours voice: low and gentle"},
 }
 
@@ -121,15 +122,24 @@ TAG = re.compile(rf"(?:\[|<)\s*(?:mood\s*[:=]\s*)?({_MOODS})\s*(?:\]|>)", re.I)
 LEADING_TAG = re.compile(rf"^\s*{TAG.pattern}\s*", re.I)
 
 # a guess from the words, for free text (the AI's answers, intercom) without a tag
-_GUESS = [
+_GUESS = [  # for sentences the AI didn't tag: the wording gives the feeling away
     ("clear", re.compile(r"\b(warning|emergency|danger|fire|smoke|carbon monoxide|gas leak|evacuate|get out|"
                          r"call (?:000|911|112|triple zero))\b", re.I)),
-    ("calm", re.compile(r"\b(sorry to hear|i'm sorry|don't worry|it's okay|it's ok|take care|you're safe|"
-                        r"breathe|no rush)\b", re.I)),
-    ("annoyed", re.compile(r"\b(again\?|seriously|for fuck'?s sake|how many times|ugh|still in bed|"
-                           r"i already told you|honestly)\b", re.I)),
+    ("urgent", re.compile(r"\b(right now|immediately|hurry|quick(?:ly)?|asap|straight away|don't wait|"
+                          r"leaving in \d+|it's late|you're late|running late|last chance)\b", re.I)),
+    ("calm", re.compile(r"\b(sorry to hear|i'm sorry|don't worry|it's okay|it's ok|take care|you're safe|breathe|"
+                        r"no rush|take your time|deep breath|that sounds hard|i'm here|rest up|feel better|"
+                        r"sleep well|good night|goodnight|easy does it|relax)\b", re.I)),
+    ("annoyed", re.compile(r"\b(again[.?!]|again,|seriously|for fuck'?s sake|how many times|ugh|still in bed|"
+                           r"i already told you|honestly|bloody|for god'?s sake|you left|left (?:it|the \w+) "
+                           r"(?:on|open|unlocked)|nobody|no one|every single|unbelievable|typical|of course you|"
+                           r"lazy|bludger|drongo|galah|get up|wake up|enough|stop it|piss off|oi\b)", re.I)),
     ("cheerful", re.compile(r"\b(great news|good news|congrat\w*|happy birthday|well done|ripper|beauty|"
-                            r"awesome|brilliant|lovely)\b", re.I)),
+                            r"awesome|brilliant|lovely|nice one|nailed it|good on ya|fantastic|amazing|yay|"
+                            r"sunny|perfect|welcome home|good morning|party|weekend|let's go|cheers|legend)\b",
+                            re.I)),
+    ("cheeky", re.compile(r"\b(technically|apparently|surely|i suppose|i guess|might as well|not that|"
+                          r"don't thank me|you're welcome|no pressure|just saying|bold move|cute)\b", re.I)),
 ]
 
 
@@ -185,7 +195,7 @@ class VoiceModeler:
     def __init__(self, config) -> None:
         self.config = config
         cfg = config.voice or {}
-        self.enabled = self.config_enabled = bool(cfg.get("emotion", False))
+        self.enabled = self.config_enabled = bool(cfg.get("emotion", True))  # on unless `emotion: false`
         self.accent = self.config_accent = accent_name(cfg.get("accent"))
         if cfg.get("accent") and not self.accent:
             log.warning("unknown voice accent %r (have: %s)", cfg.get("accent"), ", ".join(ACCENTS))
@@ -312,8 +322,10 @@ class VoiceModeler:
         if not self.enabled:
             return ""
         moods = ", ".join(f"[{m}]" for m in EMOTIONS if m not in ("clear", "soft"))
-        return (f"\nYour voice can change its delivery. Start your reply with one mood tag for how it should "
-                f"sound: {moods} (e.g. \"[cheeky] Lights are off. Try not to trip.\"). Use [calm] for anything "
+        return (f"\nYour voice acts out a mood, so always start your reply with a mood tag, and put a new tag "
+                f"before any sentence whose feeling changes: {moods}. Example: \"[annoyed] You left the door "
+                f"open again. [cheeky] Lucky I'm here.\" Pick the feeling that fits; don't use the same one every "
+                f"time. Use [calm] for anything "
                 f"about safety, health, emergencies or someone who is upset. The tag is not read aloud.\n")
 
     # ---------- what each engine is told ----------

@@ -25,7 +25,7 @@ def test_speak_everywhere_makes_audio_once_and_plays_local_once(home, tmp_path, 
     made, played = [], []
     lock = threading.Lock()
 
-    def synth(text, settings=None):
+    def synth(text, settings=None, emotion=None):
         made.append(text)
         f = tmp_path / "x.wav"
         f.write_bytes(b"RIFF")

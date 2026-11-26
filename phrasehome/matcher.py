@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
 
 from .config import Command
 
@@ -49,18 +49,22 @@ class Match:
 
 
 def expand(commands: list[Command], slots: dict[str, dict[str, str]],
-           lang: str | None = None, variants: bool = False) -> list[Candidate]:
+           lang: str | None = None, variants: bool = False, limit: int | None = None) -> list[Candidate]:
     """Expand every phrase template ("turn on the {room} lights") into concrete phrases.
-    variants: also the usual other ways of saying each phrase (wordbank.py), English only. A variant
-    never replaces a phrase written in the config, for this command or any other."""
+    variants: also the usual other ways of saying each phrase and other names for rooms (wordbank.py),
+    English only; at most `limit` other wordings per phrase. A variant never replaces a phrase written
+    in the config, for this command or any other."""
     out = _expand(((cmd, t) for cmd in commands for t in cmd.phrases_for(lang)), slots)
     if not variants:
         return out
+    from .wordbank import MAX_VARIANTS, place_names
     from .wordbank import variants as other_ways
 
+    n = MAX_VARIANTS if limit is None else limit
     written = {c.text for c in out}
+    more_slots = place_names(slots)
     extra = [c for c in _expand(((cmd, v) for cmd in commands for t in cmd.phrases_for(lang)
-                                 for v in other_ways(t)), slots) if c.text not in written]
+                                 for v in [t] + other_ways(t, n)), more_slots) if c.text not in written]
     seen: set[str] = set()
     return out + [c for c in extra if not (c.text in seen or seen.add(c.text))]
 
@@ -99,6 +103,7 @@ class Matcher:
         block_words: list[str] | None = None,
     ) -> None:
         self.candidates = candidates
+        self._texts = [c.text for c in candidates]
         self.mode = mode
         self.threshold = threshold
         self.block = [normalize(b) for b in (block_words or []) if normalize(b)]
@@ -133,13 +138,25 @@ class Matcher:
         bare = strip_filler(" ".join(words)).split()
         tries = [words] if bare == words else [words, bare]
         best: tuple[float, int, Candidate] | None = None
-        for cand in self.candidates:
-            score = max(self._score(w, cand) for w in tries)
-            if score < self.threshold:
-                continue
-            key = (score, len(cand.text), cand)
-            if best is None or key[:2] > best[:2]:
-                best = key
+        if self.mode == "utterance":  # all at once in C: thousands of wordings stay instant
+            scores: dict[int, float] = {}
+            for w in tries:
+                for _, sc, i in process.extract(" ".join(w), self._texts, scorer=fuzz.ratio,
+                                                score_cutoff=self.threshold, limit=None):
+                    scores[i] = max(sc, scores.get(i, 0.0))
+            for i in sorted(scores):
+                cand = self.candidates[i]
+                key = (scores[i], len(cand.text), cand)
+                if best is None or key[:2] > best[:2]:
+                    best = key
+        else:
+            for cand in self.candidates:
+                score = max(self._score(w, cand) for w in tries)
+                if score < self.threshold:
+                    continue
+                key = (score, len(cand.text), cand)
+                if best is None or key[:2] > best[:2]:
+                    best = key
         if best is None:
             return None
         score, _, cand = best
