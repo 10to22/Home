@@ -337,8 +337,14 @@ def test_voice_server_round_trip(tmp_path):
             {"engine": "http", "emotion": True, "fallback_engine": "none",
              "http": {"url": url, "token": "s3cret"}})))
         wav = pi.synthesize("G'day. Lights off.", pi.base, emotion="cheeky")
-        with wave.open(str(wav)) as w:
-            assert w.getnframes() == 1600
+        # what the laptop itself sends for that line and mood (its own mood processing, done once)
+        req = urllib.request.Request(url, data=json.dumps({"input": "G'day. Lights off.", "emotion": "cheeky"}).encode(),
+                                     headers={"Content-Type": "application/json", "Authorization": "Bearer s3cret"})
+        direct = tmp_path / "direct.wav"
+        direct.write_bytes(urllib.request.urlopen(req, timeout=10).read())
+        with wave.open(str(wav)) as w, wave.open(str(direct)) as d:
+            # the Pi plays exactly what the laptop made: the mood isn't applied a second time
+            assert w.getnframes() == d.getnframes() > 0
         moods = list((tmp_path / "laptop").rglob("*.mood"))
         assert [m.read_text() for m in moods] == ["cheeky"]  # the laptop acted the mood out
         wrong = Voice(make_cfg(tmp_path / "pi2", json.dumps(

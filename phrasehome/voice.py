@@ -818,7 +818,10 @@ class Voice:
                 cfg = v.get("chatterbox") or {}
                 tts_neural.chatterbox(text, tmp, cfg, p, tts_neural.chatterbox_sample(self.config, cfg))
             else:
-                tts_neural.http(text, tmp, v.get("http") or {}, p)
+                hcfg = v.get("http") or {}
+                tts_neural.http(text, tmp, hcfg, p)
+                if hcfg.get("mood_fields", True):
+                    post = {}  # the voice server acts the mood out itself: doing it here too would double it
         elif engine == "command":
             command = v.get("command")
             if not isinstance(command, list):
