@@ -49,6 +49,11 @@ class Settings:
     phrase_variants: bool = True
     # "lock the front door and turn off the lights": run both (every part must be a command)
     multi_commands: bool = True
+    # what notices the house's name: "vosk" (the speech recognizer, default), "openwakeword" (a real
+    # wake word engine: pip install openwakeword, then wake_models: a trained "hey home" model), "off"
+    wake_engine: str = "vosk"
+    wake_models: list[str] = field(default_factory=list)  # openwakeword .onnx/.tflite files or built-in names
+    wake_threshold: float = 0.5  # openwakeword: 0-1, higher = fewer false wakes
 
 
 # Built-in backends, picked automatically from the action's keys:

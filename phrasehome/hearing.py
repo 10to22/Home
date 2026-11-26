@@ -286,6 +286,61 @@ class WakeSpotter:
         return now - self.last < window
 
 
+class OpenWakeWordSpotter:
+    """A real wake word engine (openWakeWord, pip install openwakeword): a small neural model trained on
+    one phrase, much better than a speech recognizer at hearing "hey home" across a room or over music.
+
+    settings:
+      wake_engine: openwakeword
+      wake_models: [models/hey_home.onnx]   # train your own phrase with openWakeWord's training notebook;
+                                           # built-in ones work too: hey_jarvis, hey_mycroft, alexa
+      wake_threshold: 0.5
+
+    Same interface as WakeSpotter: feed() audio, then heard_recently()."""
+
+    FRAME = 1280  # 80 ms at 16 kHz, what openWakeWord expects
+
+    def __init__(self, models: list[str] | None = None, threshold: float = 0.5, rate: int = RATE,
+                 model_class=None) -> None:
+        if rate != 16000:
+            raise RuntimeError("openWakeWord needs 16 kHz audio (settings: sample_rate: 16000)")
+        if model_class is None:
+            try:
+                from openwakeword.model import Model as model_class
+            except ImportError:
+                raise RuntimeError("openWakeWord isn't installed: .venv/bin/pip install openwakeword") from None
+        models = [str(m) for m in (models or [])]
+        framework = "tflite" if models and all(m.endswith(".tflite") for m in models) else "onnx"
+        kw = {"wakeword_models": models} if models else {}
+        try:
+            self.model = model_class(inference_framework=framework, **kw)
+        except TypeError:  # older openWakeWord
+            self.model = model_class(**kw)
+        self.threshold = float(threshold)
+        self.buf = np.zeros(0, dtype=np.int16)
+        self.last = 0.0
+        self.best = 0.0  # highest score in the last feed, for tuning
+
+    def feed(self, pcm: bytes, now: float) -> bool:
+        self.buf = np.concatenate([self.buf, np.frombuffer(pcm, dtype=np.int16)])
+        hit = False
+        self.best = 0.0
+        while len(self.buf) >= self.FRAME:
+            frame, self.buf = self.buf[: self.FRAME], self.buf[self.FRAME:]
+            scores = self.model.predict(frame) or {}
+            top = max((float(v) for v in scores.values()), default=0.0)
+            self.best = max(self.best, top)
+            if top >= self.threshold:
+                hit = True
+        if hit:
+            self.last = now
+            log.debug("wake word (%.2f)", self.best)
+        return hit
+
+    def heard_recently(self, now: float, window: float = 20.0) -> bool:
+        return now - self.last < window
+
+
 def sounds_like_name(word: str, names: list[str]) -> bool:
     """Did the transcript mishear the AI's name ("how's", "mouse" for "house")?"""
     from rapidfuzz import fuzz

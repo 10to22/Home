@@ -15,6 +15,12 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | **House or home** | "house", "home", "hey house", "hey home" all wake the AI; without a name only commands run |
 | **Ignores remarks** | "house party was fun" gets no answer: only tasks and questions do (word bank first, then a quick check by the fast model). Ignored ones appear on the History page |
 | **Commands first** | "home, lock the front door" runs the command straight away, no AI; "lock the front door and turn off the lights" runs both |
+| **Name at the end** | "what time is it, house?", "lights off, home" |
+| **Stop listening** | "house, stop listening for 20 minutes": the AI stays quiet in that room; commands still work |
+| **Learns from mistakes** | "I wasn't talking to you" teaches it; ignored-then-repeated teaches it the other way |
+| **Speaker rules** | `no_name_needed: [sam]` in Sam's own rooms; `strangers_need_name` for guests and the TV |
+| **"No, I meant the bedroom"** | Re-runs the last command with the right room (or whatever slot) |
+| **Wake word engine** | Optional openWakeWord with your own "hey home" model, for across-the-room hearing |
 | **Word bank** | Each phrase also matches "switch on ...", "... on", "put the ... on" and more; "could you please ... for me" is fine |
 | **Own voice per room** | `voice: {piper_model, speed, volume}` per instance |
 | **Own personality per room** | `persona:` per instance |

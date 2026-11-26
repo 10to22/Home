@@ -175,15 +175,24 @@ class Assistant:
         return names
 
     def addressed(self, text: str, room: str | None = None) -> str | None:
-        """If `text` starts with a wake name for this room (optionally "hey"/"ok" first),
-        return the rest."""
+        """If `text` starts with a wake name for this room (optionally "hey"/"ok" first), or ends with
+        one after a clear request or question ("lights off, house"), return the rest."""
+        from .wordbank import strip_filler
+
         words = normalize(text).split()
-        while words and words[0] in ("hey", "ok", "okay", "hi"):
+        while words and words[0] in ("hey", "ok", "okay", "hi", "um", "uh", "so", "oh", "yo"):
             words = words[1:]
-        for name in sorted(self.names_for(room), key=len, reverse=True):
+        names = self.names_for(room)
+        for name in sorted(names, key=len, reverse=True):
             n = name.split()
             if words[: len(n)] == n:
                 return " ".join(words[len(n):])
+        if self.home.config.assistant.get("name_anywhere", True):
+            from .attention import name_at_end
+
+            rest = name_at_end(strip_filler(" ".join(words)).split() if words else [], names)
+            if rest is not None:
+                return rest
         return None
 
     def strip_name(self, text: str, room: str | None = None) -> str:
@@ -194,7 +203,9 @@ class Assistant:
         words = {w for n in self.names for w in n.split()}
         for inst in self.home.instances.all.values():
             words |= {w for n in inst.wake_names for w in normalize(n).split()}
-        return sorted(words | {"hey", "ok"})
+        from .attention import NOT_FOR_YOU_WORDS, QUIET_WORDS
+
+        return sorted(words | {"hey", "ok"} | set(QUIET_WORDS) | set(NOT_FOR_YOU_WORDS))
 
     # ---------- what Claude knows and can do, per instance ----------
     def profile(self, inst) -> tuple[str, list]:
@@ -683,6 +694,13 @@ class SentenceSpeaker:
         self.thread.join(timeout)
 
 
+def _similar(a: str, b: str) -> bool:
+    from rapidfuzz import fuzz
+
+    a, b = normalize(a), normalize(b)
+    return bool(a and b) and (fuzz.ratio(a, b) >= 70 or fuzz.token_set_ratio(a, b) >= 85)
+
+
 def spoken(text: str) -> str:
     """Strip anything that sounds bad read aloud."""
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # markdown links -> their text
@@ -765,6 +783,74 @@ class AssistantRouter:
         self.transcribe = transcribe
         self._follow_up: dict[str, float] = {}
         self._follow_kind: dict[str, str] = {}  # "name" (said only the name) or "reply" (answering the house)
+        self._state()
+
+    def _state(self) -> None:
+        """What the router remembers per room (attention.py): quiet rooms, the last answer, the last
+        ignored sentence. Also made on first use, for routers built without __init__."""
+        from .attention import Quiet
+
+        if not hasattr(self, "quiet"):
+            self.quiet = Quiet()
+            self._last_answer: dict[str | None, tuple[float, str]] = {}
+            self._ignored: dict[str | None, tuple[float, str]] = {}
+
+    @staticmethod
+    def _recent(store: dict, room, seconds: float) -> str | None:
+        item = store.get(room)
+        return item[1] if item and time.monotonic() - item[0] < seconds else None
+
+    def _attention(self, source: str, room: str | None, text: str, rest: str | None, reply, person,
+                   lang, confidence) -> bool | None:
+        """"I wasn't talking to you", "stop listening", and quiet rooms. True/False when handled here
+        (taken / not for the AI), None to carry on."""
+        from .attention import not_for_you, quiet_request, say_minutes
+
+        self._state()
+        home = getattr(self.assistant, "home", None)
+        if home is None:
+            return None
+        said = rest if rest is not None else normalize(text)
+        last = self._recent(self._last_answer, room, 30)
+        if last is not None and not_for_you(said):
+            from .attention import examples_for
+
+            self._last_answer.pop(room, None)
+            self._follow_up.pop(source, None)
+            try:
+                home.voice.hush()
+            except Exception as e:
+                log.debug("hush: %s", e)
+            examples_for(home).add(last, False, "told it wasn't for it")
+            home.events.live("not_for_me", room=room, heard=last)
+            h = getattr(home, "history", None)
+            if h:
+                h.add(kind="not_for_me", room=room, person=person, heard=last)
+            return True
+        if rest is not None:
+            q = quiet_request(rest)
+            if q is not None:
+                what, minutes = q
+                if what == "start":
+                    was = self.quiet.start(room)
+                    home.voice.speak("I'm listening again." if was else "I am listening.", room=room)
+                else:
+                    self.quiet.stop(room, minutes)
+                    self._follow_up.pop(source, None)
+                    home.voice.speak(f"Okay, I'll stay out of it for {say_minutes(minutes)}. "
+                                     "Commands still work.", room=room)
+                home.events.log("assistant.quiet", room=room, on=what == "stop", minutes=minutes)
+                return True
+        if self.quiet.on(room):
+            self._follow_up.pop(source, None)
+            if rest is None:
+                return False  # the matcher still runs commands
+            if self._command(text, room, reply, person, lang, confidence) or (
+                    rest and self._command(rest, room, reply, person, lang, confidence)):
+                return True
+            log.info("assistant: staying quiet in %s, not answering %r", room or "this room", rest)
+            return True
+        return None
 
     def _command(self, text: str, room, reply, person, lang, confidence) -> bool:
         """Commands always win, said with or without the name ("house fire", "home, lock the front door")."""
@@ -801,12 +887,23 @@ class AssistantRouter:
         rest = self.assistant.addressed(text, room)
         if rest is None and woke:
             words = normalize(text).split()
+            while words and words[0] in ("hey", "ok", "okay", "hi"):
+                words = words[1:]
             rest = " ".join(words[1:])  # the first word was the misheard name
         self._confidence = confidence
         self._source = source
+        handled = self._attention(source, room, text, rest, reply, person, lang, confidence)
+        if handled is not None:
+            return handled
         following_up = self._follow_up.get(source, 0) > now
+        owner = False
         if rest is None and not following_up:
-            return False
+            from .attention import no_name_needed
+
+            if not (normalize(text) and hasattr(self.assistant, "home")
+                    and no_name_needed(self.assistant, person, room)):
+                return False
+            rest, owner = normalize(text), True  # their own room: no name needed
         kind = getattr(self, "_follow_kind", {}).pop(source, "name") if following_up else "name"
         self._follow_up.pop(source, None)
         # a command, with or without the name in front, runs as a command: fast, and no AI needed
@@ -817,6 +914,8 @@ class AssistantRouter:
         if rest is not None and all(w == "unk" for w in rest.split()):
             # only the name was heard clearly; the question may be in this audio or the next utterance
             full = self.assistant.strip_name(self._transcribe(pcm, lang), room)
+            if not full.strip() and owner:
+                return False
             if not full.strip():
                 if reply:
                     reply("matched")
@@ -827,6 +926,8 @@ class AssistantRouter:
         else:
             question = self.assistant.strip_name(self._transcribe(pcm, lang), room) if pcm else (rest or text)
         if self._unclear(question, bool(pcm) or confidence is not None):
+            if owner:
+                return False  # not said to the house by name: don't ask them to repeat it
             log.info("assistant: couldn't make out %r", question)
             if reply:
                 reply("matched")
@@ -864,6 +965,8 @@ class AssistantRouter:
             log.info("assistant: that was a %s", kind)
             return True
         log.info("assistant: ignored %r (not a task or a question)", question)
+        self._state()
+        self._ignored[room] = (time.monotonic(), question)
         home.events.live("ignored", room=room, heard=question)
         h = getattr(home, "history", None)
         if h:
@@ -872,6 +975,15 @@ class AssistantRouter:
 
     def _answer(self, question: str, room: str | None, reply, person: str | None = None,
                 source: str | None = None, check: bool = False) -> None:
+        self._state()
+        before = self._recent(self._ignored, room, 30)
+        if check and before is not None and _similar(before, question):
+            # ignored a moment ago and said again: it was for the house after all
+            from .attention import examples_for
+
+            examples_for(self.assistant.home).add(before, True, "said it again")
+            self._ignored.pop(room, None)
+            check = False
         if check and not self._for_the_house(question, room, person):
             return
         if reply:
@@ -888,6 +1000,7 @@ class AssistantRouter:
                 h.add(kind="ai", room=room, person=person, question=question, answer=answer)
             if not speaker.spoke:
                 self.assistant.home.voice.speak(answer, room=room)
+            self._last_answer[room] = (time.monotonic(), question)  # for "I wasn't talking to you"
             if reply:
                 reply("done")
             cont = self.assistant.continuous

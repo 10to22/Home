@@ -40,7 +40,7 @@ class _Lang:
         # (so "don't turn on the lights" is heard as that, and blocked)
         heard_too = list(extra_words) + CONFIRM_WORDS
         if lang.startswith("en"):
-            heard_too += FILLER_WORDS + ["and", "then"]
+            heard_too += FILLER_WORDS + ["and", "then"] + CORRECTION_WORDS
         heard_too += [w for b in s.block_words for w in b.lower().split()]
         have = set(words)
         heard_too = [w for w in dict.fromkeys(heard_too) if w not in have]
@@ -184,6 +184,7 @@ class Engine:
                 if rooms and room:
                     rooms.saw(person, room, "voice")
         self._heard(source, room, text, result.get("result") or [], person)  # (not in privacy mode)
+        unknown = bool(vid is not None and result.get("spk") and text and person is None)
         ws = result.get("result") or []
         self.__dict__.setdefault("_word_conf", {})[source] = sum(w.get("conf", 1.0) for w in ws) / len(ws) if ws else 1.0
         confirm = getattr(self.dispatcher, "confirm", None)
@@ -193,7 +194,7 @@ class Engine:
                                                        person=person, lang=L.lang, woke=woke):
             return
         handle_result(result, L.matcher, self.dispatcher, self.config,
-                      room=room, reply=reply, person=person)
+                      room=room, reply=reply, person=person, unknown_voice=unknown)
 
     def _try_command(self, text: str, room: str | None, reply: Reply | None, person: str | None = None,
                      lang: str | None = None, confidence: float | None = None, source: str | None = None) -> bool:
@@ -210,7 +211,8 @@ class Engine:
         conf = 1.0 if confidence is None else float(confidence)
         if conf < self.config.settings.min_confidence:
             return False
-        matches = commands_in(text, L.matcher, self.config)
+        matches = correction(text, L.matcher, self.dispatcher, self.config, room) or \
+            commands_in(text, L.matcher, self.config)
         if not matches:
             return False
         for m in matches:
@@ -242,16 +244,32 @@ class Engine:
     def _spot(self, source: str, room: str | None, pcm: bytes) -> bool:
         """The dedicated "house" listener (only when the full vocabulary is on: with a restricted
         vocabulary the name is already one of very few words)."""
-        if not self._names or (self.config.settings.restrict_vocabulary and self.whisper is None):
+        st = self.config.settings
+        engine = str(getattr(st, "wake_engine", "vosk")).lower()
+        if engine in ("off", "none", "false"):
+            return False
+        oww = engine == "openwakeword"
+        if not oww and (not self._names or (st.restrict_vocabulary and self.whisper is None)):
             return False
         import time as _t
 
         sp = self.spotters.get(source)
         if sp is None:
-            from .hearing import WakeSpotter
+            if oww:
+                from .hearing import OpenWakeWordSpotter
 
-            sp = self.spotters[source] = WakeSpotter(self._vosk, self._lang(room).model, self._names,
-                                                     self.config.settings.sample_rate)
+                try:
+                    sp = OpenWakeWordSpotter(st.wake_models, st.wake_threshold, st.sample_rate)
+                except Exception as e:
+                    log.error("wake word engine not started, using the speech recognizer: %s", e)
+                    st.wake_engine = "vosk"
+                    return self._spot(source, room, pcm)
+                self.spotters[source] = sp
+            else:
+                from .hearing import WakeSpotter
+
+                sp = self.spotters[source] = WakeSpotter(self._vosk, self._lang(room).model, self._names,
+                                                         st.sample_rate)
         now = _t.monotonic()
         sp.feed(pcm, now)
         return sp.heard_recently(now, window=3.0)
@@ -314,7 +332,7 @@ class Engine:
         confirm = getattr(self.dispatcher, "confirm", None)
         if confirm is not None and confirm.answer(room, text):
             return
-        first = (re.findall(r"[a-zA-Z']+", text) or [""])[0]
+        first = next((w for w in re.findall(r"[a-zA-Z']+", text) if w.lower() not in ("hey", "ok", "okay", "hi")), "")
         sp = self.spotters.get(source)
         woke = bool(sp and sp.heard_recently(_t.monotonic(), window=len(clip) / 32000 + 3)
                     and sounds_like_name(first, self._names))
@@ -322,7 +340,9 @@ class Engine:
         if self.router and self.router.handle(source, room, text, b"", reply, person=person, lang=L.lang,
                                               confidence=conf, woke=woke):
             return
-        handle_result(result, L.matcher, self.dispatcher, self.config, room=room, reply=reply, person=person)
+        unknown = bool(self.__dict__.pop("_voice_heard", False) and person is None)
+        handle_result(result, L.matcher, self.dispatcher, self.config, room=room, reply=reply, person=person,
+                      unknown_voice=unknown)
 
     def _who(self, clip: bytes, L, room: str | None) -> str | None:
         """Voice ID for a whole sentence (Whisper mode)."""
@@ -333,6 +353,7 @@ class Engine:
         rec.SetSpkModel(self.spk)
         rec.AcceptWaveform(clip)
         spk = json.loads(rec.FinalResult()).get("spk")
+        self.__dict__["_voice_heard"] = bool(spk)
         if not spk:
             return None
         person, _score = vid.identify(spk, room)
@@ -546,7 +567,8 @@ def _open_local_mic(config: Config, opts: dict, put):
 
 def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config: Config,
                   room: str | None = None, reply: Reply | None = None,
-                  person: str | None = None) -> None:
+                  person: str | None = None, unknown_voice: bool = False) -> None:
+    """unknown_voice: voice ID heard a voice it doesn't know (a guest, the TV)."""
     text = result.get("text", "").strip()
     if not text or text == "[unk]":
         return
@@ -559,7 +581,16 @@ def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config
         if history:
             history.add(kind="unclear", room=room, person=person, heard=text, confidence=round(conf, 2))
         return
-    matches = commands_in(text, matcher, config)
+    matches = correction(text, matcher, dispatcher, config, room) or commands_in(text, matcher, config)
+    if matches and unknown_voice:
+        from .attention import is_safety_command, strangers_need_name
+
+        if strangers_need_name(dispatcher) and not all(is_safety_command(m.command) for m in matches):
+            log.info("a voice I don't know said %r: commands need the name (voice_id: strangers_need_name)", text)
+            if history:
+                history.add(kind="stranger", room=room, heard=text, matched=matches[0].command.name,
+                            confidence=round(conf, 2))
+            return
     if matches:
         for m in matches:
             m.room, m.confidence, m.notify, m.person = room, conf, reply, person
@@ -601,6 +632,61 @@ def commands_in(text: str, matcher: Matcher, config: Config | None = None) -> li
     return out
 
 
+# ---------- "no, I meant the bedroom" ----------
+CORRECTION_WINDOW = 25.0  # seconds after a command
+_CORRECTION = re.compile(r"^(?:(?:no|nope|nah|oops|sorry|actually|wait|wrong one|not that one)\b[ ,]*)+"
+                         r"|^(?:i meant|i mean|i said|meant)\b\s*")
+CORRECTION_WORDS = ["no", "nope", "oops", "sorry", "actually", "wait", "wrong", "one", "i", "meant", "mean",
+                    "said", "not", "that", "the", "instead"]
+
+
+def correction(text: str, matcher: Matcher, dispatcher, config: Config, room: str | None) -> list:
+    """Right after a command: "no, I meant the bedroom" runs it again with the bedroom; "actually, turn
+    off the bedroom lights" runs that. [] when it isn't a correction."""
+    import time as _t
+
+    from .matcher import Match, normalize
+
+    said = normalize(text)
+    if not _CORRECTION.match(said):
+        return []
+    last = (dispatcher.__dict__.get("_last_command") or {}).get(room)
+    if not last or _t.monotonic() - last[0] > CORRECTION_WINDOW:
+        return []
+    prev = last[1]
+    rest = said
+    while True:  # "no no, I meant ..." -> "..."
+        m = _CORRECTION.match(rest)
+        if not m or not m.group(0):
+            break
+        rest = rest[m.end():].strip()
+    rest = re.sub(r"\s+instead$", "", rest)
+    if not rest:
+        return []
+    whole = matcher.match(rest)  # a whole new command
+    if whole is not None:
+        whole.heard, whole.via = said, "correction"
+        return [whole]
+    # just the slot: "the bedroom", "not the kitchen, the bedroom"
+    found: tuple[int, str, str] | None = None  # (position, slot, value)
+    for name, old in prev.slots.items():
+        if name == "here":
+            continue
+        for spoken, value in (config.slots.get(name) or {}).items():
+            if value == old:
+                continue
+            for mm in re.finditer(rf"\b{re.escape(normalize(spoken))}\b", rest):
+                if found is None or mm.start() > found[0]:  # the last one said wins ("not X, Y")
+                    found = (mm.start(), name, value)
+    if found is None:
+        return []
+    _, name, value = found
+    slots = {**prev.slots, name: value}
+    phrase = prev.phrase
+    log.info("correction: %s with %s=%s instead of %s", prev.command.name, name, value, prev.slots.get(name))
+    return [Match(prev.command, phrase, slots, 90.0, said, via="correction")]
+
+
 def run_or_confirm(m, dispatcher: Dispatcher, config: Config) -> None:
     """Run a matched command, or for a risky one the house isn't sure of, ask first."""
     from .understanding import is_risky, is_sure
@@ -617,6 +703,9 @@ def run_or_confirm(m, dispatcher: Dispatcher, config: Config) -> None:
         history.add(kind="command", room=m.room, person=m.person, heard=m.heard, matched=m.command.name,
                     confidence=round(m.confidence, 2), score=round(m.score), via=m.via)
     if dispatcher.submit(m):
+        import time as _t
+
+        dispatcher.__dict__.setdefault("_last_command", {})[m.room] = (_t.monotonic(), m)
         log.info("MATCH %s <- %r (score %.0f%s%s)", m.command.name, m.heard, m.score,
                  f", {m.room}" if m.room else "", "" if m.via == "voice" else f", {m.via}")
 

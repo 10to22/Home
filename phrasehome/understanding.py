@@ -270,8 +270,13 @@ def intent(home, said: str, name: str = "house") -> str:
     """What `said` (the words after the house's name) is: 'task', 'question' or 'ignore'.
     Obvious ones are decided from the word bank straight away; the rest by the AI's quick model.
     If the AI can't be reached, it counts as a question (the house answers, as before)."""
+    from .attention import examples_for
     from .wordbank import quick_intent
 
+    learned = examples_for(home)
+    known = learned.lookup(said)
+    if known is not None:  # this home has told the house about this exact sentence before
+        return "question" if known else "ignore"
     quick = quick_intent(said)
     if quick:
         return quick
@@ -283,7 +288,8 @@ def intent(home, said: str, name: str = "house") -> str:
               "remember something...). Implied requests count, like \"it's freezing in here\" or \"we're out of milk\".\n"
               "- question: they want the house to tell them something, or they're talking to it and expect a reply.\n"
               f"- neither: \"{name}\" was just a word in a sentence not meant for the assistant (\"house party was "
-              "fun\", \"home sweet home\", \"house looks great today\"), thanks, a remark, or anything that needs no reply.")
+              "fun\", \"home sweet home\", \"house looks great today\"), thanks, a remark, or anything that needs no reply."
+              + learned.prompt())
     try:
         out = ai.ask(home, prompt, system=INTENT_SYSTEM, quick=True, max_tokens=512,
                      schema=ai.obj({"kind": {"type": "string", "enum": ["task", "question", "neither"]}}))

@@ -261,7 +261,7 @@ pets:
     tag: luna
 
 # ---------------------------------------------------------------- voice ID, languages, AI extras
-voice_id: { model_path: models/vosk-model-spk-0.4, threshold: 0.55 }
+voice_id: { model_path: models/vosk-model-spk-0.4, threshold: 0.55 }   # strangers_need_name: true -> guests / the TV need "house" for commands
 # languages:
 #   es: { model_path: models/vosk-model-small-es-0.42 }
 diary: { time: "21:30" }
@@ -292,6 +292,9 @@ assistant:
   names: [house, home]          # "house, ...", "hey home, ..."; without a name only commands run
   # only_requests: true         # ignore "house party was fun": answer only tasks and questions
   # continuous: question        # listen without the name only when the house asked you something back
+  # name_anywhere: true          # "lights off, house" works too
+  # learn: true                  # "I wasn't talking to you" teaches it (data/intent_examples.json)
+  # no_name_needed: [sam]        # with voice ID: Sam doesn't need the name in Sam's own rooms
   # provider: local              # free + private: a model running in Ollama (ollama.com) instead of Claude
   # local:
   #   url: http://localhost:11434   # on the Pi: a laptop/desktop on your Wi-Fi running Ollama

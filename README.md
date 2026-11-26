@@ -415,6 +415,35 @@ front door and turn off the lights" (`settings: {multi_commands: false}` to turn
 ("which door, front or back?"). `assistant: {continuous: always}` keeps the old behavior (listen after
 every answer), `continuous: false` never.
 
+**The name at the end works too.** "what time is it, house?" or "turn off the lights, home", as long as
+what comes before is clearly a request or a question ("I love this house" and "time to go home" don't
+count). `assistant: {name_anywhere: false}` for the start only.
+
+**"Stop listening."** "house, stop listening" (half an hour), "...for 20 minutes" or "...for 2 hours", or
+"give us some privacy": the AI stays out of it in that room while you have company. Commands still work.
+"house, start listening" ends it early.
+
+**It learns from mistakes.** Say "I wasn't talking to you" just after it answers, and it stops talking
+and remembers that sentence wasn't for it. If it ignores something and you say it again with the name
+within 30 seconds, it remembers that one *was* for it. These are kept in `data/intent_examples.json`,
+shown to the quick check as examples, and the same sentence again is decided without asking the AI.
+`assistant: {learn: false}` turns this off.
+
+**Who's talking.** With voice ID on, `assistant: {no_name_needed: [sam]}` lets Sam skip the name in Sam's
+own rooms (only tasks and questions still get an answer). `voice_id: {strangers_need_name: true}` stops
+voices it doesn't know (guests, the TV) from running commands without the name; "shut up", stopping the
+alarm and "fire" still work for anyone.
+
+**"No, I meant the bedroom."** Right after a command (25 seconds), "no, I meant the bedroom", "not the
+kitchen, the bedroom" or "actually, turn off the lights" runs it again the right way. The first one isn't
+undone, so turn it off yourself if it matters.
+
+**A real wake word engine (optional).** The speech recognizer notices the name well when you're close.
+For across-the-room or over music, use openWakeWord: `pip install openwakeword`, then
+`settings: {wake_engine: openwakeword, wake_models: [models/hey_home.onnx]}`. Train a "hey home" model
+with openWakeWord's training notebook (built-in ones like `hey_jarvis` work too, but then that's the name).
+`wake_threshold` (0.5) trades missed wakes against false ones.
+
 **Word bank.** Every command phrase also matches its usual other wordings: "turn on the {room} lights"
 covers "switch on the {room} lights", "turn the {room} lights on", "{room} lights on" and "put the {room}
 lights on", and polite words around a command ("could you please ... for me") are ignored. "Don't" and

@@ -55,6 +55,8 @@ function line(e){
   case 'asked':return `Heard “${esc(e.heard)}” → asked “did you say ${esc(e.matched)}?”`;
   case 'confirm':return `“Did you say ${esc(e.matched)}?” → <b>${esc(e.answer)}</b>`;
   case 'ignored':return `Heard “${esc(e.heard)}” → <span class=mute>said the name, but not a task or a question: ignored</span>${teachBox(e)}`;
+  case 'not_for_me':return `Answered “${esc(e.heard)}” → <span class=mute>told “I wasn't talking to you”: learned</span>`;
+  case 'stranger':return `A voice it doesn't know said “${esc(e.heard)}” → <span class=bad>needs the name</span> (${esc(e.matched)})${teachBox(e)}`;
   case 'ai':return `Asked: <b>${esc(e.question)}</b>${via}<br><span class=mute>Answer:</span> ${esc(e.answer)}`;
   default:return esc(JSON.stringify(e))}}
 function draw(){off.hidden=D.enabled;

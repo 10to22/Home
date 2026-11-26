@@ -165,9 +165,16 @@ TASK_VERBS = {
 }
 
 
-def quick_intent(text: str) -> str | None:
+# verbs that also go with "home" in everyday talk ("take me home", "call home"): not enough on their own
+# when the name comes at the end
+AMBIGUOUS_AT_END = {"take", "call", "bring", "get", "ring", "phone", "keep", "move", "make", "put", "help",
+                    "give", "watch", "listen", "say", "tell"}
+
+
+def quick_intent(text: str, strict: bool = False) -> str | None:
     """'task' or 'question' when the words make it obvious, else None (let the AI decide).
-    `text` is what was said after the house's name."""
+    `text` is what was said after the house's name. strict: for the name at the end of a sentence,
+    only the clearest requests and questions count."""
     raw = text.strip()
     if raw.endswith("?"):
         return "question"
@@ -179,7 +186,7 @@ def quick_intent(text: str) -> str | None:
     padded = f"{said} "
     if any(padded.startswith(p + " ") for p in POLITE_REQUESTS):
         return "task"
-    if any(padded.startswith(p + " ") for p in NEED_STARTS):
+    if not strict and any(padded.startswith(p + " ") for p in NEED_STARTS):
         return "task"
     if any(padded.startswith(p + " ") for p in ASK_STARTS):
         return "question"
@@ -191,6 +198,6 @@ def quick_intent(text: str) -> str | None:
         return "question"
     if first in ("how", "how's", "hows"):
         return "question" if (first != "how" or second in HOW_NEXT or not second) else None
-    if first in TASK_VERBS and len(words) > 1:
+    if first in TASK_VERBS and len(words) > 1 and not (strict and first in AMBIGUOUS_AT_END):
         return "task"
     return None
