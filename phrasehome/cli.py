@@ -911,6 +911,39 @@ def _cmd_speech_test(args) -> int:
     return 0
 
 
+def _cmd_family_test(args) -> int:
+    from . import family_test, speechtest
+
+    cfg = load_config(args.config)
+    if args.record:
+        if not args.person:
+            print("usage: phrasehome family-test --record --person <name> [-n 50]", file=sys.stderr)
+            return 2
+        items = speechtest.choose_phrases(cfg, args.n)
+        print(f"{args.person}: say each phrase normally. {len(items)} phrases.")
+        speechtest.record(cfg, items, args.seconds, person=args.person)
+    family_test.score_everyone(cfg)
+    return 0
+
+
+def _cmd_ai_usage(args) -> int:
+    import types
+
+    from .ai_plus import Meter
+
+    cfg = load_config(args.config)
+    s = Meter(types.SimpleNamespace(config=cfg)).summary(args.days)
+    print(f"Last {s['days']} days: {s['calls']} AI calls, ${s['cost']:.2f}"
+          f" (today: {s['today'].get('calls', 0)} calls, ${s['today'].get('cost', 0.0):.2f})")
+    for group in ("person", "room", "model"):
+        rows = sorted(s[group].items(), key=lambda kv: -kv[1]["cost"])
+        if rows:
+            print(f"\nBy {group}:")
+            for name, b in rows:
+                print(f"  {name:<20} {b['calls']:>5} calls  ${b['cost']:<8.4f} {b['avg_seconds']} s each")
+    return 0
+
+
 def _cmd_ai_check(args) -> int:
     """Is the AI linked? Sends one tiny question and explains any problem."""
     import os
@@ -1117,6 +1150,17 @@ def main(argv: list[str] | None = None) -> int:
     dm.add_argument("--big", action="store_true", help="also a bigger, more accurate speech model (128 MB)")
     dm.add_argument("--whisper", action="store_true", help="also Whisper, the most accurate (needs .[whisper])")
     dm.set_defaults(fn=_cmd_download_models)
+
+    ft = sub.add_parser("family-test", help="how well the house hears each person (record per person, then score)")
+    ft.add_argument("--record", action="store_true", help="record this person saying a set of commands first")
+    ft.add_argument("--person", help="whose voice (with --record)")
+    ft.add_argument("-n", type=int, default=50, help="how many phrases")
+    ft.add_argument("--seconds", type=float, default=3.5)
+    ft.set_defaults(fn=_cmd_family_test)
+
+    au = sub.add_parser("ai-usage", help="what the AI has cost and how fast it's been, per person, room and model")
+    au.add_argument("--days", type=int, default=31)
+    au.set_defaults(fn=_cmd_ai_usage)
 
     st = sub.add_parser("speech-test", help="measure how well the house hears you (record, then score)")
     st.add_argument("--record", action="store_true", help="say a set of phrases into the microphone first")

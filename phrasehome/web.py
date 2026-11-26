@@ -542,6 +542,8 @@ class _Handler(BaseHTTPRequestHandler):
             from .dashboard_alarms import ALARMS_PAGE
 
             return self._send(200, ALARMS_PAGE, "text/html; charset=utf-8")
+        if u.path == "/ai":
+            return self._send(200, AI_PAGE, "text/html; charset=utf-8")
         if u.path == "/history":
             from .dashboard_history import HISTORY_PAGE
 
@@ -558,6 +560,11 @@ class _Handler(BaseHTTPRequestHandler):
             return self._live()
         if u.path == "/api/alarms":
             return self._send(200, self.web.alarms_get())
+        if u.path == "/api/ai/usage":
+            from .ai_plus import Meter
+
+            days = int((q.get("days") or ["31"])[0])
+            return self._send(200, Meter(self.web.home).summary(days))
         if u.path == "/api/history":
             return self._send(200, self.web.history_get(q.get("q", [""])[0]))
         if u.path == "/api/voice/tune":
@@ -664,3 +671,33 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 from .dashboard_html import DASHBOARD  # noqa: E402
+
+
+AI_PAGE = r"""<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI</title>
+<style>
+:root{--bg:#f4f4f1;--card:#fff;--ink:#1d1d1b;--mute:#6b6b66;--line:#e2e2dc;--acc:#2a5db0}
+@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1f1f1d;--ink:#ecebe6;--mute:#9b9a94;--line:#33332f;--acc:#7aa5ee}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:16px 20px}h1{font-size:20px;margin:0}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:0 0 10px}a{color:var(--acc)}
+main{display:grid;gap:14px;padding:0 20px 24px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.big{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums}.mute{color:var(--mute);font-size:13px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+.row:last-child{border:0}
+</style>
+<header><h1>AI usage</h1><a href="/">Dashboard</a></header>
+<main id="m"></main>
+<script>
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money=x=>'$'+(x||0).toFixed(x<1?4:2);
+function group(title,g){const rows=Object.entries(g||{}).sort((a,b)=>b[1].cost-a[1].cost||b[1].calls-a[1].calls);
+ return `<section class="card"><h2>${title}</h2>`+(rows.map(([n,b])=>`<div class="row"><span>${esc(n)}</span><span>${b.calls} calls · ${money(b.cost)} · ${b.avg_seconds} s</span></div>`).join('')||'<div class=mute>Nothing yet.</div>')+'</section>'}
+async function load(){const r=await fetch('/api/ai/usage');if(r.status==401){location.href='/';return}const s=await r.json();
+ m.innerHTML=`<section class="card"><h2>Last ${s.days} days</h2><div class="big">${money(s.cost)}</div><div class=mute>${s.calls} AI calls · today ${s.today.calls||0} calls, ${money(s.today.cost)}. A local AI costs nothing.</div></section>`
+  +group('By person',s.person)+group('By room',s.room)+group('By model',s.model)+group('By day',s.day)}
+load();setInterval(load,15000);
+</script>
+"""
