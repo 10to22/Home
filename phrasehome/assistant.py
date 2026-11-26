@@ -1,4 +1,4 @@
-"""The household AI: say its name ("house, ...") and ask anything.
+"""The household AI: say its name ("house, ..." / "home, ..." / "hey home, ...") and ask anything.
 
     "house, what's the weather tomorrow?"          -> answers (web search)
     "house, who came to the door today?"           -> reads the event log
@@ -7,6 +7,10 @@
 
 It is the same set of controls you already configured (commands, routines, doors), handed to
 Claude as tools. It can lock doors but can't unlock them unless you set allow_unlock: true.
+
+Only real requests and questions get an answer: "house party was fun" or "home sweet home" are
+ignored (the word bank decides the obvious ones, the AI's quick model the rest). Commands like "lock
+the front door" work with or without the name, and run straight away without asking the AI.
 
 Privacy: audio never leaves the house. Only what you say after the wake name (as text), plus a
 short summary of the house's state, is sent to Anthropic's API.
@@ -84,7 +88,7 @@ class Assistant:
     def __init__(self, home, client=None) -> None:
         self.home = home
         cfg = home.config.assistant
-        self.names = [normalize(n) for n in cfg.get("names", ["house"])]
+        self.names = [normalize(n) for n in cfg.get("names", ["house", "home"])]
         self.smart_model = cfg.get("model", "claude-opus-5-5")
         self.fast_model = cfg.get("fast_model", "claude-haiku-5-5")  # Claude's quick one (mode: fast)
         self.mode = "fast" if str(cfg.get("mode", "smart")).lower() == "fast" else "smart"
@@ -104,7 +108,13 @@ class Assistant:
         self.persona = PERSONAS.get(cfg.get("persona", "mean"), cfg.get("persona") or PERSONAS["mean"])
         self.memory_seconds = float(cfg.get("memory_minutes", 5)) * 60
         self.follow_up_seconds = float(cfg.get("follow_up_seconds", 8))
-        self.continuous = bool(cfg.get("continuous", True))  # listen for a follow-up after answering
+        # after answering, listen for a reply without the name: "question" (only when the house asked
+        # something back, the default), "always" (after every answer) or false (never)
+        cont = cfg.get("continuous", "question")
+        self.continuous = (False if cont is False or str(cont).lower() in ("false", "off", "no", "never")
+                           else "always" if str(cont).lower() == "always" else "question")
+        # ignore things said with the house's name that are neither a task nor a question
+        self.only_requests = bool(cfg.get("only_requests", True))
         self.min_confidence = float(cfg.get("min_confidence", 0.55))  # under this: "couldn't hear you"
         self.location = cfg.get("location", "")
         if client is None:
@@ -747,10 +757,33 @@ class AssistantRouter:
     """Sits between speech recognition and the command matcher. Decides whether an utterance
     is for the AI, and runs the AI on a background thread so listening never stops."""
 
+    # set by the listener: runs `text` as a voice command if it is one, returns True if it ran
+    try_command: Callable[..., bool] | None = None
+
     def __init__(self, assistant: Assistant, transcribe: Callable[[bytes], str]) -> None:
         self.assistant = assistant
         self.transcribe = transcribe
         self._follow_up: dict[str, float] = {}
+        self._follow_kind: dict[str, str] = {}  # "name" (said only the name) or "reply" (answering the house)
+
+    def _command(self, text: str, room, reply, person, lang, confidence) -> bool:
+        """Commands always win, said with or without the name ("house fire", "home, lock the front door")."""
+        run = self.try_command
+        if run is None or not text or not text.strip():
+            return False
+        try:
+            return bool(run(text, room, reply, person=person, lang=lang, confidence=confidence,
+                            source=getattr(self, "_source", None)))
+        except Exception as e:
+            log.error("couldn't run %r as a command: %s", text, e)
+            return False
+
+    def _listen_for(self, source: str, kind: str) -> None:
+        """The next thing heard from `source` is for the house, without the name."""
+        self._follow_up[source] = time.monotonic() + self.assistant.follow_up_seconds
+        if not hasattr(self, "_follow_kind"):
+            self._follow_kind = {}
+        self._follow_kind[source] = kind
 
     def _transcribe(self, pcm: bytes, lang: str | None) -> str:
         try:
@@ -770,17 +803,24 @@ class AssistantRouter:
             words = normalize(text).split()
             rest = " ".join(words[1:])  # the first word was the misheard name
         self._confidence = confidence
+        self._source = source
         following_up = self._follow_up.get(source, 0) > now
         if rest is None and not following_up:
             return False
+        kind = getattr(self, "_follow_kind", {}).pop(source, "name") if following_up else "name"
         self._follow_up.pop(source, None)
-        if reply:
-            reply("matched")
+        # a command, with or without the name in front, runs as a command: fast, and no AI needed
+        if self._command(text, room, reply, person, lang, confidence):
+            return True
+        if rest and self._command(rest, room, reply, person, lang, confidence):
+            return True
         if rest is not None and all(w == "unk" for w in rest.split()):
             # only the name was heard clearly; the question may be in this audio or the next utterance
             full = self.assistant.strip_name(self._transcribe(pcm, lang), room)
             if not full.strip():
-                self._follow_up[source] = now + self.assistant.follow_up_seconds
+                if reply:
+                    reply("matched")
+                self._listen_for(source, "name")
                 self.assistant.home.voice.speak("listening", room=room)
                 return True
             question = full
@@ -788,10 +828,18 @@ class AssistantRouter:
             question = self.assistant.strip_name(self._transcribe(pcm, lang), room) if pcm else (rest or text)
         if self._unclear(question, bool(pcm) or confidence is not None):
             log.info("assistant: couldn't make out %r", question)
+            if reply:
+                reply("matched")
             self.assistant.home.voice.speak("didnt_catch", room=room)
-            self._follow_up[source] = time.monotonic() + self.assistant.follow_up_seconds  # just say it again
+            self._listen_for(source, kind)  # just say it again
             return True
-        threading.Thread(target=self._answer, args=(question, room, reply, person, source),
+        if pcm and self._command(question, room, reply, person, lang,
+                                 getattr(self.transcribe, "last_confidence", None)):
+            return True  # written down in full, it was a command after all
+        # answering the house's own question ("which door?") needs no check; anything else must be a
+        # task or a question, or it's ignored ("house party was fun")
+        check = kind != "reply" and getattr(self.assistant, "only_requests", True)
+        threading.Thread(target=self._answer, args=(question, room, reply, person, source, check),
                          daemon=True).start()
         return True
 
@@ -805,8 +853,29 @@ class AssistantRouter:
             conf = getattr(self.transcribe, "last_confidence", None)
         return conf is not None and conf < self.assistant.min_confidence
 
+    def _for_the_house(self, question: str, room: str | None, person: str | None) -> bool:
+        """A task or a question? Otherwise it's ignored, quietly (and shown on the History page)."""
+        from .understanding import intent
+
+        home = self.assistant.home
+        names = self.assistant.names_for(room) if hasattr(self.assistant, "names_for") else ["house"]
+        kind = intent(home, question, names[0] if names else "house")
+        if kind != "ignore":
+            log.info("assistant: that was a %s", kind)
+            return True
+        log.info("assistant: ignored %r (not a task or a question)", question)
+        home.events.live("ignored", room=room, heard=question)
+        h = getattr(home, "history", None)
+        if h:
+            h.add(kind="ignored", room=room, person=person, heard=question)
+        return False
+
     def _answer(self, question: str, room: str | None, reply, person: str | None = None,
-                source: str | None = None) -> None:
+                source: str | None = None, check: bool = False) -> None:
+        if check and not self._for_the_house(question, room, person):
+            return
+        if reply:
+            reply("matched")
         log.info("assistant%s <- %r", f" [{room}]" if room else "", question)
         self.assistant.home.events.live("thinking", room=room, question=question)
         try:
@@ -821,9 +890,10 @@ class AssistantRouter:
                 self.assistant.home.voice.speak(answer, room=room)
             if reply:
                 reply("done")
-            if self.assistant.continuous and source:
-                # continuous conversation: a follow-up doesn't need the wake name
-                self._follow_up[source] = time.monotonic() + self.assistant.follow_up_seconds
+            cont = self.assistant.continuous
+            if source and (cont == "always" or (cont and answer.rstrip().endswith("?"))):
+                # the house asked something back ("which door?"): the reply doesn't need the name
+                self._listen_for(source, "reply")
         except Exception as e:
             log.error("assistant failed: %s", e)
             self.assistant.home.voice.speak("assistant_error", room=room)

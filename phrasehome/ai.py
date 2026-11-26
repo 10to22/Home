@@ -41,15 +41,23 @@ def image_block(jpeg: bytes) -> dict:
 
 
 def ask(home, prompt: str, images: list[bytes] | None = None, system: str = "",
-        schema: dict | None = None, effort: str = "low") -> Any:
-    """Returns text, or a dict when `schema` (a JSON schema) is given."""
+        schema: dict | None = None, effort: str = "low", quick: bool = False, max_tokens: int = 16000) -> Any:
+    """Returns text, or a dict when `schema` (a JSON schema) is given.
+    quick: use the fast model (Claude's Haiku) whatever the smart/fast switch says, for small
+    decisions that hold up listening."""
     content: list[dict] = [image_block(j) for j in images or []]
     content.append({"type": "text", "text": prompt})
     output_config: dict[str, Any] = {"effort": effort}
     if schema:
         output_config["format"] = {"type": "json_schema", "schema": schema}
+    model = _model(home)
+    a = home.assistant
+    if quick and a is not None and not getattr(a, "local", False):
+        model = a.fast_model
+    elif quick and a is None and not str(home.config.assistant.get("provider", "claude")).lower() in ("local", "ollama"):
+        model = home.config.assistant.get("fast_model", "claude-haiku-5-5")
     kwargs: dict[str, Any] = dict(
-        model=_model(home), max_tokens=16000, messages=[{"role": "user", "content": content}],
+        model=model, max_tokens=max_tokens, messages=[{"role": "user", "content": content}],
         output_config=output_config)
     from .assistant import fallback_kw
 

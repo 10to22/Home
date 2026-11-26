@@ -30,11 +30,21 @@ class _Lang:
         self.lang = lang
         self.model = model
         from .understanding import CONFIRM_WORDS, candidates_with_aliases
+        from .wordbank import FILLER_WORDS
 
         self.candidates = candidates_with_aliases(config, lang)  # + sentences taught on the History page
         self.matcher = Matcher(self.candidates, s.match_mode, s.match_threshold, s.block_words)
         words = vocabulary(self.candidates)
-        words = words[:-1] + extra_words + CONFIRM_WORDS + words[-1:]  # wake names, yes/no
+        # wake names, yes/no, and words that change a command's meaning: "please" and "can you" (so
+        # they're heard, then ignored), "and"/"then" (two commands at once), and "not"/"don't"
+        # (so "don't turn on the lights" is heard as that, and blocked)
+        heard_too = list(extra_words) + CONFIRM_WORDS
+        if lang.startswith("en"):
+            heard_too += FILLER_WORDS + ["and", "then"]
+        heard_too += [w for b in s.block_words for w in b.lower().split()]
+        have = set(words)
+        heard_too = [w for w in dict.fromkeys(heard_too) if w not in have]
+        words = words[:-1] + heard_too + words[-1:]
         self.grammar = json.dumps(words) if s.restrict_vocabulary else None
 
 
@@ -66,6 +76,9 @@ class Engine:
         self.spotters: dict[str, Any] = {}
         self.free: dict[str, Any] = {}  # full-vocabulary recognizers for live words (whisper mode)
         self._live: dict[str, tuple[str, float]] = {}
+        self._word_conf: dict[str, float] = {}  # how sure the recognizer was of the last sentence, per source
+        if router is not None:
+            router.try_command = self._try_command  # "house, lock the front door" runs as a command
         self.whisper = None
         if str(st.recognizer).lower() == "whisper":
             try:
@@ -171,6 +184,8 @@ class Engine:
                 if rooms and room:
                     rooms.saw(person, room, "voice")
         self._heard(source, room, text, result.get("result") or [], person)  # (not in privacy mode)
+        ws = result.get("result") or []
+        self.__dict__.setdefault("_word_conf", {})[source] = sum(w.get("conf", 1.0) for w in ws) / len(ws) if ws else 1.0
         confirm = getattr(self.dispatcher, "confirm", None)
         if confirm is not None and text and confirm.answer(room, text):
             return  # that was the yes/no to "did you say ...?"
@@ -179,6 +194,29 @@ class Engine:
             return
         handle_result(result, L.matcher, self.dispatcher, self.config,
                       room=room, reply=reply, person=person)
+
+    def _try_command(self, text: str, room: str | None, reply: Reply | None, person: str | None = None,
+                     lang: str | None = None, confidence: float | None = None, source: str | None = None) -> bool:
+        """Run `text` as a voice command if it is one (for the AI router: what was said after the
+        house's name, or the whole sentence). True if it ran or was asked about."""
+        from .matcher import normalize
+
+        words = normalize(text).split()
+        if not words or "unk" in words:  # not heard clearly enough to be sure: let the AI write it down
+            return False
+        L = self.langs.get(lang) or self._lang(room)
+        if confidence is None:
+            confidence = getattr(self, "_word_conf", {}).get(source or "")
+        conf = 1.0 if confidence is None else float(confidence)
+        if conf < self.config.settings.min_confidence:
+            return False
+        matches = commands_in(text, L.matcher, self.config)
+        if not matches:
+            return False
+        for m in matches:
+            m.room, m.notify, m.person, m.confidence = room, reply, person, conf
+            run_or_confirm(m, self.dispatcher, self.config)
+        return True
 
     # ---------- live words, the AI's name, Whisper ----------
     def _partial(self, source: str, room: str | None, rec) -> None:
@@ -280,6 +318,7 @@ class Engine:
         sp = self.spotters.get(source)
         woke = bool(sp and sp.heard_recently(_t.monotonic(), window=len(clip) / 32000 + 3)
                     and sounds_like_name(first, self._names))
+        self.__dict__.setdefault("_word_conf", {})[source] = conf if conf is not None else 1.0
         if self.router and self.router.handle(source, room, text, b"", reply, person=person, lang=L.lang,
                                               confidence=conf, woke=woke):
             return
@@ -520,10 +559,11 @@ def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config
         if history:
             history.add(kind="unclear", room=room, person=person, heard=text, confidence=round(conf, 2))
         return
-    m = matcher.match(text)
-    if m:
-        m.room, m.confidence, m.notify, m.person = room, conf, reply, person
-        run_or_confirm(m, dispatcher, config)
+    matches = commands_in(text, matcher, config)
+    if matches:
+        for m in matches:
+            m.room, m.confidence, m.notify, m.person = room, conf, reply, person
+            run_or_confirm(m, dispatcher, config)
         return
     if history:
         history.add(kind="none", room=room, person=person, heard=text, confidence=round(conf, 2))
@@ -533,6 +573,32 @@ def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config
 
         threading.Thread(target=_did_you_mean, args=(dispatcher, config, text, near, room, reply, person, conf),
                          daemon=True).start()
+
+
+_JOINERS = re.compile(r"\s+(?:and then|and also|and|then|also|plus)\s+")
+
+
+def commands_in(text: str, matcher: Matcher, config: Config | None = None) -> list:
+    """The command in `text`, or several: "lock the front door and turn off the lights" is two.
+    Every part has to be a command (different ones), otherwise it's treated as one sentence."""
+    m = matcher.match(text)
+    if m:
+        return [m]
+    if config is not None and not getattr(config.settings, "multi_commands", True):
+        return []
+    from .matcher import normalize
+
+    parts = [p for p in _JOINERS.split(normalize(text)) if p.strip()]
+    if len(parts) < 2 or len(parts) > 4:
+        return []
+    out = []
+    for part in parts:
+        pm = matcher.match(part)
+        if pm is None or any(x.command.name == pm.command.name for x in out):
+            return []
+        pm.heard = normalize(text)
+        out.append(pm)
+    return out
 
 
 def run_or_confirm(m, dispatcher: Dispatcher, config: Config) -> None:

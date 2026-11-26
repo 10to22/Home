@@ -397,6 +397,29 @@ Claude (`claude-opus-5-5`), along with your commands, routines and doors as tool
 house's event log. It can search the web, and its reply is spoken. Commands without the name still run
 instantly and offline. The AI is only for things you ask it.
 
+**Its name.** "house", "home", "hey house" and "hey home" all work (`assistant: {names: [house, home]}`;
+if your config sets `names:`, add `home` there). Without the name, only commands run.
+
+**Only real requests get an answer.** Things said with the name that aren't a task or a question
+("house party was fun", "home sweet home", "the house looks great") are ignored quietly and show up on
+the History page as *ignored*, where you can teach them to mean a command. Obvious ones are decided
+straight away from the word bank (`phrasehome/wordbank.py`); unclear ones by a quick yes/no from the
+fast model (`fast_model`, Claude Haiku), so it costs a fraction of a cent. If the AI can't be reached, it
+answers as before. `assistant: {only_requests: false}` turns this off.
+
+**Commands always win.** "lock the front door" runs with or without the name, and "home, turn on the
+kitchen lights" goes straight to the command without asking the AI. Two at once work too: "lock the
+front door and turn off the lights" (`settings: {multi_commands: false}` to turn off).
+
+**Follow-ups.** After an answer the house only listens without its name if it asked you something back
+("which door, front or back?"). `assistant: {continuous: always}` keeps the old behavior (listen after
+every answer), `continuous: false` never.
+
+**Word bank.** Every command phrase also matches its usual other wordings: "turn on the {room} lights"
+covers "switch on the {room} lights", "turn the {room} lights on", "{room} lights on" and "put the {room}
+lights on", and polite words around a command ("could you please ... for me") are ignored. "Don't" and
+"not" still block it. English only; `settings: {phrase_variants: false}` turns the extra wordings off.
+
 1. Get an API key at console.anthropic.com and add it to `.env`:
 
    ```bash
@@ -424,7 +447,7 @@ For better understanding of free speech, set `transcriber: whisper` after `pip i
 |---|---|
 | It fires when you didn't mean it | Raise `match_threshold` (e.g. 90) or `min_confidence`, keep `match_mode: utterance`, use longer phrases |
 | It misses you | Set `log_heard: true` to see what it hears. Lower `match_threshold`, add phrase variants, or use a better mic |
-| You want commands inside sentences ("ok so lights on please") | `match_mode: contains` (more false triggers) |
+| You want commands inside sentences ("I think we should turn on the lights") | `match_mode: contains` (more false triggers). Polite words ("ok so lights on please") already work in `utterance` mode |
 | Wrong microphone | `phrasehome devices`, then set `device:` to the index |
 | Accuracy is bad with unusual words | Keep `restrict_vocabulary: true`, or try a bigger model from <https://alphacephei.com/vosk/models> (set `model_path`) |
 | Google replies but nothing happens | Make sure `say` works when spoken to a Google speaker. In the Google Home app, make sure **Personal results** is on for your account |

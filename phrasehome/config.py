@@ -44,6 +44,11 @@ class Settings:
     vad_silence: float = 0.6  # seconds of quiet that end a sentence (whisper)
     confirm_commands: list[str] = field(default_factory=list)  # also ask "did you say ...?" for these
     did_you_mean: bool = True  # near misses: let the AI pick the command you most likely meant
+    # the word bank (wordbank.py): each phrase also matches its usual other wordings ("switch on the
+    # lights", "lights on", "put the lights on"), English only
+    phrase_variants: bool = True
+    # "lock the front door and turn off the lights": run both (every part must be a command)
+    multi_commands: bool = True
 
 
 # Built-in backends, picked automatically from the action's keys:

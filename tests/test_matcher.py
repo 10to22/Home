@@ -60,7 +60,9 @@ def test_negation_blocked(cfg):
 def test_contains_mode(cfg):
     m = make(cfg, "contains")
     assert m.match("ok so turn on the lights please").command.name == "lights_on"
-    assert make(cfg, "utterance").match("ok so turn on the lights please") is None
+    # utterance mode: polite filler around a command is fine, other words in the sentence are not
+    assert make(cfg, "utterance").match("ok so turn on the lights please").command.name == "lights_on"
+    assert make(cfg, "utterance").match("i think we should turn on the lights later") is None
 
 
 def test_prefers_more_specific(cfg):

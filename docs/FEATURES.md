@@ -12,6 +12,10 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | **Private personal rooms** | In Sam's room, the AI only sees Sam's things (plus shared lists). Asking about someone else's gets a polite no |
 | **Shared household lists** | `shared_lists: [shopping, ...]`: anyone adds from any room, and everyone sees one list |
 | **Own wake word per room** | `wake_names: [jarvis]` works in that person's room; "house" works everywhere |
+| **House or home** | "house", "home", "hey house", "hey home" all wake the AI; without a name only commands run |
+| **Ignores remarks** | "house party was fun" gets no answer: only tasks and questions do (word bank first, then a quick check by the fast model). Ignored ones appear on the History page |
+| **Commands first** | "home, lock the front door" runs the command straight away, no AI; "lock the front door and turn off the lights" runs both |
+| **Word bank** | Each phrase also matches "switch on ...", "... on", "put the ... on" and more; "could you please ... for me" is fine |
 | **Own voice per room** | `voice: {piper_model, speed, volume}` per instance |
 | **Own personality per room** | `persona:` per instance |
 | **Kid mode** | `kid_mode: true`: age-appropriate answers, no doors, routines or house modes |

@@ -49,23 +49,37 @@ class Match:
 
 
 def expand(commands: list[Command], slots: dict[str, dict[str, str]],
-           lang: str | None = None) -> list[Candidate]:
-    """Expand every phrase template ("turn on the {room} lights") into concrete phrases."""
+           lang: str | None = None, variants: bool = False) -> list[Candidate]:
+    """Expand every phrase template ("turn on the {room} lights") into concrete phrases.
+    variants: also the usual other ways of saying each phrase (wordbank.py), English only. A variant
+    never replaces a phrase written in the config, for this command or any other."""
+    out = _expand(((cmd, t) for cmd in commands for t in cmd.phrases_for(lang)), slots)
+    if not variants:
+        return out
+    from .wordbank import variants as other_ways
+
+    written = {c.text for c in out}
+    extra = [c for c in _expand(((cmd, v) for cmd in commands for t in cmd.phrases_for(lang)
+                                 for v in other_ways(t)), slots) if c.text not in written]
+    seen: set[str] = set()
+    return out + [c for c in extra if not (c.text in seen or seen.add(c.text))]
+
+
+def _expand(templates, slots: dict[str, dict[str, str]]) -> list[Candidate]:
     out: list[Candidate] = []
-    for cmd in commands:
-        for template in cmd.phrases_for(lang):
-            names = _SLOT_RE.findall(template)
-            for n in names:
-                if n not in slots:
-                    raise ValueError(f"phrase '{template}' uses undefined slot '{{{n}}}'")
-            choices = [list(slots[n].items()) for n in names]
-            for combo in itertools.product(*choices):
-                text = template
-                values = {}
-                for n, (spoken, value) in zip(names, combo):
-                    text = text.replace("{" + n + "}", spoken, 1)
-                    values[n] = value
-                out.append(Candidate(normalize(text), cmd, values))
+    for cmd, template in templates:
+        names = _SLOT_RE.findall(template)
+        for n in names:
+            if n not in slots:
+                raise ValueError(f"phrase '{template}' uses undefined slot '{{{n}}}'")
+        choices = [list(slots[n].items()) for n in names]
+        for combo in itertools.product(*choices):
+            text = template
+            values = {}
+            for n, (spoken, value) in zip(names, combo):
+                text = text.replace("{" + n + "}", spoken, 1)
+                values[n] = value
+            out.append(Candidate(normalize(text), cmd, values))
     return out
 
 
@@ -109,13 +123,18 @@ class Matcher:
         return best
 
     def match(self, text: str) -> Match | None:
+        from .wordbank import strip_filler
+
         heard = normalize(text)
         words = [w for w in heard.split() if not (self.mode == "contains" and w == "unk")]
         if not words:
             return None
+        # "could you please lock the doors for me" is scored as "lock the doors" too
+        bare = strip_filler(" ".join(words)).split()
+        tries = [words] if bare == words else [words, bare]
         best: tuple[float, int, Candidate] | None = None
         for cand in self.candidates:
-            score = self._score(words, cand)
+            score = max(self._score(w, cand) for w in tries)
             if score < self.threshold:
                 continue
             key = (score, len(cand.text), cand)

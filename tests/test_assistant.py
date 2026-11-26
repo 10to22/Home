@@ -151,10 +151,31 @@ def test_router_name_then_question(home):
             t.join(2)
     assert answered == [("what's the weather", "kitchen")]
     assert home.spoken[-1] == "Sunny."
-    # continuous conversation: right after an answer, a follow-up needs no wake name
-    assert "mic1" in router._follow_up
-    router._follow_up.clear()                                          # ...until the window closes
+    # a plain answer doesn't keep listening: the next thing needs the name again
+    assert "mic1" not in router._follow_up
     assert not router.handle("mic1", "kitchen", "lights on", b"", None)  # normal command
+
+
+def _run_answers(router):
+    for t in list(__import__("threading").enumerate()):
+        if t.name != "MainThread" and t.daemon and t.is_alive() and "_answer" in str(t._target):
+            t.join(2)
+
+
+def test_router_listens_for_a_reply_only_after_a_question(home):
+    answered = []
+    ai = Assistant(home, client=FakeClient())
+    replies = iter(["Which door, front or back?", "Locked."])
+    ai.ask = lambda q, room=None, person=None, on_text=None: answered.append(q) or next(replies)
+    router = AssistantRouter(ai, transcribe=lambda pcm: "")
+    assert router.handle("mic1", "kitchen", "house lock a door", b"", None)
+    _run_answers(router)
+    assert "mic1" in router._follow_up  # the house asked something back
+    # the reply needs no name, and isn't checked for being a task or question ("the front one")
+    assert router.handle("mic1", "kitchen", "the front one", b"", None)
+    _run_answers(router)
+    assert answered == ["lock a door", "the front one"]
+    assert "mic1" not in router._follow_up
 
 
 def test_spoken_cleanup():

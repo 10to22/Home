@@ -289,7 +289,9 @@ voice:
 
 # ---------------------------------------------------------------- AI assistant
 assistant:
-  names: [house]
+  names: [house, home]          # "house, ...", "hey home, ..."; without a name only commands run
+  # only_requests: true         # ignore "house party was fun": answer only tasks and questions
+  # continuous: question        # listen without the name only when the house asked you something back
   # provider: local              # free + private: a model running in Ollama (ollama.com) instead of Claude
   # local:
   #   url: http://localhost:11434   # on the Pi: a laptop/desktop on your Wi-Fi running Ollama

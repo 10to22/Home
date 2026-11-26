@@ -134,7 +134,10 @@ class Aliases:
 def candidates_with_aliases(config, lang: str | None = None) -> list:
     from .matcher import expand
 
-    return expand(config.commands, config.slots, lang) + Aliases(config).candidates()
+    s = config.settings
+    english = str(lang or s.language or "en").lower().startswith("en")
+    return (expand(config.commands, config.slots, lang, variants=bool(getattr(s, "phrase_variants", True))
+                   and english) + Aliases(config).candidates())
 
 
 # ---------- risky commands ----------
@@ -255,3 +258,37 @@ def did_you_mean(home, heard: str, near: list) -> Any:
         return best[1] if best[0] >= 78 else None
     pick = (out or {}).get("command")
     return options.get(pick) if pick and pick != "none" else None
+
+
+# ---------- was that for the house? ----------
+INTENT_SYSTEM = ("You decide whether something said to a home voice assistant needs it to act or answer. "
+                 "People often say the assistant's name in normal conversation without meaning it. Be strict: "
+                 "only a real request or question counts.")
+
+
+def intent(home, said: str, name: str = "house") -> str:
+    """What `said` (the words after the house's name) is: 'task', 'question' or 'ignore'.
+    Obvious ones are decided from the word bank straight away; the rest by the AI's quick model.
+    If the AI can't be reached, it counts as a question (the house answers, as before)."""
+    from .wordbank import quick_intent
+
+    quick = quick_intent(said)
+    if quick:
+        return quick
+    from . import ai
+
+    prompt = (f"Speech recognition heard someone say the assistant's name, \"{name}\", followed by:\n\"{said}\"\n"
+              "It may be slightly misheard. What did they mean?\n"
+              "- task: they want the house to do something (lights, doors, music, a timer, a reminder, a list, "
+              "remember something...). Implied requests count, like \"it's freezing in here\" or \"we're out of milk\".\n"
+              "- question: they want the house to tell them something, or they're talking to it and expect a reply.\n"
+              f"- neither: \"{name}\" was just a word in a sentence not meant for the assistant (\"house party was "
+              "fun\", \"home sweet home\", \"house looks great today\"), thanks, a remark, or anything that needs no reply.")
+    try:
+        out = ai.ask(home, prompt, system=INTENT_SYSTEM, quick=True, max_tokens=512,
+                     schema=ai.obj({"kind": {"type": "string", "enum": ["task", "question", "neither"]}}))
+    except Exception as e:
+        log.info("couldn't check whether that was for the house (%s); answering it", e)
+        return "question"
+    kind = (out or {}).get("kind")
+    return kind if kind in ("task", "question") else "ignore"
