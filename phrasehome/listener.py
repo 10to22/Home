@@ -649,6 +649,8 @@ def find_commands(text: str, matcher: Matcher, dispatcher, config: Config, room:
     fix = correction(text, matcher, dispatcher, config, room)
     if fix:
         return fix, [0.0] * len(fix), None
+    if _UNDO.match(text.lower().strip(" .!")):
+        return undo_last(dispatcher, config, room)
     teaching = re.match(r"^(?:when|whenever|if) (?:i|we) say ", text.lower())
     try:
         from .understanding_plus import understand
@@ -702,6 +704,28 @@ def commands_in(text: str, matcher: Matcher, config: Config | None = None) -> li
         pm.heard = normalize(text)
         out.append(pm)
     return out
+
+
+# ---------- "undo that" ----------
+_UNDO = re.compile(r"^(?:undo|undo that|undo it|take that back|reverse that|put it back|change it back|"
+                   r"undo the last (?:thing|command))(?: please)?$")
+
+
+def undo_last(dispatcher, config: Config, room: str | None):
+    """The opposite of the last command in this room (lights on -> off). Locks, the alarm, modes and
+    routines are never undone by voice."""
+    import time as _t
+
+    from .matcher import Match
+
+    last = (dispatcher.__dict__.get("_last_command") or {}).get(room)
+    if not last or _t.monotonic() - last[0] > 300:
+        return [], [], "There's nothing I can undo."
+    prev = last[1]
+    opp = _opposite(prev.command, config)
+    if opp is None:
+        return [], [], "I can't undo that one by voice."
+    return [Match(opp, opp.phrases[0], dict(prev.slots), 90.0, "undo", via="undo")], [0.0], None
 
 
 # ---------- "no, I meant the bedroom" ----------

@@ -14,6 +14,9 @@
    is drier and milder, `style: plain` is polite. Safety announcements always stay plain.
    `effect: synthetic` makes any engine sound like a machine (needs ffmpeg). Your own
    `phrases:` still win over the style.
+5. How it sounds: `accent: en_AU` (an Australian voice where the engine has one) and `emotion: true`
+   (a mood per line: cheeky, annoyed, calm...). See voice_style.py, tts_neural.py (melo,
+   chatterbox, http engines) and the dashboard's /voice page.
 
 Speech plays on the hub's own speaker and, optionally, through the ESP32 speaker group.
 """
@@ -25,6 +28,7 @@ import logging
 import os
 import uuid
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -494,6 +498,7 @@ def clean_name(x: Any) -> Any:
 
 
 _MAC_VOICES: list[str] | None = None
+_MAC_LOCALES: dict[str, str] = {}
 _WARNED: set[str] = set()
 
 
@@ -511,8 +516,15 @@ def mac_voices() -> list[str]:
             parts = left.rsplit(None, 1)
             if len(parts) == 2:
                 names.append(parts[0].strip())
+                _MAC_LOCALES[parts[0].strip()] = parts[1]
         _MAC_VOICES = names
     return _MAC_VOICES
+
+
+def mac_voice_locales() -> dict[str, str]:
+    """{voice name: locale}, e.g. {"Lee (Premium)": "en_AU", "Samantha": "en_US"}."""
+    mac_voices()
+    return dict(_MAC_LOCALES)
 
 
 def mac_voice(wanted: Any) -> str | None:
@@ -603,6 +615,14 @@ class Voice:
             "effect": clean_name(cfg.get("effect")),
             "say_voice": clean_name(cfg.get("say_voice")),
         }
+        for k in ("melo", "chatterbox", "http"):  # the bigger engines' own settings (tts_neural.py)
+            if cfg.get(k):
+                self.base[k] = dict(cfg[k])
+        if cfg.get("fallback_engine"):
+            self.base["fallback_engine"] = cfg["fallback_engine"]
+        from .voice_style import VoiceModeler
+
+        self.style = VoiceModeler(config)  # accent + a mood per line (voice_style.py)
         self.quiet_volume = float(cfg.get("quiet_volume", 40))
         self.bank_dir = Path(config.resolve_path(cfg.get("bank_dir", "voice_bank")))
         self.cache = Path(config.resolve_path(config.data_dir)) / "voice_cache"
@@ -632,9 +652,17 @@ class Voice:
                 **values: Any) -> tuple[str, Path | None]:
         """Returns (text, recorded clip or built-in sound or None). Unknown keys are spoken as text.
         clean: no swearing (guest mode, kids' rooms)."""
+        text, clip, _, _ = self.resolve_full(key_or_text, lang=lang, clean=clean, **values)
+        return text, clip
+
+    def resolve_full(self, key_or_text: str, lang: str | None = None, clean: bool = False,
+                     **values: Any) -> tuple[str, Path | None, str | None, str | None]:
+        """resolve(), plus (the phrase key or None for free text, the phrase's own `emotion:`)."""
         key = key_or_text.strip()
         clip = self._clip(key)
         entry = (self.clean_phrases if clean else self.phrases).get(key)
+        is_key = entry is not None or clip is not None
+        mood = None
         if isinstance(entry, dict) and not ({"text", "file"} & set(entry)):  # {en: ..., es: ...}
             entry = entry.get(lang or "", entry.get(self.config.settings.language, next(iter(entry.values()))))
         if entry is None and clip is None:
@@ -642,18 +670,19 @@ class Voice:
 
             sound = make(key, self.cache)
             if sound:
-                return "", sound
+                return "", sound, key, None
             entry = key
         if entry is None:
             entry = ""
         if isinstance(entry, list):
             entry = random.choice(entry)
-        if isinstance(entry, dict):  # {text: ..., file: ...}
+        if isinstance(entry, dict):  # {text: ..., file: ..., emotion: ...}
             if entry.get("file"):
                 clip = Path(self.config.resolve_path(entry["file"]))
+            mood = entry.get("emotion")
             entry = entry.get("text", key)
         text = str(entry).format_map(_Safe({k: v for k, v in values.items() if v is not None}))
-        return text, clip
+        return text, clip, (key if is_key else None), mood
 
     def _clip(self, key: str) -> Path | None:
         if not key.replace("_", "").isalnum():
@@ -691,26 +720,70 @@ class Voice:
             return "espeak"
         return engine
 
-    def synthesize(self, text: str, v: dict[str, Any] | None = None) -> Path | None:
+    NEURAL = ("melo", "chatterbox", "http")
+
+    def synthesize(self, text: str, v: dict[str, Any] | None = None, emotion: str | None = None,
+                   knobs: dict | None = None) -> Path | None:
+        """Make the audio for one line. emotion: a mood from voice_style (None = as configured).
+        knobs: that mood's settings tried out without saving them."""
         v = v or self.base
         engine = self.available_engine(v.get("engine", "piper"), v)
         if engine == "none" or not text.strip():
             return None
-        ident = f"{engine}|{v.get('say_voice')}|{v.get('piper_model')}|{v.get('espeak_voice')}|{v.get('speed')}|{v.get('command')}|{v.get('effect')}|{text}"
+        try:
+            return self._synthesize(text, v, engine, emotion, knobs)
+        except Exception as e:
+            if engine not in self.NEURAL:
+                raise
+            # a big voice failed (server down, model missing): say it in the local voice instead,
+            # so a smoke alarm is never silent because the laptop is asleep
+            back = self.available_engine(str(v.get("fallback_engine") or "piper"), v)
+            log.warning("voice engine %s failed (%s); using %s for this line", engine, e, back)
+            if back in self.NEURAL or back == "none":
+                raise
+            return self._synthesize(text, v, back, emotion, knobs)
+
+    def _synthesize(self, text: str, v: dict[str, Any], engine: str, emotion: str | None,
+                    knobs: dict | None = None) -> Path | None:
+        style = self.style
+        speed = float(v.get("speed", 1.0))
+        p = style.engine_params(engine, emotion, speed, knobs) if emotion else None
+        effect = v.get("effect") if style.wants_effect(emotion) else None
+        accent = style.accent
+        ident = (f"{engine}|{v.get('say_voice')}|{v.get('piper_model')}|{v.get('espeak_voice')}|{speed}|"
+                 f"{v.get('command')}|{effect}|{accent}|{v.get('melo')}|{v.get('chatterbox')}|{v.get('http')}|"
+                 f"{emotion}|{sorted(p['knobs'].items()) if p else ''}|{text}")
         wav = self.cache / (hashlib.sha1(ident.encode()).hexdigest() + ".wav")
         if wav.exists():
             return wav
         self.cache.mkdir(parents=True, exist_ok=True)
         tmp = wav.with_name(f"{wav.stem}.{uuid.uuid4().hex[:8]}.tmp.wav")  # never shared between threads
-        speed = float(v.get("speed", 1.0))
+        post = dict(p["post"]) if p else {}
         if engine == "piper":
-            cmd = ["piper", "--model", str(self.config.resolve_path(v["piper_model"])),
-                   "--length_scale", str(1 / speed), "--output_file", str(tmp)]
+            model = Path(self.config.resolve_path(v["piper_model"]))
+            if accent and not any(model.name.startswith(x) for x in self._accent_prefixes()):
+                model = style.piper_model(model.parent) or model
+            if accent and not model.name.startswith(accent):
+                self._warn_accent("piper", f"Piper has no {accent} voice, so it can't do that accent: use engine "
+                                  f"melo, say (Mac) or chatterbox for it")
+            cmd = ["piper", "--model", str(model),
+                   "--length_scale", str(p["length_scale"] if p else 1 / speed), "--output_file", str(tmp)]
+            if p:
+                cmd += ["--noise_scale", str(p["noise_scale"]), "--noise_w", str(p["noise_w"]),
+                        "--sentence_silence", str(p["sentence_silence"])]
             subprocess.run(cmd, input=text.encode(), check=True, capture_output=True, timeout=60)
         elif engine == "say":  # macOS
+            said = text
+            if p and p["extra_silence_ms"]:
+                said = re.sub(r"([.!?])\s+", rf"\1 [[slnc {p['extra_silence_ms']}]] ", text)
             cmd = ["say", "--file-format=WAVE", "--data-format=LEI16@22050",
-                   "-r", str(int(180 * speed)), "-o", str(tmp), text]
-            name = mac_voice(v.get("say_voice"))
+                   "-r", str(p["rate"] if p else int(180 * speed)), "-o", str(tmp), said]
+            name = mac_voice(v.get("say_voice")) if v.get("say_voice") else None
+            if not name and accent:
+                name = style.mac_voice(mac_voice_locales())
+                if not name:
+                    self._warn_accent("say", f"no {accent} Mac voice is installed: add Lee or Karen in System "
+                                      f"Settings > Accessibility > Spoken Content > System Voice > Manage Voices")
             if name:
                 cmd[1:1] = ["-v", name]
             r = subprocess.run(cmd, capture_output=True, timeout=60)
@@ -720,21 +793,71 @@ class Voice:
                 raise RuntimeError(f"the Mac couldn't speak with voice {name or '(default)'}: "
                                    f"{err or 'no audio came out'}")
         elif engine == "espeak":
-            cmd = ["espeak-ng", "-v", str(v.get("espeak_voice", "en-us")), "-s", str(int(170 * speed)),
-                   "-w", str(tmp), text]
+            ev = str(v.get("espeak_voice") or "en-us")
+            if accent:
+                from .voice_style import ACCENTS
+
+                base, _, variant = ev.partition("+")
+                if base in ("en-us", "en"):
+                    ev = ACCENTS[accent]["espeak"] + (f"+{variant}" if variant else "")
+            cmd = ["espeak-ng", "-v", ev, "-s", str(p["speed"] if p else int(170 * speed))]
+            if p:
+                cmd += ["-p", str(p["pitch"]), "-g", str(p["gap"]), "-a", str(p["amplitude"])]
+            cmd += ["-w", str(tmp), text]
             subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+        elif engine in self.NEURAL:
+            from . import tts_neural
+
+            if p is None:  # moods off: just the configured speed and accent, no pitch or loudness changes
+                p = {**style.engine_params(engine, None, speed), "mood": None,
+                     "instructions": style.instructions(None)}
+                post = {"tempo": p["post"]["tempo"]}
+            if engine == "melo":
+                tts_neural.melo(text, tmp, v.get("melo") or {}, p, accent)
+            elif engine == "chatterbox":
+                cfg = v.get("chatterbox") or {}
+                tts_neural.chatterbox(text, tmp, cfg, p, tts_neural.chatterbox_sample(self.config, cfg))
+            else:
+                tts_neural.http(text, tmp, v.get("http") or {}, p)
         elif engine == "command":
             command = v.get("command")
             if not isinstance(command, list):
                 raise ValueError("voice.command must be a list like [my-tts, --out, '{wav}', '{text}']")
-            cmd = [str(c).replace("{text}", text).replace("{wav}", str(tmp)) for c in command]
+            fill = {"{text}": text, "{wav}": str(tmp), "{emotion}": emotion or "neutral",
+                    "{rate}": str(p["rate"] if p else speed), "{pitch}": str(p["knobs"]["pitch"] if p else 0.0)}
+            cmd = []
+            for c in command:
+                c = str(c)
+                for k, x in fill.items():
+                    c = c.replace(k, x)
+                cmd.append(c)
+            if p:  # the command does what it has placeholders for; ffmpeg does the rest
+                post["tempo"] = 1.0 if any("{rate}" in str(c) for c in command) else p["rate"] / speed
+                if any("{pitch}" in str(c) for c in command):
+                    post["pitch"] = 0.0
             subprocess.run(cmd, check=True, capture_output=True, timeout=120)
         else:
-            raise ValueError(f"unknown voice engine '{engine}' (piper, espeak, say, command, none)")
-        if v.get("effect"):
-            self._apply_effect(tmp, str(v["effect"]))
+            raise ValueError(f"unknown voice engine '{engine}' (piper, espeak, say, melo, chatterbox, http, "
+                             f"command, none)")
+        if post:
+            from .tts_neural import apply_post
+
+            apply_post(tmp, post)
+        if effect:
+            self._apply_effect(tmp, str(effect))
         os.replace(tmp, wav)
         return wav
+
+    def _accent_prefixes(self) -> list[str]:
+        from .voice_style import ACCENTS
+
+        return ACCENTS[self.style.accent]["piper_prefix"] if self.style.accent else []
+
+    @staticmethod
+    def _warn_accent(engine: str, msg: str) -> None:
+        if f"accent-{engine}" not in _WARNED:
+            _WARNED.add(f"accent-{engine}")
+            log.warning(msg)
 
     @staticmethod
     def _apply_effect(wav: Path, effect: str) -> None:
@@ -772,11 +895,19 @@ class Voice:
         return out
 
     def speak(self, key_or_text: str, room: str | None = None, rooms: list[str] | None = None,
-              everywhere: bool = False, urgent: bool = False, **values: Any) -> str:
+              everywhere: bool = False, urgent: bool = False, emotion: str | None = None, **values: Any) -> str:
+        """emotion: how to say it (cheeky, annoyed, calm...; see voice_style.py). Otherwise it's picked
+        from the phrase, a [mood] tag at the start of the text, or the words."""
+        from .voice_style import split_tag
+
         home = getattr(self.config, "home", None)
         lang = home.language_for(room) if home is not None and hasattr(home, "language_for") else None
         targets = self.targets(room, rooms, everywhere, urgent)
-        text, clip = self.resolve(key_or_text, lang=lang, clean=self.keep_clean(targets or [room]), **values)
+        tagged, key_or_text = split_tag(key_or_text)
+        text, clip, key, phrase_mood = self.resolve_full(key_or_text, lang=lang,
+                                                         clean=self.keep_clean(targets or [room]), **values)
+        tagged2, text = split_tag(text)  # a phrase written as "[annoyed] ..."
+        tagged = tagged or tagged2
         if self.dry_run or not targets:
             log.info("%ssay%s: %s", "DRY RUN " if self.dry_run else "",
                      f" [{', '.join(t or 'hub' for t in targets)}]" if targets else " (nobody to tell)",
@@ -795,19 +926,23 @@ class Voice:
             home = getattr(self.config, "home", None)
             for t in targets:
                 v = self.settings_for(t)
-                key = repr(sorted((k, str(x)) for k, x in v.items() if k != "volume"))
-                if key not in made:
+                quiet = bool(home is not None and t and home.instances.for_room(t).quiet_now())
+                mood = self.style.pick(key, text, explicit=emotion, phrase_mood=phrase_mood, tagged=tagged,
+                                       quiet=quiet)
+                made_key = repr(sorted((k, str(x)) for k, x in v.items() if k != "volume")) + f"|{mood}"
+                if made_key not in made:
                     try:
-                        made[key] = clip or self.synthesize(text, v)
+                        made[made_key] = clip or (self.synthesize(text, v, emotion=mood) if mood
+                                                  else self.synthesize(text, v))
                     except Exception as e:
                         log.error("couldn't make speech for %r: %s", text, e)
-                        made[key] = None
-                if not made[key]:
+                        made[made_key] = None
+                if not made[made_key]:
                     continue
                 volume = float(v.get("volume", 100))
-                if home is not None and t and home.instances.for_room(t).quiet_now():
+                if quiet:
                     volume = min(volume, self.quiet_volume)
-                plays.append((t, made[key], volume))
+                plays.append((t, made[made_key], volume))
             # rooms with no speaker of their own fall back to the hub's speaker: play that only once
             threads, local_done = [], False
             for room, audio, volume in plays:
@@ -884,13 +1019,13 @@ class Voice:
         if save is None:
             for key, text in lines:
                 show(f"[{key}] {text}")
-                self.speak(text)
+                self.speak(text, emotion=self.style.pick(key, text))
             return None
         rate, pcm = 22050, bytearray()
         silence = b"\x00\x00" * int(rate * gap)
         for key, text in lines:
             show(f"[{key}] {text}")
-            wav = self.synthesize(text, self.base)
+            wav = self.synthesize(text, self.base, emotion=self.style.pick(key, text))
             if wav:
                 pcm += convert(wav, rate, 1) + silence
         save = Path(save)

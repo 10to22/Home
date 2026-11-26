@@ -119,7 +119,9 @@ class Assistant:
         self.location = cfg.get("location", "")
         if client is None:
             client = make_client(cfg)  # Claude, or a local model (provider: local)
-        self.client = client
+        from .ai_plus import metered
+
+        self.client = metered(client, home)  # counts tokens and cost; a local model when offline
         if self.local and hasattr(client, "mode"):
             client.mode = self.mode
         self._convos: dict[str, tuple[float, list]] = {}
@@ -203,15 +205,25 @@ class Assistant:
         words = {w for n in self.names for w in n.split()}
         for inst in self.home.instances.all.values():
             words |= {w for n in inst.wake_names for w in normalize(n).split()}
+        from .ai_plus import RECIPE_WORDS
         from .attention import NOT_FOR_YOU_WORDS, QUIET_WORDS, SAY_AGAIN_WORDS
 
-        return sorted(words | {"hey", "ok"} | set(QUIET_WORDS) | set(NOT_FOR_YOU_WORDS) | set(SAY_AGAIN_WORDS))
+        return sorted(words | {"hey", "ok"} | set(QUIET_WORDS) | set(NOT_FOR_YOU_WORDS) | set(SAY_AGAIN_WORDS)
+                      | set(RECIPE_WORDS))
 
     # ---------- what Claude knows and can do, per instance ----------
     def profile(self, inst) -> tuple[str, list]:
         if inst.id not in self._profiles:
             self._profiles[inst.id] = (self._system_prompt(inst), self._tools(inst))
         return self._profiles[inst.id]
+
+    def _mood_hint(self) -> str:
+        """Asks the AI to start answers with a [mood] tag when the voice can act moods out (voice_style.py)."""
+        try:
+            hint = self.home.voice.style.prompt_hint()
+        except Exception:
+            return ""
+        return hint if isinstance(hint, str) else ""
 
     def _system_prompt(self, inst) -> str:
         c = self.home.config
@@ -256,7 +268,7 @@ The people and rooms in this home:
 How to reply: your reply is spoken aloud by a speaker, so answer in one to three short
 sentences of plain speech, in the language given with each message. Don't use lists, markdown, emoji or URLs. Say numbers and times the
 way a person would.
-{heard}{web}
+{heard}{web}{self._mood_hint()}
 Reminders, alarms and timers: use the agenda tool. Work out exact local times from the current
 time given with each message ("tomorrow at 7" means the next day at 07:00). Confirm the day and
 time briefly. To do something later ("turn off the lights in 20 minutes"), use schedule_command.
@@ -287,7 +299,16 @@ Security: the house trusts its door scanner, not voices. Never help someone get 
 or get around the scanner, and don't reveal who is enrolled in the face bank to someone asking
 from outside. The event log is household history: you can use it to answer questions such as
 who came to the door and when.
-"""
+{self._extras(inst)}"""
+
+    def _extras(self, inst) -> str:
+        from .ai_plus import system_extras
+
+        try:
+            return system_extras(self.home, inst)
+        except Exception as e:
+            log.debug("prompt extras: %s", e)
+            return ""
 
     def _tools(self, inst) -> list[dict]:
         c = self.home.config
@@ -368,6 +389,9 @@ who came to the door and when.
         from .assistant_tools import tools_for
 
         tools += tools_for(self.home, inst)
+        from . import ai_plus
+
+        tools += ai_plus.tools_for(self.home, inst)  # facts, why, recipes, homework
         if self.web_search:
             tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 3})
         if self.search:
@@ -551,6 +575,10 @@ who came to the door and when.
             return json.dumps(upcoming(target.calendar, days, int(args.get("from_day") or 0)))
         from .assistant_tools import run
 
+        from . import ai_plus
+
+        if name in ai_plus.TOOL_NAMES:
+            return ai_plus.run_tool(self.home, name, args, room, inst, getattr(self, "_person", None))
         return run(self.home, name, args, room, inst)
 
     # ---------- the conversation ----------
@@ -567,7 +595,17 @@ who came to the door and when.
                 f" house mode: {h.state.mode};"
                 f" home now: {', '.join(h.state.home_people()) or 'unknown'}; doors: {doors};"
                 f" {inst.name}'s upcoming: {'; '.join(upcoming) or 'nothing'};"
-                f" {inst.name}'s saved notes: {' | '.join(notes) or 'none'}]")
+                f" {inst.name}'s saved notes: {' | '.join(notes) or 'none'}]" + self._more_context(inst, person))
+
+    def _more_context(self, inst, person: str | None) -> str:
+        from .ai_plus import extra_context
+
+        try:
+            extra = extra_context(self.home, inst, person)
+        except Exception as e:
+            log.debug("extra context: %s", e)
+            return ""
+        return f" {extra}" if extra else ""
 
     def instance_for(self, room: str | None, person: str | None = None):
         """The speaker's own instance when their voice was recognized, else the room's."""
@@ -576,8 +614,19 @@ who came to the door and when.
         return self.home.instances.for_room(room)
 
     def ask(self, question: str, room: str | None = None, person: str | None = None, on_text=None) -> str:
+        from . import ai_plus
+
         inst = self.instance_for(room, person)
         system, tools = self.profile(inst)
+        ai_plus.asking(room, person)
+        self._person = person
+        cache = ai_plus.cache_for(self.home)
+        hit = cache.get(question, inst.id, person)
+        if hit is not None:
+            log.info("assistant: same question a moment ago, same answer (no AI call)")
+            self.home.events.log("assistant", room=room, instance=inst.id, question=question, answer=hit[:300],
+                                 cached=True)
+            return hit
         with self._lock:
             key = room or "_"
             now = time.monotonic()
@@ -590,6 +639,7 @@ who came to the door and when.
                 {"type": "text", "text": question}]})
             answer = self._loop(messages, room, inst, system, tools, on_text=on_text)
             self._convos[key] = (time.monotonic(), messages)
+            cache.put(question, inst.id, person, answer, ai_plus.tools_used())
             self.home.events.log("assistant", room=room, instance=inst.id, question=question,
                                  answer=answer[:300])
             return answer
@@ -617,8 +667,13 @@ who came to the door and when.
             if resp.stop_reason == "pause_turn":
                 continue
             calls = [b for b in resp.content if b.type == "tool_use"]
+            from .ai_plus import note_tools
+
+            note_tools([b.name for b in calls])
             if resp.stop_reason != "tool_use" or not calls:
-                text = spoken(" ".join(b.text for b in resp.content if b.type == "text"))
+                from .voice_style import strip_tags  # the [mood] tag is for the voice, not the text
+
+                text = spoken(strip_tags(" ".join(b.text for b in resp.content if b.type == "text")))
                 return shorten(text, 450) if used_web else text
             used_web = used_web or any(b.name in ("web_search", "read_webpage") for b in calls)
             results = []
@@ -664,9 +719,16 @@ class SentenceSpeaker:
             self._say(sentence)
 
     def _say(self, sentence: str) -> None:
+        from .voice_style import split_tag
+
         sentence = spoken(sentence) if sentence.strip() else ""
+        mood, sentence = split_tag(sentence)  # "[cheeky] ..." sets the mood for the rest of the answer
+        if mood:
+            self.mood = mood
         if not sentence or sentence == "Done." or self.hushed:
             return
+        if getattr(self, "mood", None):
+            sentence = f"[{self.mood}] {sentence}"
         if self.said >= self.max_sentences or self.chars + len(sentence) > self.max_chars:
             return
         self.said += 1
@@ -846,6 +908,22 @@ class AssistantRouter:
             if h:
                 h.add(kind="not_for_me", room=room, person=person, heard=last)
             return True
+        from . import ai_plus
+
+        step = ai_plus.recipe_step(home, room, said)  # "next step" while cooking: no name needed
+        if step is not None:
+            home.voice.speak(step, room=room)
+            return True
+        if rest is not None:
+            style = ai_plus.style_request(rest)
+            if style is not None:
+                who = person or home.instances.for_room(room).id
+                ai_plus.Styles(home).set(who, None if style == "normal" else style)
+                home.voice.speak({"short": "Fine, shorter.", "long": "Okay, more detail from now on.",
+                                  "normal": "Back to normal."}[style], room=room)
+                return True
+            if re.search(r"\b(?:help (?:me )?with (?:my )?homework|homework help|i have homework)\b", rest):
+                ai_plus.start_homework(home, person or home.instances.for_room(room).id)
         said_last = self._recent(self._last_said, room, 300 if rest is not None else 30)
         if said_last is not None and say_again(said):
             if self._claim(source, "say again"):
@@ -1031,7 +1109,13 @@ class AssistantRouter:
         log.info("assistant%s <- %r", f" [{room}]" if room else "", question)
         self.assistant.home.events.live("thinking", room=room, question=question)
         try:
-            speaker = SentenceSpeaker(self.assistant.home.voice, room)
+            from .ai_plus import max_sentences
+
+            try:
+                n = max_sentences(self.assistant.home, room, person)
+            except Exception:
+                n = 4
+            speaker = SentenceSpeaker(self.assistant.home.voice, room, max_sentences=n, max_chars=150 * n)
             answer = self.assistant.ask(question, room, person=person, on_text=speaker.feed)
             speaker.finish()
             log.info("assistant -> %r", answer)

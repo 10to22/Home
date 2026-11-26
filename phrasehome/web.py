@@ -14,6 +14,7 @@ first visit asks for it once. The API is also handy for phone shortcuts ("Hey Si
   POST /api/list     {"list": "shopping", "add": ["milk"], "person": ""}
   POST /api/event    {"kind": "garage_opened"}     -> automations `when: {event: external.garage_opened}`
   GET  /api/status
+  GET  /api/voice/tune                              POST /api/voice/tune/preview {"text": "...", "emotion": "cheeky"}
 """
 
 from __future__ import annotations
@@ -359,6 +360,44 @@ class WebServer:
                 item = h.instances.update_item(inst, item["id"], wake=wake)
         return {"item": item}
 
+    # ---------- the voice page (voice modeler) ----------
+    def voice_tune_get(self) -> dict:
+        v = self.home.voice
+        engine = v.available_engine(v.base.get("engine", "piper"), v.base)
+        notes = {"piper": "no Australian Piper voice exists yet: use melo, say (Mac) or chatterbox for the accent",
+                 "espeak": "robotic; the accent is approximate", "http": "a voice server on your network"}
+        try:
+            rooms = sorted(v.router.rooms())
+        except Exception:
+            rooms = []
+        return {**v.style.describe(), "engine": engine, "engine_note": notes.get(engine, ""), "rooms": rooms}
+
+    def voice_tune_post(self, what: str, body: dict):
+        v = self.home.voice
+        st = v.style
+        if what == "save":
+            return {"knobs": st.tune(str(body["emotion"]), **dict(body.get("knobs") or {}))}
+        if what == "reset":
+            st.reset(body.get("emotion") or None)
+            return {"ok": True}
+        if what == "options":
+            st.set_options(enabled=body.get("enabled"), accent=body["accent"] if "accent" in body else "keep")
+            return {"ok": True}
+        if what in ("preview", "say"):
+            from .voice_style import mood_name, split_tag
+
+            tagged, text = split_tag(str(body.get("text") or "Hello. This is your house speaking.")[:500])
+            mood = mood_name(body.get("emotion")) or tagged or "neutral"
+            wav = v.synthesize(text, v.base, emotion=mood, knobs=body.get("knobs") or None)
+            if wav is None:
+                raise RuntimeError("the voice is off (engine: none)")
+            if what == "preview":
+                return wav.read_bytes()  # played on the phone
+            room = body.get("room") or None
+            v.router.play(wav, room, float(v.settings_for(room).get("volume", 100)) / 100)
+            return {"said": text, "emotion": mood}
+        raise KeyError(f"/api/voice/tune/{what}")
+
     def handle_post(self, path: str, body: dict) -> dict:
         h = self.home
         if path == "/api/routine":
@@ -451,6 +490,8 @@ class WebServer:
             return self.meals_post(path.rsplit("/", 1)[1], body)
         if path.startswith("/api/alarms/"):
             return self.alarms_post(path.rsplit("/", 1)[1], body)
+        if path.startswith("/api/voice/tune/"):
+            return self.voice_tune_post(path.rsplit("/", 1)[1], body)
         if path.startswith("/api/history/"):
             return self.history_post(path.rsplit("/", 1)[1], body)
         if path == "/api/event":
@@ -505,6 +546,10 @@ class _Handler(BaseHTTPRequestHandler):
             from .dashboard_history import HISTORY_PAGE
 
             return self._send(200, HISTORY_PAGE, "text/html; charset=utf-8")
+        if u.path == "/voice":
+            from .dashboard_voice import VOICE_PAGE
+
+            return self._send(200, VOICE_PAGE, "text/html; charset=utf-8")
         if not self._authorized(q):
             return self._send(401, {"error": "token required"})
         if u.path == "/api/status":
@@ -515,6 +560,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(200, self.web.alarms_get())
         if u.path == "/api/history":
             return self._send(200, self.web.history_get(q.get("q", [""])[0]))
+        if u.path == "/api/voice/tune":
+            return self._send(200, self.web.voice_tune_get())
         if u.path == "/api/meals":
             if not getattr(self.web.home, "meals", None):
                 return self._send(404, {"error": "meal planner isn't running"})
@@ -603,7 +650,8 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}") if n else {}
-            self._send(200, self.web.handle_post(u.path, body))
+            out = self.web.handle_post(u.path, body)
+            self._send(200, out, "audio/wav" if isinstance(out, bytes) else "application/json")
         except KeyError as e:
             self._send(404 if str(e).strip("'").startswith("/") else 400, {"error": f"missing {e}"})
         except StopIteration:

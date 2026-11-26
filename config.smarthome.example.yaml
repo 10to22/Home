@@ -277,6 +277,16 @@ voice:
   # style: mean         # the default: satirical and mean. deadpan = drier, plain = polite
   #                     # (smoke, CO, leak and weather warnings always stay plain)
   # effect: synthetic   # makes any voice sound like a machine: synthetic, robot, deep, radio (ffmpeg)
+  # accent: en_AU       # an Australian voice where the engine has one (Mac say: Lee/Karen, melo: EN-AU)
+  # emotion: true       # a mood per line (cheeky, annoyed, calm...); safety lines always slow and clear
+  # emotions: { timer_done: annoyed }    # your own mood for a phrase key
+  # engine: melo                         # MeloTTS: real Australian accent, runs on a CPU
+  # melo: { speaker: EN-AU, device: auto }
+  # engine: chatterbox                   # acts out moods; best on a laptop with a GPU / Apple Silicon
+  # chatterbox: { sample: voice_bank/my_voice.wav, sample_consent: true }   # your own voice, or with consent
+  # engine: http                         # a laptop running `phrasehome voice serve`
+  # http: { url: "http://laptop.local:8810/v1/audio/speech", token_env: PHRASEHOME_VOICE_TOKEN }
+  # fallback_engine: piper               # if that laptop is off
   phrases:
     retinal_scan_complete:
       - "Retinal scan complete. Welcome home, {name}."

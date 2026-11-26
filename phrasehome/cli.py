@@ -264,8 +264,14 @@ def _cmd_voice(args) -> int:
         return _voice_match(cfg, text, args)
     if args.action == "check":
         return _voice_check(cfg)
+    if args.action == "tune":
+        return _voice_tune(cfg, args)
     home = Dispatcher(cfg)  # noqa: F841  (speech is routed through it)
     v = Voice(cfg)
+    if args.action == "serve":
+        return _voice_serve(v, args)
+    if args.action == "emotions":
+        return _voice_emotions(v, text, args)
     if args.action == "list":
         for key in sorted(v.phrases):
             clip = v._clip(key)
@@ -273,7 +279,9 @@ def _cmd_voice(args) -> int:
             shown = " | ".join(entry) if isinstance(entry, list) else entry
             print(f"{key:<24} {'[recorded clip] ' if clip else ''}{shown}")
     elif args.action == "say":
-        print(v.speak(text or "Hello. This is your house speaking."))
+        if args.emotion:
+            v.style.enabled = True  # hear a mood even while moods are off in config.yaml
+        print(v.speak(text or "Hello. This is your house speaking.", emotion=args.emotion))
     elif args.action == "demo":
         from pathlib import Path
 
@@ -290,6 +298,97 @@ def _cmd_voice(args) -> int:
     return 0
 
 
+def _voice_emotions(v, text: str, args) -> int:
+    """Say one line in every mood, one after another (or save them all to one file)."""
+    from pathlib import Path
+
+    from .audio_out import convert
+    from .voice_style import EMOTIONS
+
+    v.style.enabled = True
+    text = text or "Righto, the kitchen lights are off. Try not to trip over the dog on the way out."
+    moods = [args.emotion] if args.emotion else list(EMOTIONS)
+    if not args.save:
+        for mood in moods:
+            print(f"[{mood}] {EMOTIONS.get(mood, {}).get('about', '')}")
+            v.speak(text, emotion=mood)
+        return 0
+    import wave
+
+    rate, pcm = 22050, bytearray()
+    for mood in moods:
+        print(f"[{mood}] {EMOTIONS.get(mood, {}).get('about', '')}")
+        wav = v.synthesize(text, v.base, emotion=mood)
+        if wav:
+            pcm += convert(wav, rate, 1) + bytes(2 * int(rate * 0.8))
+    out = Path(args.save).expanduser()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(pcm))
+    print(f"saved {out}")
+    return 0
+
+
+def _voice_tune(cfg, args) -> int:
+    """Show every mood's knobs, or change one mood's (saved in data/voice_tuning.json)."""
+    from .voice_style import EMOTIONS, KNOBS, VoiceModeler
+
+    m = VoiceModeler(cfg)
+    mood = " ".join(args.text).strip() or args.emotion
+    if args.reset:
+        m.reset(mood or None)
+        print(f"reset {mood or 'every mood'} to the built-in settings")
+    knobs = {k: getattr(args, k, None) for k in KNOBS}
+    if mood and any(x is not None for x in knobs.values()):
+        try:
+            m.tune(mood, **knobs)
+        except KeyError as e:
+            print(e.args[0], file=sys.stderr)
+            return 2
+    on = "ON" if m.enabled else "off (turn them on with voice: {emotion: true} in config.yaml)"
+    accent = m.accent or "the voice's own"
+    print(f"moods are {on}; accent: {accent}")
+    print()
+    print(f"{'mood':<10}" + "".join(f"{k:>13}" for k in KNOBS))
+    for name in ([mood] if mood else EMOTIONS):
+        k, tuned = m.knobs(name), m.tuning.get(name, {})
+        print(f"{name:<10}" + "".join(f"{('*' if x in tuned else '') + format(k[x], 'g'):>13}" for x in KNOBS))
+    print()
+    print("* = your tuning.  Change one: phrasehome voice tune cheeky --pitch 2 --rate 1.1")
+    print('Hear it:          phrasehome voice say --emotion cheeky "Lights off, mate."')
+    return 0
+
+
+def _voice_serve(v, args) -> int:
+    """Lend this computer's voice to the house (see voice_server.py)."""
+    import time
+
+    from .voice_server import VoiceServer
+
+    try:
+        srv = VoiceServer(v, host=args.host, port=args.port, token=args.token)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+    srv.start()
+    engine = v.available_engine(v.base.get("engine", "piper"), v.base)
+    print(f"Voice server: http://<this computer>:{srv.port}/v1/audio/speech  (engine {engine}, accent "
+          f"{v.style.accent or 'default'}, moods {'on' if v.style.enabled else 'off'})")
+    if not srv.token:
+        print("No token set: anyone on your network can use it. Set PHRASEHOME_VOICE_TOKEN (here and on the Pi).")
+    print('On the Pi:  voice: {engine: http, http: {url: "http://<this computer>:%d/v1/audio/speech"}}' % srv.port)
+    print("Ctrl-C to stop.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        srv.stop()
+    return 0
+
+
 def _voice_check(cfg) -> int:
     """What voice will the house actually use here, and does it work?"""
     import shutil
@@ -299,7 +398,8 @@ def _voice_check(cfg) -> int:
 
     raw = cfg.voice
     print("Your config's voice section:")
-    for k in ("engine", "say_voice", "espeak_voice", "piper_model", "style", "effect", "speed"):
+    for k in ("engine", "accent", "emotion", "say_voice", "espeak_voice", "piper_model", "style", "effect",
+              "speed"):
         if k in raw:
             note = "  <- has curly quotes from TextEdit (fixed automatically)" \
                 if isinstance(raw[k], str) and any(q in raw[k] for q in "\u201c\u201d\u2018\u2019") else ""
@@ -324,6 +424,22 @@ def _voice_check(cfg) -> int:
     elif engine == "espeak":
         print(f"eSpeak voice: {v.base['espeak_voice']} ({'installed' if shutil.which('espeak-ng') else 'espeak-ng NOT installed'})")
         problems += 0 if shutil.which("espeak-ng") else 1
+    elif engine in ("melo", "chatterbox", "http"):
+        import importlib.util
+
+        need = {"melo": "melo", "chatterbox": "chatterbox"}.get(engine)
+        if need and importlib.util.find_spec(need) is None:
+            problems += 1
+            print(f"  PROBLEM: engine {engine} isn't installed here (see the Voice section of the README)")
+        if engine == "http":
+            print(f"Voice server: {(v.base.get('http') or {}).get('url') or 'MISSING: voice.http.url'}")
+        if engine == "chatterbox":
+            from .tts_neural import chatterbox_sample
+
+            smp = chatterbox_sample(cfg, v.base.get("chatterbox") or {})
+            print(f"Voice sample: {smp or 'none (Chatterbox speaks in its own voice)'}")
+    st = v.style
+    print(f"Accent: {st.accent or 'the voice itself'}   Moods: {'on' if st.enabled else 'off'}")
     style = raw.get("style", vmod.DEFAULT_STYLE)
     print(f"Style: {style}" + ("" if style in vmod.STYLES or style == "plain" else "  PROBLEM: unknown style, using the plain lines"))
     if v.base.get("effect"):
@@ -902,10 +1018,12 @@ def main(argv: list[str] | None = None) -> int:
     fc.set_defaults(fn=_cmd_faces)
 
     vo = sub.add_parser("voice", help="test and customize the voice bank",
-                        description="phrasehome voice list | say <key or text> | record <key> | "
-                                    "match <recording> | demo [--save demo.mp3] [--short] | check")
-    vo.add_argument("action", choices=["list", "say", "record", "match", "demo", "check"], nargs="?",
-                    default="list")
+                        description="phrasehome voice list | say <key or text> [--emotion cheeky] | record <key> | "
+                                    "match <recording> | demo [--save demo.mp3] [--short] | check | "
+                                    "emotions [text] [--save moods.wav] | tune [mood] [--pitch 2 ...] [--reset] | "
+                                    "serve [--port 8810]")
+    vo.add_argument("action", choices=["list", "say", "record", "match", "demo", "check", "emotions", "tune",
+                                       "serve"], nargs="?", default="list")
     vo.add_argument("text", nargs="*")
     vo.add_argument("--seconds", type=float, default=4.0)
     vo.add_argument("--top", type=int, default=8, help="match: how many voices to show")
@@ -913,6 +1031,16 @@ def main(argv: list[str] | None = None) -> int:
     vo.add_argument("--save", help="demo: write everything to one audio file (.wav or .mp3) instead of playing it")
     vo.add_argument("--short", action="store_true", help="demo: one version of each line, not every variant")
     vo.add_argument("--novelty", action="store_true", help="match: include the Mac's joke voices (Bahh, Bubbles...)")
+    vo.add_argument("--emotion", help="say/emotions/tune: a mood (neutral, calm, clear, cheeky, annoyed, cheerful, "
+                                      "urgent, soft)")
+    for knob, what in (("rate", "speed, x normal (0.6-1.6)"), ("pitch", "semitones (-6..6)"),
+                       ("pause", "gaps, x normal (0.3-3)"), ("lively", "pitch movement (0.2-2)"),
+                       ("volume", "dB louder/quieter (-12..12)"), ("exaggeration", "Chatterbox acting (0.25-2)")):
+        vo.add_argument(f"--{knob}", type=float, help=f"tune: {what}")
+    vo.add_argument("--reset", action="store_true", help="tune: back to the built-in settings")
+    vo.add_argument("--port", type=int, default=8810, help="serve: port")
+    vo.add_argument("--host", default="0.0.0.0", help="serve: address to listen on")
+    vo.add_argument("--token", help="serve: required token (default: PHRASEHOME_VOICE_TOKEN)")
     vo.set_defaults(fn=_cmd_voice)
 
     ag = sub.add_parser("agenda", help="show everyone's reminders, alarms, timers and lists")

@@ -383,6 +383,70 @@ and so on. You can customize it in three ways:
 
 Speech plays on the Pi's speaker and, if `voice.speakers` is set, through every speaker in group mode.
 
+#### Accent and moods (the voice modeler)
+
+The `aussie` style changes what the house says; `accent` and `emotion` change how it sounds:
+
+```yaml
+voice:
+  engine: melo        # see the table below
+  accent: en_AU       # an Australian voice where the engine has one
+  emotion: true       # a mood per line: cheeky, annoyed, cheerful, calm, urgent, soft, neutral
+  emotions: { timer_done: annoyed }   # optional: your own mood for a phrase
+```
+
+| Engine | Australian? | Moods | Runs on |
+|---|---|---|---|
+| `say` (Mac) | Yes: Lee or Karen (download a Premium voice in System Settings > Accessibility > Spoken Content) | Speed, pauses, pitch and loudness (ffmpeg) | Mac |
+| `melo` ([MeloTTS](https://github.com/myshell-ai/MeloTTS), MIT) | Yes: the `EN-AU` speaker | Speed, liveliness, pitch and loudness | Pi 5 (slowish), any laptop |
+| `chatterbox` ([Chatterbox](https://github.com/resemble-ai/chatterbox)) | Through a sample of an Aussie speaker who agreed to it (you, say) | The best: real acting (`exaggeration`) | A laptop with a GPU or Apple Silicon |
+| `http` | Whatever the server speaks | Sends the mood along | Pi, calling a laptop on your Wi-Fi |
+| `piper` | No Australian voice exists yet (falls back to an en_GB one) | Speed, liveliness, pauses, pitch, loudness | Pi |
+| `espeak` | Approximate (British) | Speed, pitch, gaps | Anything |
+
+Where a mood comes from: phrases have one built in (`wake_nag` is annoyed, `welcome_home` cheerful), your
+own phrases can set it (`dinner: {text: "Dinner's ready!", emotion: cheerful}`), and the AI starts its
+answers with a tag like `[cheeky]` that is never read aloud. In a room's quiet hours lines go `soft`.
+**Safety lines are always `clear`** (slow, steady, a bit louder, no voice effect), whatever else says.
+
+Hear and tune it on the dashboard's **Voice** page (`/voice`: a slider per knob, "Play here" on your
+phone), or:
+
+```bash
+.venv/bin/phrasehome voice emotions            # one line in every mood
+.venv/bin/phrasehome voice say --emotion annoyed "Seriously? The back door again?"
+.venv/bin/phrasehome voice tune cheeky --pitch 2 --rate 1.1   # saved in data/voice_tuning.json
+.venv/bin/phrasehome voice tune --reset
+```
+
+**The big voices** install separately and download their models on first use (MeloTTS a few hundred MB,
+Chatterbox a few GB with PyTorch):
+
+```bash
+.venv/bin/pip install git+https://github.com/myshell-ai/MeloTTS && .venv/bin/python -m unidic download
+.venv/bin/pip install chatterbox-tts
+```
+
+A Pi is too slow for Chatterbox, so run it on a laptop and lend its voice to the house:
+
+```bash
+PHRASEHOME_VOICE_TOKEN=pick-a-secret .venv/bin/phrasehome voice serve    # on the laptop (its config: engine: chatterbox)
+```
+
+```yaml
+voice:                                   # on the Pi (same PHRASEHOME_VOICE_TOKEN in its .env)
+  engine: http
+  accent: en_AU
+  emotion: true
+  http: { url: "http://laptop.local:8810/v1/audio/speech" }
+  fallback_engine: piper                 # the laptop's off: the Pi says it itself
+```
+
+Chatterbox can speak like a short recording (10-20 seconds of one person talking clearly):
+`chatterbox: {sample: voice_bank/my_voice.wav, sample_consent: true}`. Use your own voice, or someone
+who has agreed to it. Never a celebrity or anyone who hasn't. Without `sample_consent: true` it uses its
+own voice.
+
 ### AI assistant
 
 Say the wake name, then anything:

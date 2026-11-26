@@ -113,7 +113,9 @@ class Diary:
         self._said.append(res["message"])
         quiet = clock.in_window(self.wcfg.get("quiet_hours", "22:30-07:00"), clock.now())
         h.events.log("watcher", message=res["message"], urgent=res.get("urgent", False))
-        if not quiet or res.get("urgent"):
+        from .ai_plus import proactive_ok
+
+        if res.get("urgent") or (not quiet and proactive_ok(h)):  # at most watcher.max_per_hour (1)
             h.voice.speak(res["message"], everywhere=bool(res.get("everyone", True)), urgent=bool(res.get("urgent")))
         if res.get("urgent") or (quiet and not h.state.home_people()):
             h.notify_person(h.instances.main, res["message"], "House")

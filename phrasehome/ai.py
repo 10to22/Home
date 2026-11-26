@@ -23,7 +23,9 @@ def _client(home):
         try:
             from .local_ai import make_client
 
-            home._ai_client = make_client(home.config.assistant)  # Claude, or local (provider: local)
+            from .ai_plus import metered
+
+            home._ai_client = metered(make_client(home.config.assistant), home)  # Claude, or local (provider: local)
         except Exception as e:
             raise AIUnavailable(f"AI not available: {e}")
     return home._ai_client
