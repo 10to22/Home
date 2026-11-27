@@ -100,6 +100,11 @@ class HouseLife:
         self._running = False
         self.walk.stop()
 
+    def close(self) -> None:
+        self.stop()
+        self.home.events.unsubscribe(self._event)
+        self._q.put(None)
+
     def _loop(self) -> None:
         while self._running:
             self.tick()

@@ -239,6 +239,38 @@ freak:                             # "freak mode": everyone else's phone says st
   minutes: 90                      # ends by itself after this ("freak mode off" ends it sooner)
   on_start: [ { node: "{here}", channel: lamp, level: 15 } ]
   on_end:   [ { node: "{here}", channel: lamp, level: 60 } ]
+# ---------------------------------------------------------------- the student house (see /house)
+# Each housemate's instance can start with `about: [vegetarian, plays bass]`; "house, Parker's a vegetarian"
+# adds more. All of these sections are optional: the commands ("party mode", "study mode", "house
+# meeting", "shower timer", "quiz time", "house radio"...) work with the defaults.
+party:
+  playlist: "house party"          # Spotify
+  guest_wifi: { ssid: Party Time, password: CHANGE-ME }
+  quiet_time: { weekdays: "22:30", weekends: "00:30" }
+  at_quiet: [ { node: living, channel: lamp, level: 40 } ]
+  cleanup: [bottles and recycling, kitchen benches and dishes, vacuum the lounge, bins out]
+  cleanup_time: "11:00"
+study: { focus: 25, break: 5, long_break: 15, light: [ { node: "{here}", channel: lamp, level: 100 } ] }
+exams: { quiet_from: "21:30", heads_up: "19:00" }   # from calendars, config, or "I've got an exam on Friday at 9"
+door_status:                       # an RGB LED by each bedroom door (red, green, blue channels)
+  rooms:
+    bedroom: { node: bedroom_door }
+house_meeting: { window: "18:00-22:00", minutes: 30, room: living room }
+shower: { sensor: { node: bathroom, input: humidity }, rise: 8, warn: [10, 20], roast: 30 }
+last_out: { lock: true, tell: both }   # tell the last one out, and the rest of the house
+windows:
+  lounge window: { node: living, input: window }
+winter_lamp:
+  lights:
+    bedroom: { node: bedroom, channel: lamp }
+  minutes: 30
+pollen: { morning: "08:00" }       # Open-Meteo in Europe; set api_key_env: GOOGLE_MAPS_KEY elsewhere
+walk_home:
+  minutes: 20
+  places: { library: 15, campus: 25 }
+  topic: CHANGE-ME-house-walk-8f2k1   # ntfy topic: "Parker walking home 20" from anywhere
+quiz: { day: sun, time: "19:00", questions: 6 }
+radio: { playlist: "house radio", every_songs: 3 }
 wake:                              # alarms that make sure you're actually up (edit each one at /alarms)
   make_sure_up: true               # "stop" from bed only quiets it; it comes back until you're up
   recheck_minutes: 3

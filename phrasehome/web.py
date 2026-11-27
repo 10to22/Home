@@ -461,6 +461,33 @@ class WebServer:
             if "camera" in body:
                 h.sim.move_camera(body["camera"] or None)
             return {"sim": h.sim.status()}
+        if path == "/api/house":  # {action: party_start | study_on | meeting_book | quiz_start | ...}
+            return {"result": h.life.do(str(body["action"]), body.get("room"), body.get("person"), body)}
+        if path == "/api/house/people":
+            from .people import run_tool
+
+            return {"result": run_tool(h, {"action": body.get("action", "remember"), "person": body["person"],
+                                           "fact": body.get("fact", "")})}
+        if path == "/api/house/agenda":
+            return {"result": h.life.meeting.add(str(body["item"]))}
+        if path == "/api/house/exam":
+            from .study import _parse_at
+
+            inst = h.life.people.find(str(body["person"]))
+            if inst is None:
+                raise ValueError("nobody by that name lives here")
+            h.life.exams.add(inst, str(body.get("subject") or "exam"), _parse_at(str(body["at"])))
+            return {"result": "saved"}
+        if path == "/api/walkhome":  # {person, action: start|extend|cancel|arrived, minutes, place}
+            w = h.life.walk
+            act = body.get("action", "start")
+            if act == "start":
+                return {"result": w.start(body["person"], body.get("minutes") or None, body.get("place", ""))}
+            if act == "extend":
+                return {"result": w.extend(body["person"], float(body.get("minutes") or 10))}
+            if act == "cancel":
+                return {"result": w.cancel(body["person"])}
+            return {"result": "home safe" if w.arrived(body["person"]) else "they weren't walking home"}
         if path == "/api/freak":
             if body.get("action", "off") == "off":
                 return {"result": h.freak.stop(body.get("room"))}
@@ -552,6 +579,10 @@ class _Handler(BaseHTTPRequestHandler):
             from .dashboard_voice import VOICE_PAGE
 
             return self._send(200, VOICE_PAGE, "text/html; charset=utf-8")
+        if u.path == "/house":
+            from .dashboard_house import HOUSE_PAGE
+
+            return self._send(200, HOUSE_PAGE, "text/html; charset=utf-8")
         if not self._authorized(q):
             return self._send(401, {"error": "token required"})
         if u.path == "/api/status":
@@ -567,6 +598,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(200, Meter(self.web.home).summary(days))
         if u.path == "/api/history":
             return self._send(200, self.web.history_get(q.get("q", [""])[0]))
+        if u.path == "/api/house":
+            return self._send(200, self.web.home.life.status())
         if u.path == "/api/voice/tune":
             return self._send(200, self.web.voice_tune_get())
         if u.path == "/api/meals":

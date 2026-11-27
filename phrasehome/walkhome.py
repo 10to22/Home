@@ -107,7 +107,8 @@ class WalkHome:
         h = self.home
         h.events.log("walk.arrived", person=inst.id)
         text, _ = h.voice.resolve("walk_arrived", name=inst.name)
-        tell = {st["by"]} if st["by"] and st["by"] != inst.id else set()
+        starter = h.instances.all.get(st["by"])
+        tell = {starter.id} if starter and not starter.main and starter.id != inst.id else set()
         if st["warned"]:  # everyone was worried: everyone hears the good news
             tell |= {i.id for i in h.instances.all.values() if not i.main and i.id != inst.id}
         for pid in tell:
@@ -183,6 +184,9 @@ class WalkHome:
         m = re.match(rf"^({who_rx})?\s*(?:'s |is )?(home|cancel|stop|made it|i'm home|here)$", s)
         if m and (m.group(1) or title):
             who = m.group(1) or title
+            inst = self._inst(who)
+            if inst is None or inst.id not in self.active:
+                return None  # "Parker's home" when nobody was waiting: not walk-home business
             if m.group(2) in ("cancel", "stop"):
                 self.cancel(who)
             else:

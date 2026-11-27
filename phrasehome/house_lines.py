@@ -46,7 +46,7 @@ PLAIN: dict = {
     # door status lights
     "door_status_set": "Your door now says {status}.",
     "door_status_clear": "Your door status is cleared.",
-    "door_status_is": "{room}: {status}.",
+    "door_status_is": "{whose}: {status}.",
     # house meetings (meeting.py)
     "meeting_booked": "House meeting booked for {when}, in the {room}. Everyone's been told. To add to the "
                       "agenda, say: add something to the meeting agenda.",

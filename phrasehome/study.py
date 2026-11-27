@@ -567,7 +567,7 @@ class DoorStatus:
         if m:
             inst = self.home.people.find(next(g for g in m.groups() if g))
             room = inst.rooms[0] if inst.rooms else ""
-            return "door_status_is", {"room": f"{inst.name}'s door", "status": _status_words(self.status(room))}
+            return "door_status_is", {"whose": f"{inst.name}'s door", "status": _status_words(self.status(room))}
         return None
 
 

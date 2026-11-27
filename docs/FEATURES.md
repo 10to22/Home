@@ -23,7 +23,7 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | **"Say that again"** | Repeats the last answer instantly, no AI call |
 | **One answer per question** | Two mics hearing the same question get one answer, not two |
 | **Wake word engine** | Optional openWakeWord with your own "hey home" model, for across-the-room hearing |
-| **Word bank** | Each phrase also matches "switch on ...", "... on", "put the ... on" and more; "could you please ... for me" is fine |
+| **Word bank** | Each phrase also matches the everyday ways of saying it (vocabulary.py): "flick the lights on", "whack the telly on", "chuck the kettle on", "crank the volume", "kill the music", "get the dishwasher going", "night night", "off to bed"; Australian, British, American and student slang. Rooms by their other names ("lounge", "front room" = living room, "loo", "dunny" = bathroom, "hall", "yard"). Filler around it is fine: "oi mate, could you flick the lounge lights on, cheers". 12 wordings per phrase with a fixed vocabulary (the Pi), 40 without. Everyday verbs ("hold on", "calm down") never turn into commands |
 | **Own voice per room** | `voice: {piper_model, speed, volume}` per instance |
 | **Own personality per room** | `persona:` per instance |
 | **Kid mode** | `kid_mode: true`: age-appropriate answers, no doors, routines or house modes |
@@ -127,7 +127,7 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Find a voice like a recording | `phrasehome voice match clip.mp3`: compares every voice on the computer (Mac voices, Piper, espeak), with and without effects, on pitch, flatness, brightness and pace, and prints the closest with its config lines. Picks among voices you have; doesn't clone |
 | Machine voice | `voice: {effect: synthetic}` (also robot, deep, radio, or any ffmpeg filter) on top of any engine |
 | **Australian accent** | `voice: {accent: en_AU}` picks an Aussie voice where the engine has one: the Mac's Lee or Karen (`say`), MeloTTS's `EN-AU` speaker (`engine: melo`, runs on a CPU), or Chatterbox speaking like a sample you recorded. Piper has no Australian voice yet, so it falls back to a British one and says so. Also en_GB, en_US, en_IN |
-| **Moods per line** | `voice: {emotion: true}`: every line gets a delivery: cheeky, annoyed, cheerful, calm, urgent, soft (quiet hours) or neutral. Picked from the phrase (`wake_nag` is annoyed, `welcome_home` cheerful), a `[mood]` tag the AI puts at the start of its answers, `{text: ..., emotion: ...}` in your own phrases, or the words. Each engine gets it in its own terms (Piper's length/noise scales, eSpeak pitch, Mac rate and pauses, Chatterbox exaggeration, instructions for a voice server), plus pitch and loudness through ffmpeg |
+| **Moods per line** | On by default (`voice: {emotion: false}` turns them off): every line gets a delivery, far enough apart to hear: cheeky, annoyed, cheerful, calm, urgent, soft (quiet hours) or neutral. Picked from the phrase (`wake_nag` is annoyed, `welcome_home` cheerful), a `[mood]` tag the AI puts before each sentence whose feeling changes (and the words, when it forgets), `{text: ..., emotion: ...}` in your own phrases, or the words. Each engine gets it in its own terms (Piper's length/noise scales, eSpeak pitch, Mac rate and pauses, Chatterbox exaggeration, instructions for a voice server), plus pitch and loudness through ffmpeg |
 | **Safety stays clear** | With moods on, smoke, CO, leak, weather, panic and alarm lines are always slow, steady and a bit louder, and skip the voice effect. Nothing overrides that |
 | **Voice modeler** | Dashboard `/voice`: sliders for each mood (speed, pitch, pauses, liveliness, loudness, acting), accent and moods switches, "Play here" on your phone or "Say it in the house". CLI: `phrasehome voice tune cheeky --pitch 2`, `voice emotions` (one line in every mood), `voice say --emotion annoyed "..."` |
 | **Borrow a laptop's voice** | `phrasehome voice serve` on a Mac or PC runs the heavy voice (Chatterbox, MeloTTS); the Pi uses it with `engine: http`. Speaks the OpenAI-style speech API, so Kokoro-FastAPI or chatterbox-tts-api work too. If the laptop's asleep, the Pi says it in its own voice instead |
@@ -145,6 +145,25 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | A sock on the door | Say "freak mode" in a room: every other housemate's phone gets "Freak mode is on in the bedroom. Someone's getting freaky. Stay clear." The house stops listening in that room and makes no announcements there. Optional `on_start` steps (dim the lamp) |
 | Ending it | "freak mode off" (heard even with the mic paused), the End button on the dashboard, or after `minutes` (90). Everyone gets the all-clear |
 | Needs | Each housemate's instance has a `phone:` ntfy topic |
+
+## The student house (house_life.py, page: /house)
+
+| Feature | How |
+|---|---|
+| What the house knows about people | "house, Parker's a vegetarian", "remember Jo's allergic to peanuts", "Alex doesn't eat pork", "Finn hates coriander", "I'm vegan" (from your own room). Shared with the whole house: every AI answer, recipe, party plan and the meal planner respect it. "what do you know about Parker?", "Parker isn't vegetarian anymore". Start people off with `about: [...]` on their instance; edit them on /house |
+| Party planner | "party mode" / "start the party": your `party` routine, the Spotify playlist, the guest Wi-Fi (said out loud, "what's the wifi password?"), a quiet-time countdown at 60/30/10 minutes, then the music goes down. "party's over": tomorrow's cleanup jobs are shared out (reminders + phones), taking turns week to week. Your own "party mode" command keeps working and gets the planner too |
+| Exam-aware quiet hours | Exams from calendars (anything called exam/final/midterm/test), config, or "I've got a calc exam on Friday at 9". The night before: everyone else's phone and the shared rooms get a heads-up, the house is quiet from `quiet_from` (everything softer), parties end earlier, House Radio goes music-only; on the day, good luck with their alarm |
+| Study mode | "study mode" in a room: focus blocks and breaks (25/5, a long break every 4), your study lamp, no announcements in there. "skip the break" (twice and it nags you), "how long until my break", "study mode off" says how much you did |
+| Door status lights | An LED by each bedroom door: studying (amber), sleeping (blue), busy (red: do not disturb or freak mode, never says which), free (green). Worked out by itself, or "set my door to busy". "is Finn busy?" |
+| House meetings | "call a house meeting": a time in the next week when everyone's usually home (learned from who's been home when) and nobody's calendar, exams or quiet hours clash. Everyone's told, reminded, and at the time it reads the agenda. "add the bins rota to the meeting agenda", plus the week's talking points by itself |
+| Shower timer | The bathroom humidity jumping starts it (or "shower timer"): nudges at 10 and 20 minutes, a roast at 30, the week's record ("who had the longest shower?") |
+| Last one out | The last person leaves with a door unlocked: it's locked, they get a text, and everyone else is told who it was (and how many times this month) |
+| Windows while away | Nobody home and a window open: everyone's phone hears about it, with rain chances, every hour; "the lounge window's still open" when someone's back |
+| Winter blues lamp | Dark winter mornings: when your alarm goes off or you get up before sunrise, your bright light comes on full for half an hour |
+| Pollen-aware windows | "should I open the windows?": pollen, air quality, rain and temperature, and who has hay fever. A morning warning when it's high and someone's allergic; a nudge if a window opens anyway |
+| Walk-home mode | "Parker's walking home from the library", the /house page, or from anywhere: "Parker walking home 20" in the ntfy app on the house's topic. Home safe when their phone, face or voice turns up; if not, a calm, plain heads-up to everyone else, then another |
+| Weekly house quiz | Sunday 7pm or "quiz time": questions from the week's events (the most used command, how often it got told to shut up, the longest shower, who left the door unlocked, who got home latest, study minutes, parcels, parties) |
+| House Radio | "house radio": the playlist, and every few songs a short break with the house news (weather, who's home, exams, the meeting, records, birthdays, bin night), written fresh by the AI. It names songs, never quotes lyrics |
 
 ## Morning alarms that make sure you're up
 

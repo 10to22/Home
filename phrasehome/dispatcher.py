@@ -296,6 +296,7 @@ class Dispatcher:
 
     def close(self) -> None:
         self.automations.close()
+        self.life.close()
         self.scheduler.stop()
         self._stop = True
         self._flush(force=True)
