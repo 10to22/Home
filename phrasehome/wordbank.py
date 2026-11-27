@@ -135,6 +135,43 @@ def variants(phrase: str, limit: int | None = MAX_VARIANTS) -> list[str]:
     return out if limit is None else out[:limit]
 
 
+_CANON: tuple[re.Pattern, dict[str, str]] | None = None
+
+
+def _canon_table() -> tuple[re.Pattern, dict[str, str]]:
+    """Every word for the same thing (vocabulary.THINGS) -> one of them, joined into groups."""
+    global _CANON
+    if _CANON is None:
+        parent: dict[str, str] = {}
+
+        def find(x):
+            parent.setdefault(x, x)
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for k, vs in _vocab.THINGS.items():
+            for v in vs:
+                v = re.sub(r"^(?:a|an|some|the) ", "", v)  # "some tunes" is "tunes"
+                if v and v != k:
+                    a, b = find(k), find(v)
+                    if a != b:
+                        parent[max(a, b, key=len)] = min(a, b, key=len)
+        groups = {x: find(x) for x in list(parent)}
+        terms = sorted((t for t in groups if groups[t] != t), key=len, reverse=True)
+        rx = re.compile(r"\b(" + "|".join(re.escape(t) for t in terms) + r")\b") if terms else re.compile(r"(?!x)x")
+        _CANON = (rx, groups)
+    return _CANON
+
+
+def same_words(text: str) -> str:
+    """Words for the same thing made the same ("whack the telly on" -> "whack the tv on"), so every
+    wording matches every synonym without listing them all."""
+    rx, groups = _canon_table()
+    return rx.sub(lambda m: groups.get(m.group(1), m.group(1)), text)
+
+
 def place_names(slots: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
     """The slots with the other names for each room added ("lounge" for living room, "loo" for
     bathroom), each meaning the same value. A name a slot already uses is never taken over."""

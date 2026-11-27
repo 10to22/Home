@@ -35,7 +35,12 @@ class _Lang:
         self.candidates = candidates_with_aliases(config, lang)  # + sentences taught on the History page
         self.matcher = Matcher(self.candidates, s.match_mode, s.match_threshold, s.block_words,
                                phonetic=bool(getattr(s, 'phonetic_match', True)))
-        words = vocabulary(self.candidates)
+        # Vosk's fixed vocabulary: the most common wordings as whole phrases (a small, fast graph), and every
+        # word of every wording, so "whack the telly on" can still be written down and matched
+        short = candidates_with_aliases(config, lang, for_grammar=True) if s.restrict_vocabulary else self.candidates
+        phrases = vocabulary(short)[:-1]
+        more_words = [w for w in sorted({w for c in self.candidates for w in c.words}) if w not in set(phrases)]
+        words = phrases + more_words + ["[unk]"]
         # wake names, yes/no, and words that change a command's meaning: "please" and "can you" (so
         # they're heard, then ignored), "and"/"then" (two commands at once), and "not"/"don't"
         # (so "don't turn on the lights" is heard as that, and blocked)
@@ -93,6 +98,7 @@ class Engine:
                 self._wq: queue.Queue = queue.Queue(maxsize=50)
                 _th.Thread(target=self._whisper_worker, daemon=True).start()
                 log.info("hearing with Whisper (%s)", self.whisper.name)
+                self._set_hotwords()
             except Exception as e:
                 log.error("Whisper not started, using Vosk: %s", e)
         self._names = self.router.assistant.names if self.router else []
@@ -108,8 +114,16 @@ class Engine:
 
         names = list(self.router.assistant.names) if self.router else []
         self.prompt = house_words(self.config, names)  # primes Whisper with this house's words
-        if self.whisper is not None:  # hotwords: the names and the words it learned, kept short
-            self.whisper.hotwords = ", ".join(([*names] + [i.name for i in self.config.instances])[:20])
+        self._set_hotwords()
+
+    def _set_hotwords(self) -> None:
+        """Whisper's hotwords: the house's names and the people's names, kept short. reload() runs before
+        Whisper exists (first start), so this runs again once it does."""
+        w = getattr(self, "whisper", None)
+        if w is None:
+            return
+        names = list(self.router.assistant.names) if self.router else []
+        w.hotwords = ", ".join(([*names] + [i.name for i in self.config.instances])[:20])
 
     @property
     def matcher(self) -> Matcher:

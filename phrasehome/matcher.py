@@ -118,9 +118,11 @@ class Matcher:
         threshold: float = 85.0,
         block_words: list[str] | None = None,
         phonetic: bool = True,
+        synonyms: bool = True,
     ) -> None:
         self.candidates = candidates
-        self._texts = [c.text for c in candidates]
+        self.synonyms = synonyms  # telly = tv = television on both sides (wordbank.same_words)
+        self._texts = [self._same(c.text) for c in candidates]
         self.phonetic = phonetic
         self._sounds: list[str] | None = None  # how each candidate sounds (speech_tuning.phonetic), made on first use
         self.mode = mode
@@ -146,6 +148,13 @@ class Matcher:
                 best = max(best, fuzz.ratio(window, cand.text))
         return best
 
+    def _same(self, text: str) -> str:
+        if not getattr(self, "synonyms", True):
+            return text
+        from .wordbank import same_words
+
+        return same_words(text)
+
     def match(self, text: str) -> Match | None:
         from .wordbank import strip_filler
 
@@ -156,6 +165,8 @@ class Matcher:
         # "could you please lock the doors for me" is scored as "lock the doors" too
         bare = strip_filler(" ".join(words)).split()
         tries = [words] if bare == words else [words, bare]
+        if self.mode == "utterance" and self.synonyms:
+            tries = [self._same(" ".join(w)).split() for w in tries]
         best: tuple[float, int, Candidate] | None = None
         if self.mode == "utterance":  # all at once in C: thousands of wordings stay instant
             scores: dict[int, float] = {}
@@ -200,7 +211,8 @@ class Matcher:
             for _, sc, i in process.extract(said, self._sounds, scorer=fuzz.ratio,
                                             score_cutoff=max(self.threshold, 90), limit=5):
                 cand = self.candidates[i]
-                if len(cand.words) != len(w) or not _same_sounding(w, cand.words):
+                cwords = self._texts[i].split()
+                if len(cwords) != len(w) or not _same_sounding(w, cwords):
                     continue
                 key = (min(sc - 4, 90.0), len(cand.text), cand)  # never "sure": risky ones still ask
                 if best is None or key[:2] > best[:2]:

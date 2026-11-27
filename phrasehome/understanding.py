@@ -168,14 +168,16 @@ def meant_text(config, command: str, slots: dict | None = None) -> str | None:
     return None
 
 
-def candidates_with_aliases(config, lang: str | None = None) -> list:
+def candidates_with_aliases(config, lang: str | None = None, for_grammar: bool = False) -> list:
+    """Every phrase the matcher knows (all the word bank's wordings, plus taught sentences).
+    for_grammar: the shorter list for Vosk's fixed vocabulary on a Pi (12 wordings per phrase); the
+    matcher always gets them all, since matching is cheap and Vosk can still write the words down."""
     from .matcher import expand
     from .wordbank import BIG_VARIANTS
 
     s = config.settings
     english = str(lang or s.language or "en").lower().startswith("en")
-    # a fixed vocabulary (the Pi) keeps the dozen most common wordings per phrase; open vocabulary all of them
-    limit = 12 if getattr(s, "restrict_vocabulary", True) else BIG_VARIANTS
+    limit = 12 if (for_grammar and getattr(s, "restrict_vocabulary", True)) else BIG_VARIANTS
     return (expand(config.commands, config.slots, lang, variants=bool(getattr(s, "phrase_variants", True))
                    and english, limit=limit) + Aliases(config).candidates())
 
