@@ -33,7 +33,8 @@ class _Lang:
         from .wordbank import FILLER_WORDS
 
         self.candidates = candidates_with_aliases(config, lang)  # + sentences taught on the History page
-        self.matcher = Matcher(self.candidates, s.match_mode, s.match_threshold, s.block_words)
+        self.matcher = Matcher(self.candidates, s.match_mode, s.match_threshold, s.block_words,
+                               phonetic=bool(getattr(s, 'phonetic_match', True)))
         words = vocabulary(self.candidates)
         # wake names, yes/no, and words that change a command's meaning: "please" and "can you" (so
         # they're heard, then ignored), "and"/"then" (two commands at once), and "not"/"don't"
@@ -84,7 +85,9 @@ class Engine:
             try:
                 from .hearing import Whisper
 
-                self.whisper = Whisper(st.whisper_model)
+                from .speech_tuning import whisper_beam
+
+                self.whisper = Whisper(st.whisper_model, beam=whisper_beam(self.config))
                 import threading as _th
 
                 self._wq: queue.Queue = queue.Queue(maxsize=50)
@@ -105,6 +108,8 @@ class Engine:
 
         names = list(self.router.assistant.names) if self.router else []
         self.prompt = house_words(self.config, names)  # primes Whisper with this house's words
+        if self.whisper is not None:  # hotwords: the names and the words it learned, kept short
+            self.whisper.hotwords = ", ".join(([*names] + [i.name for i in self.config.instances])[:20])
 
     @property
     def matcher(self) -> Matcher:
@@ -839,7 +844,7 @@ def run_or_confirm(m, dispatcher: Dispatcher, config: Config) -> None:
         return
     if history:
         history.add(kind="command", room=m.room, person=m.person, heard=m.heard, matched=m.command.name,
-                    confidence=round(m.confidence, 2), score=round(m.score), via=m.via)
+                    confidence=round(m.confidence, 2), score=round(m.score), via=m.via, slots=dict(m.slots))
     if dispatcher.submit(m):
         import time as _t
 

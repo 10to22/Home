@@ -317,7 +317,8 @@ class Usual(Part):
         from .understanding import candidates_with_aliases
 
         s = self.home.config.settings
-        return Matcher(candidates_with_aliases(self.home.config), s.match_mode, s.match_threshold, s.block_words)
+        return Matcher(candidates_with_aliases(self.home.config), s.match_mode, s.match_threshold, s.block_words,
+                               phonetic=bool(getattr(s, 'phonetic_match', True)))
 
     def run(self, inst, room: str) -> str:
         steps = inst.extra.get("usual") or []

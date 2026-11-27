@@ -207,6 +207,8 @@ class VoiceModeler:
         self.style_mood = STYLE_MOOD.get(style or "", "neutral")
         self.key_moods = {k: m for k, v in (cfg.get("emotions") or {}).items() if (m := mood_name(v))}
         self.safety_effects = bool(cfg.get("safety_effects", False))
+        # how strongly each mood is played: 1 = as written in EMOTIONS, more = clearer, less = subtler
+        self.strength = max(0.3, min(2.0, float(cfg.get("emotion_strength", 1.25))))
         self.path = Path(config.resolve_path(config.data_dir)) / "voice_tuning.json"
         self._lock = threading.Lock()
         self.tuning: dict[str, dict[str, float]] = {}
@@ -280,7 +282,8 @@ class VoiceModeler:
         """Every knob for a mood: neutral values, the built-in mood, then the user's tuning."""
         name = mood_name(mood) or "neutral"
         out = {k: d for k, (d, _, _) in KNOBS.items()}
-        out.update({k: v for k, v in EMOTIONS[name].items() if k in KNOBS})
+        s = getattr(self, "strength", 1.0)
+        out.update({k: _clamp(k, out[k] + (v - out[k]) * s) for k, v in EMOTIONS[name].items() if k in KNOBS})
         out.update(self.tuning.get(name, {}))
         return out
 

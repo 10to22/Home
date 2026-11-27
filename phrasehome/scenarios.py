@@ -177,7 +177,8 @@ def run(config_path: str | Path, name: str, show=print) -> dict:
         from .understanding import candidates_with_aliases
 
         s = cfg.settings
-        matcher = Matcher(candidates_with_aliases(cfg), s.match_mode, s.match_threshold, s.block_words)
+        matcher = Matcher(candidates_with_aliases(cfg), s.match_mode, s.match_threshold, s.block_words,
+                               phonetic=bool(getattr(s, 'phonetic_match', True)))
         for st in steps:
             if "time" in st:
                 target = _parse_time(str(st["time"]), clock.now())

@@ -74,7 +74,8 @@ class Customs:
         phrases = [normalize(p) for p in phrases if normalize(p)]
         if not phrases:
             raise ValueError("give at least one phrase")
-        others = Matcher(expand([c for c in self.home.config.commands if c.name != name], self.home.config.slots))
+        others = Matcher(expand([c for c in self.home.config.commands if c.name != name], self.home.config.slots),
+                         phonetic=False)  # a clash is the same words, not similar sounds
         for p in phrases:
             hit = others.match(p)
             if hit:

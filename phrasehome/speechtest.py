@@ -176,7 +176,8 @@ def score(config, hear: dict[str, Callable[[bytes], str]] | None = None, show=pr
         raise SystemExit("No saved clips yet. Run: phrasehome speech-test --record (or --tts)")
     hear = hear if hear is not None else recognizers(config)
     s = config.settings
-    matcher = Matcher(candidates_with_aliases(config), s.match_mode, s.match_threshold, s.block_words)
+    matcher = Matcher(candidates_with_aliases(config), s.match_mode, s.match_threshold, s.block_words,
+                               phonetic=bool(getattr(s, 'phonetic_match', True)))
     results: dict[str, dict] = {}
     for name, fn in hear.items():
         rows, errs, right, secs = [], [], 0, 0.0

@@ -47,6 +47,9 @@ class Settings:
     # the word bank (wordbank.py): each phrase also matches its usual other wordings ("switch on the
     # lights", "lights on", "put the lights on"), English only
     phrase_variants: bool = True
+    # nothing matches word for word: compare how the words sound ("kitchin lites" ~ "kitchen lights")
+    phonetic_match: bool = True
+    whisper_beam: int = 0  # Whisper's beam search width: 0 = 5 on a Mac, 2 elsewhere (1 is fastest)
     # "lock the front door and turn off the lights": run both (every part must be a command)
     multi_commands: bool = True
     # "no, I meant the bedroom": also undo the wrong one (lights on -> off) when there's an opposite command

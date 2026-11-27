@@ -87,6 +87,22 @@ def _expand(templates, slots: dict[str, dict[str, str]]) -> list[Candidate]:
     return out
 
 
+def _same_sounding(heard: list[str], words: list[str]) -> bool:
+    """Word by word: the same, or spelled close and sounding alike ("kitchin" ~ "kitchen", "lites" ~
+    "lights"), never two different words that happen to share consonants ("cozy" vs "quiz"). At most half
+    the words (and at least two) may differ."""
+    from .speech_tuning import phonetic_word
+
+    diff, most = 0, max(2, (len(words) + 1) // 2)
+    for a, b in zip(heard, words):
+        if a == b:
+            continue
+        diff += 1
+        if diff > most or phonetic_word(a) != phonetic_word(b) or fuzz.ratio(a, b) < 50:
+            return False
+    return diff > 0
+
+
 def vocabulary(candidates: list[Candidate]) -> list[str]:
     """Grammar for Vosk: every phrase, every individual word, plus [unk] for everything else."""
     phrases = sorted({c.text for c in candidates})
@@ -101,9 +117,12 @@ class Matcher:
         mode: str = "utterance",
         threshold: float = 85.0,
         block_words: list[str] | None = None,
+        phonetic: bool = True,
     ) -> None:
         self.candidates = candidates
         self._texts = [c.text for c in candidates]
+        self.phonetic = phonetic
+        self._sounds: list[str] | None = None  # how each candidate sounds (speech_tuning.phonetic), made on first use
         self.mode = mode
         self.threshold = threshold
         self.block = [normalize(b) for b in (block_words or []) if normalize(b)]
@@ -157,12 +176,36 @@ class Matcher:
                 key = (score, len(cand.text), cand)
                 if best is None or key[:2] > best[:2]:
                     best = key
+        if best is None and self.phonetic and self.mode == "utterance":
+            best = self._sounds_like(tries)
         if best is None:
             return None
         score, _, cand = best
         if self._blocked(heard, cand.text):
             return None
         return Match(cand.command, cand.text, cand.slots, score, heard)
+
+    def _sounds_like(self, tries: list[list[str]]):
+        """No word-for-word match: the candidate that sounds the same, scored a little lower (so risky
+        commands still get "did you say ...?")."""
+        from .speech_tuning import phonetic
+
+        if self._sounds is None:
+            self._sounds = [phonetic(t) for t in self._texts]
+        best = None
+        for w in tries:
+            if len(w) < 2:
+                continue  # one word sounds like too many things
+            said = phonetic(" ".join(w))
+            for _, sc, i in process.extract(said, self._sounds, scorer=fuzz.ratio,
+                                            score_cutoff=max(self.threshold, 90), limit=5):
+                cand = self.candidates[i]
+                if len(cand.words) != len(w) or not _same_sounding(w, cand.words):
+                    continue
+                key = (min(sc - 4, 90.0), len(cand.text), cand)  # never "sure": risky ones still ask
+                if best is None or key[:2] > best[:2]:
+                    best = key
+        return best
 
     def near(self, text: str, floor: float = 60.0, n: int = 5) -> list[tuple[float, Candidate]]:
         """Commands that almost matched (between `floor` and the threshold), best first, one per command."""

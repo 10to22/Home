@@ -97,7 +97,7 @@ def test_what_wins_when_picking_a_mood(tmp_path):
 
 # ---------- tuning ----------
 def test_tuning_is_clamped_saved_and_reset(tmp_path):
-    cfg = make_cfg(tmp_path, "{engine: none, emotion: true}")
+    cfg = make_cfg(tmp_path, "{engine: none, emotion: true, emotion_strength: 1}")
     m = VoiceModeler(cfg)
     assert m.tune("Cheeky", pitch=40, rate=1.2)["pitch"] == 6.0
     with pytest.raises(KeyError):
@@ -130,7 +130,8 @@ def test_options_from_the_dashboard_win_over_config(tmp_path):
 def test_engine_params(tmp_path):
     m = VoiceModeler(make_cfg(tmp_path, "{engine: none, emotion: true, accent: en_AU}"))
     piper = m.engine_params("piper", "cheeky", speed=1.0)
-    assert piper["length_scale"] < 1 and piper["noise_scale"] > 0.667 and piper["post"]["pitch"] == 1.5
+    # moods are played a bit stronger than written by default (emotion_strength: 1.25)
+    assert piper["length_scale"] < 1 and piper["noise_scale"] > 0.667 and piper["post"]["pitch"] == 1.875
     calm = m.engine_params("piper", "calm")
     assert calm["length_scale"] > 1 and calm["sentence_silence"] > 0.2
     esp = m.engine_params("espeak", "cheerful")
@@ -140,7 +141,7 @@ def test_engine_params(tmp_path):
     http = m.engine_params("http", "cheeky", speed=1.1)
     assert "Australian" in http["instructions"] and "cheeky" in http["instructions"] and http["base_speed"] == 1.1
     tried = m.engine_params("piper", "cheeky", knobs={"pitch": -3, "nope": 1})
-    assert tried["post"]["pitch"] == -3 and m.knobs("cheeky")["pitch"] == EMOTIONS["cheeky"]["pitch"]
+    assert tried["post"]["pitch"] == -3 and m.knobs("cheeky")["pitch"] == EMOTIONS["cheeky"]["pitch"] * 1.25
 
 
 def test_post_filter_keeps_the_length_when_shifting_pitch():
@@ -418,3 +419,11 @@ def test_untagged_sentences_get_a_mood_from_their_words():
     assert guess("Take your time, no rush.") == "calm"
     assert guess("Hurry, the bus leaves in 5 minutes.") == "urgent"
     assert guess("The kettle is on.") is None
+
+
+def test_emotion_strength_scales_every_mood(tmp_path):
+    soft = VoiceModeler(make_cfg(tmp_path, "{engine: none, emotion_strength: 0.5}")).knobs("annoyed")
+    clear = VoiceModeler(make_cfg(tmp_path, "{engine: none}")).knobs("annoyed")
+    base = EMOTIONS["annoyed"]
+    assert soft["pitch"] == base["pitch"] * 0.5 and clear["pitch"] == base["pitch"] * 1.25
+    assert clear["rate"] > base["rate"] > soft["rate"] > 1.0

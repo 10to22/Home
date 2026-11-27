@@ -45,6 +45,12 @@ class History:
         self._lock = threading.Lock()
 
     def add(self, **entry: Any) -> dict | None:
+        try:  # said it again another way and it worked: learn what the first try meant (speech_tuning.py)
+            from .speech_tuning import retry_for
+
+            retry_for(self.home).observe(entry)
+        except Exception as e:
+            log.debug("retry learning: %s", e)
         if not self.enabled:
             return None
         e = {"id": uuid.uuid4().hex[:8], "time": time.strftime("%Y-%m-%d %H:%M:%S"), **entry}

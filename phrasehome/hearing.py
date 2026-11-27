@@ -194,7 +194,12 @@ class StreamCleaner:
 
 # ---------- Whisper ----------
 def default_whisper_model() -> str:
-    return "small.en" if sys.platform == "darwin" else "base.en"
+    """A Mac with 16 GB or more gets distil-medium.en (much more accurate, still quick on Apple silicon)."""
+    if sys.platform == "darwin":
+        from .speech_tuning import memory_gb
+
+        return "distil-medium.en" if memory_gb() >= 15 else "small.en"
+    return "base.en"
 
 
 def house_words(config, extra_names: list[str] | None = None, limit: int = 700) -> str:
@@ -208,6 +213,13 @@ def house_words(config, extra_names: list[str] | None = None, limit: int = 700) 
 
     for n in extra_names or []:
         add(n)
+    try:  # what it has learned to expect (accent fixes, taught sentences)
+        from .speech_tuning import learned_words
+
+        for w in learned_words(config):
+            add(w)
+    except Exception:
+        pass
     for inst in config.instances:
         add(inst.name)
         for r in inst.rooms:
@@ -230,7 +242,9 @@ def house_words(config, extra_names: list[str] | None = None, limit: int = 700) 
 class Whisper:
     """faster-whisper on the CPU (works on a Mac and a Pi). The model downloads on first use."""
 
-    def __init__(self, model: str = "", compute_type: str = "int8") -> None:
+    def __init__(self, model: str = "", compute_type: str = "int8", beam: int = 1) -> None:
+        self.beam = max(1, int(beam))
+        self.hotwords = ""
         try:
             from faster_whisper import WhisperModel
         except ImportError:
@@ -242,9 +256,15 @@ class Whisper:
     def transcribe(self, pcm: bytes, prompt: str = "", language: str = "en") -> tuple[str, float, list[dict]]:
         """(text, confidence 0-1, [{word, conf}])"""
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-        segments, _ = self.model.transcribe(audio, language=(language or "en")[:2], beam_size=1,
-                                            initial_prompt=prompt or None, word_timestamps=True,
-                                            condition_on_previous_text=False, vad_filter=False)
+        kw = dict(language=(language or "en")[:2], beam_size=getattr(self, "beam", 1), initial_prompt=prompt or None,
+                  word_timestamps=True, condition_on_previous_text=False, vad_filter=False)
+        if getattr(self, "hotwords", ""):
+            kw["hotwords"] = self.hotwords  # names and learned words it should expect
+        try:
+            segments, _ = self.model.transcribe(audio, **kw)
+        except TypeError:  # an older faster-whisper without hotwords
+            kw.pop("hotwords", None)
+            segments, _ = self.model.transcribe(audio, **kw)
         segments = [s for s in segments if getattr(s, "no_speech_prob", 0) < 0.6]
         words = [{"word": w.word.strip(), "conf": round(float(w.probability), 3)}
                  for s in segments for w in (getattr(s, "words", None) or []) if w.word.strip()]
