@@ -246,6 +246,8 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Learned words prime Whisper | Accent fixes and taught sentences go into Whisper's prompt; names go in as hotwords |
 | Stronger Whisper | Beam search (`whisper_beam`, 5 on a Mac) and distil-medium.en on a Mac with 16 GB or more |
 | Clearer moods | `voice: {emotion_strength: 1.25}` (the default): every mood a bit further from neutral; 1 is as before |
+| Train its vocabulary | `phrasehome train-hearing`: hundreds of your phrases (every command, every way of saying it) said by many voices (your Mac's voices, Piper voices including multi-speaker ones with hundreds of real readers), at different speeds, half of them over music or noise, all squeezed through mp3, then run through your recognizer. Mishearings that keep happening across voices are learned (word fixes and whole wordings, the same as teaching on the History page), never anything that would make another command fire. It also lists clashes (a phrase heard as a different command), words the Vosk model doesn't know, and accuracy before and after. `--background party.mp3` checks that real music, TV or talk runs nothing. `--dry` measures only |
+| Your own recordings | `phrasehome speech-test --files ~/voice-memos`: mp3, m4a, wav... named after what was said (or `transcripts.txt` with `file|what was said`), scored like `speech-test --record` |
 
 ## Simulator scenarios
 

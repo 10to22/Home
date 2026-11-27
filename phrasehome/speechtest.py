@@ -3,6 +3,8 @@
     phrasehome speech-test --record     say 15 phrases from your commands (saved in data/speech-test/)
     phrasehome speech-test --tts        or let the house's own voice say them (quick, less realistic)
     phrasehome speech-test              score the saved clips with Vosk and Whisper, as set up now
+    phrasehome speech-test --files memos/   your own recordings (mp3, m4a, wav...): the file name, or a line
+                                        "file|what was said" in memos/transcripts.txt, is what was said
 
 Everyone in the family (family_test.py):
     phrasehome family-test --record --person sam -n 50     Sam says 50 of your commands
@@ -205,3 +207,39 @@ def score(config, hear: dict[str, Callable[[bytes], str]] | None = None, show=pr
                      f"  -> {r['matched'] or 'nothing'} (wanted {r['command']})"))
     (out / "last-score.json").write_text(json.dumps(results, indent=1))
     return results
+
+
+AUDIO = (".mp3", ".m4a", ".wav", ".ogg", ".flac", ".aac", ".aiff", ".aif", ".caf", ".webm", ".opus")
+
+
+def import_files(config, folder: str | Path, person: str | None = None, show=print) -> Path:
+    """Recordings you made (voice memos on your phone, anything ffmpeg reads) as a speech-test set."""
+    import re
+
+    from .hearing_train import to_pcm
+    from .matcher import Matcher
+    from .understanding import candidates_with_aliases
+
+    folder = Path(folder).expanduser()
+    said: dict[str, str] = {}
+    tf = folder / "transcripts.txt"
+    if tf.exists():
+        for line in tf.read_text().splitlines():
+            if "|" in line or "\t" in line:
+                f, t = re.split(r"\||\t", line, maxsplit=1)
+                said[f.strip()] = t.strip()
+    files = sorted(p for p in folder.iterdir() if p.suffix.lower() in AUDIO)
+    if not files:
+        raise SystemExit(f"no audio files in {folder}")
+    s = config.settings
+    m = Matcher(candidates_with_aliases(config), s.match_mode, s.match_threshold, s.block_words)
+    items, pcms = [], {}
+    for f in files:
+        text = said.get(f.name) or said.get(f.stem) or re.sub(r"[_\-]+", " ", re.sub(r"\s*\(\d+\)$", "", f.stem))
+        text = re.sub(r"^\d+\s+", "", text).strip()
+        hit = m.match(text)
+        items.append({"expected": text, "command": hit.command.name if hit else "(ai)"})
+        pcms[len(items)] = to_pcm(f)
+    out = save_set(config, items, lambda item, i: pcms[i], person)
+    show(f"Imported {len(items)} recordings into {out}")
+    return out

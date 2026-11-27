@@ -897,7 +897,9 @@ def _cmd_speech_test(args) -> int:
     from . import speechtest
 
     cfg = load_config(args.config)
-    if args.record or args.tts:
+    if getattr(args, "files", ""):
+        speechtest.import_files(cfg, args.files)
+    elif args.record or args.tts:
         items = speechtest.choose_phrases(cfg, args.n)
         if args.record:
             print(f"Say each phrase normally, from where you'd usually stand. {len(items)} phrases.")
@@ -1183,7 +1185,19 @@ def main(argv: list[str] | None = None) -> int:
     st.add_argument("--tts", action="store_true", help="have the house's voice say them instead (quick)")
     st.add_argument("-n", type=int, default=15, help="how many phrases")
     st.add_argument("--seconds", type=float, default=3.5, help="recording length per phrase")
+    st.add_argument("--files", default="", help="a folder of your own recordings (mp3, m4a, wav): file name = what was said")
     st.set_defaults(fn=_cmd_speech_test)
+
+    th = sub.add_parser("train-hearing", help="teach it your words: many voices say your phrases, it learns what it mishears")
+    th.add_argument("--phrases", type=int, default=300, help="how many phrases (every command gets at least one)")
+    th.add_argument("--per-phrase", type=int, default=2, help="how many voices say each phrase")
+    th.add_argument("--voices", nargs="*", help="folders of Piper voices (.onnx), as well as this computer's own")
+    th.add_argument("--speakers", type=int, default=6, help="voices to use from each multi-speaker Piper model")
+    th.add_argument("--noise", default="", help="background audio to mix in (mp3/wav: music, a party, the TV)")
+    th.add_argument("--background", nargs="*", help="long real recordings that should run nothing (music, TV, talk)")
+    th.add_argument("--dry", action="store_true", help="measure only; learn nothing")
+    th.add_argument("--keep", action="store_true", help="keep the mp3 clips (data/train-hearing/clips)")
+    th.set_defaults(fn=lambda a: __import__("phrasehome.hearing_train", fromlist=["main"]).main(a))
 
     ac = sub.add_parser("ai-check", help="check that the AI (Claude) is linked: key, model, a test question")
     ac.set_defaults(fn=_cmd_ai_check)
