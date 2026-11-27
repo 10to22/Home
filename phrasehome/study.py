@@ -94,7 +94,21 @@ class Study:
         self._lock = threading.Lock()
 
     def _say(self, key: str, room: str, **v) -> str:
+        st = self.sessions.get((room or "").lower()) or {}
+        rooms = [r for r in dict.fromkeys([room, *st.get("members", [])]) if r]
+        if len(rooms) > 1:  # studying together: everyone in the session hears the breaks
+            return self.home.voice.speak(key, rooms=rooms, **v)
         return self.home.voice.speak(key, room=room, **v)
+
+    def join(self, room: str, other_room: str) -> bool:
+        """Join the session in `room` from `other_room` (study together)."""
+        st = self.sessions.get(room.lower())
+        if not st:
+            return False
+        members = st.setdefault("members", [])
+        if other_room and other_room.lower() not in members and other_room.lower() != room.lower():
+            members.append(other_room.lower())
+        return True
 
     def start(self, room: str | None, person: str | None = None, minutes: float | None = None) -> str:
         h = self.home

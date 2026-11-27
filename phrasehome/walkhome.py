@@ -203,7 +203,7 @@ class WalkHome:
 
     # ---------- the ntfy topic ----------
     def start_listening(self) -> None:
-        topic = self.cfg.get("topic")
+        topic = (self.home.config.extra.get("inbox") or {}).get("topic") or self.cfg.get("topic")
         if not topic or self._running:
             return
         self._running = True
@@ -215,7 +215,7 @@ class WalkHome:
     def _listen(self, topic: str) -> None:
         import requests
 
-        server = str(self.cfg.get("server", "https://ntfy.sh")).rstrip("/")
+        server = str((self.home.config.extra.get("inbox") or {}).get("server") or self.cfg.get("server", "https://ntfy.sh")).rstrip("/")
         while self._running:
             try:
                 with requests.get(f"{server}/{topic}/json", stream=True, timeout=(10, 90)) as r:
@@ -227,7 +227,11 @@ class WalkHome:
                         msg = json.loads(line)
                         if msg.get("event") == "message":
                             try:
-                                self.heard(msg.get("message", ""), title=msg.get("title", ""))
+                                life = getattr(self.home, "life", None)
+                                if life is not None:
+                                    life.from_phone(msg.get("message", ""), msg.get("title", ""))
+                                else:
+                                    self.heard(msg.get("message", ""), title=msg.get("title", ""))
                             except Exception as e:
                                 log.warning("walk home message %r: %s", msg.get("message"), e)
             except Exception as e:

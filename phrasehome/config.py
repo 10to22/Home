@@ -198,6 +198,31 @@ LIFE_COMMANDS = [
     ("walk_status", ["is anyone walking home", "who's walking home", "who's on the way home"]),
 ]
 BUILTIN_COMMANDS += [(f"life_{n}", phrases, {"backend": "life", "life": n}) for n, phrases in LIFE_COMMANDS]
+# fixed sentences the house life features answer (the sentence itself is passed along)
+LIFE_SENTENCES = [
+    ("points", ["house points", "points leaderboard", "how many house points do i have"]),
+    ("ring_phone", ["ring my phone", "find my phone"]),
+    ("bathroom", ["is the bathroom free", "shower queue", "bathroom queue", "i'm next for the shower"]),
+    ("house_calendar", ["house calendar", "what's on the house calendar"]),
+    ("owes", ["who owes what"]),
+    ("blitz", ["cleaning blitz", "start a cleaning blitz", "blitz the house"]),
+    ("semester", ["semester break mode", "holiday mode", "semester break mode off", "holiday mode off"]),
+    ("horoscopes", ["house horoscopes", "read the horoscopes", "my horoscope"]),
+    ("year_review", ["year in review", "house year in review"]),
+    ("wear", ["what should i wear today"]),
+    ("hangover", ["hangover mode", "hangover mode off"]),
+    ("referee", ["flip a coin", "toss a coin", "roll a dice", "roll the dice", "pick one of us"]),
+    ("rules", ["what are the house rules"]),
+    ("bins_out", ["the bins are out", "bins are out", "bins are done"]),
+    ("night_out", ["night out mode"]),
+    ("reading", ["pause reading", "keep reading", "stop reading"]),
+    ("move_in", ["what do we still need", "what's everyone bringing"]),
+    ("poll_end", ["poll results", "end the poll"]),
+    ("tv_cancel", ["cancel the tv timer"]),
+    ("noise", ["how loud is it in here"]),
+    ("usual", ["my usual please", "do my usual"]),
+]
+BUILTIN_COMMANDS += [(f"life_say_{n}", phrases, {"backend": "life", "life": "quick"}) for n, phrases in LIFE_SENTENCES]
 NEEDS_ROUTINE = {"fire": "fire_mode"}
 
 
@@ -214,6 +239,8 @@ def _identity(action: dict) -> tuple | None:
     if action.get("backend") == "freak" or "freak" in action:
         return ("freak", _is_on(action.get("freak")))
     if action.get("backend") == "life" or "life" in action:
+        if action.get("life") == "quick":
+            return None  # several of these: told apart by their phrases
         return ("life", str(action.get("life")))
     return None
 
@@ -266,7 +293,10 @@ EXTRA_SECTIONS = ("weather", "alarm", "energy", "packages", "meals", "spotify", 
                   "notify_rules", "backup", "guests", "homework", "ai_extras",
                   # the student house (house_life.py)
                   "party", "study", "exams", "door_status", "house_meeting", "shower", "last_out", "windows",
-                  "winter_lamp", "pollen", "walk_home", "quiz", "radio")
+                  "winter_lamp", "pollen", "walk_home", "quiz", "radio",
+                  "points", "noise", "bathroom", "bins", "house_rules", "thermostat", "move_in", "deadlines",
+                  "grades", "hangover", "showers", "conversions", "stove", "price_check", "night_out", "safe_word",
+                  "network", "missed", "tv", "mood_dial", "blitz", "semester_break", "inbox")
 
 
 def load_config(path: str | Path) -> Config:
@@ -311,6 +341,11 @@ def load_config(path: str | Path) -> Config:
         raise ConfigError("no commands defined")
     if data.get("settings", {}).get("builtin_commands", True) is not False:
         commands += missing_builtin_commands(commands, set(data.get("routines") or {}))
+    sw = data.get("safe_word") or {}
+    if isinstance(sw, dict) and sw.get("phrase") and not any(c.name == "safe_word" for c in commands):
+        # said anywhere: the house stays silent and quietly texts the others (safety_plus.py)
+        commands.append(Command(name="safe_word", phrases=[str(sw["phrase"]).lower()],
+                                action={"backend": "life", "life": "safe_word"}))
 
     sources = data.get("sources") or {"local_mic": {}}
     for name in sources:

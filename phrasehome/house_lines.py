@@ -249,7 +249,7 @@ SAFETY: set[str] = {"walk_overdue", "walk_overdue_again", "last_out_couldnt"}
 
 
 def add_to(default_phrases: dict, styles: dict) -> None:
-    """Put these lines into voice.py's tables. A line already there (from config) wins."""
+    """Put these lines (and house_lines2.py's) into voice.py's tables. A line already there wins."""
     for k, v in PLAIN.items():
         default_phrases.setdefault(k, v)
     layers = {"deadpan": {}, "mean": MEAN, "aussie": {**MEAN, **AUSSIE}, "aussie_uncut": {**MEAN, **AUSSIE, **UNCUT}}
@@ -261,3 +261,14 @@ def add_to(default_phrases: dict, styles: dict) -> None:
     for style in styles.values():  # safety lines: plain words in every style
         for k in SAFETY:
             style.pop(k, None)
+
+
+def _merge_second_batch() -> None:
+    from . import house_lines2 as L2
+
+    for mine, more in ((PLAIN, L2.PLAIN), (MEAN, L2.MEAN), (AUSSIE, L2.AUSSIE), (UNCUT, L2.UNCUT), (MOODS, L2.MOODS)):
+        mine.update({k: v for k, v in more.items() if k not in mine})
+    SAFETY.update(L2.SAFETY)
+
+
+_merge_second_batch()

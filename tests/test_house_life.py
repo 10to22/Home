@@ -74,7 +74,7 @@ def home(tmp_path, monkeypatch):
         return out
 
     h.voice.speak = speak
-    monkeypatch.setattr(h, "notify_person", lambda inst, msg, title="": h.sent.append((inst.id, title, msg)))
+    monkeypatch.setattr(h, "notify_person", lambda inst, msg, title="", **kw: h.sent.append((inst.id, title, msg)))
     h.life.sync = True
     h.clock = Clock(monkeypatch)
     yield h
@@ -407,7 +407,7 @@ def test_every_life_command_is_built_in(home):
     from phrasehome.config import LIFE_COMMANDS
 
     have = {c.action.get("life") for c in home.config.commands if c.action.get("backend") == "life"}
-    assert have == {n for n, _ in LIFE_COMMANDS}
+    assert have - {"quick"} == {n for n, _ in LIFE_COMMANDS}
     for what, _ in LIFE_COMMANDS:  # each one runs without an error, even with nothing going on
         home.run_action({"backend": "life", "life": what}, {"here": "kitchen"})
 

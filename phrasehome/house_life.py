@@ -49,6 +49,37 @@ class HouseLife:
         self.walk = WalkHome(home)
         self.quiz = Quiz(home)
         self.radio = Radio(home)
+        from . import campus, housemates as hm, kitchen, personal, safety_plus
+        from .points import Points
+
+        self.points = Points(home)
+        self.noise, self.bathroom, self.bins = hm.Noise(home), hm.Bathroom(home), hm.Bins(home)
+        self.borrow, self.rules, self.referee = hm.Borrow(home), hm.Rules(home), hm.Referee(home)
+        self.locked_out, self.polls, self.thermostat = hm.LockedOut(home), hm.Polls(home), hm.Thermostat(home)
+        self.calendar, self.errands = hm.HouseCalendar(home), hm.Errands(home)
+        self.move_in, self.secrets = hm.MoveIn(home), hm.Secrets(home)
+        self.deadlines, self.together, self.reader = campus.Deadlines(home), campus.Together(home), campus.Reader(home)
+        self.vision, self.exam_kit, self.projects = campus.Vision(home), campus.ExamKit(home), campus.Projects(home)
+        self.grades, self.hangover = campus.Grades(home), campus.Hangover(home)
+        self.shower_slots, self.wear = campus.ShowerSlots(home), campus.Wear(home)
+        self.kitchen, self.stove = kitchen.Kitchen(home), kitchen.Stove(home)
+        self.takeout, self.bets = kitchen.Takeout(home), kitchen.Bets(home)
+        self.night_out, self.safe_word = safety_plus.NightOut(home), safety_plus.SafeWord(home)
+        self.ring_phone, self.network = safety_plus.RingPhone(home), safety_plus.Network(home)
+        self.head_count = safety_plus.HeadCount(home)
+        self.missed, self.my_calendar, self.things = personal.Missed(home), personal.MyCalendar(home), personal.Things(home)
+        self.place_reminders, self.nicknames = personal.PlaceReminders(home), personal.Nicknames(home)
+        self.usual, self.tv, self.mood_dial = personal.Usual(home), personal.TVTimer(home), personal.MoodDial(home)
+        self.blitz, self.semester = personal.Blitz(home), personal.SemesterBreak(home)
+        self.horoscope, self.year = personal.Horoscope(home), personal.YearReview(home)
+        # the order sentences are tried in: specific first, then house points, then facts about people
+        self.parts = [self.kitchen, self.takeout, self.bets, self.bins, self.bathroom, self.borrow, self.calendar,
+                      self.things, self.place_reminders, self.nicknames, self.usual, self.tv, self.rules, self.referee,
+                      self.locked_out, self.polls, self.thermostat, self.errands, self.move_in, self.secrets,
+                      self.deadlines, self.together, self.reader, self.projects, self.grades, self.hangover,
+                      self.shower_slots, self.wear, self.noise, self.night_out, self.ring_phone, self.head_count,
+                      self.missed, self.my_calendar, self.blitz, self.semester, self.horoscope, self.year,
+                      self.exam_kit, self.stove, self.network, self.mood_dial, self.points]
         self.sync = False  # tests: handle events straight away
         self._q: queue.Queue = queue.Queue()
         self._running = False
@@ -72,7 +103,7 @@ class HouseLife:
             self.handle(ev)
 
     def handle(self, ev: dict) -> None:
-        for part in (self.party, self.exams, self.watch, self.walk):
+        for part in (self.party, self.exams, self.watch, self.walk, *self.parts):
             try:
                 part.on_event(ev)
             except Exception as e:
@@ -90,10 +121,15 @@ class HouseLife:
                 fn()
             except Exception as e:
                 log.error("%s: %s", name, e)
+        for part in self.parts:
+            try:
+                part.tick(now)
+            except Exception as e:
+                log.error("%s: %s", type(part).__name__.lower(), e)
 
     def start(self) -> None:
         self._running = True
-        self.walk.start_listening()
+        self.walk.start_listening()  # the house's ntfy topic: messages from your phones
         threading.Thread(target=self._loop, daemon=True).start()
 
     def stop(self) -> None:
@@ -141,6 +177,9 @@ class HouseLife:
             "walk_status": lambda: self.walk.heard("who's walking home", room=room) or "",
             "door_status": lambda: self.door_status.set(room if speaker is None or speaker.main or not speaker.rooms
                                                         else speaker.rooms[0], str(a.get("status", "clear"))),
+            "safe_word": lambda: self.safe_word.trigger(room, p),
+            "quick": lambda: "done" if self.quick(str(a.get("_phrase") or a.get("text") or ""), room, p)
+            else self.home.voice.speak("didnt_catch", room=room),
         }
         if what not in table:
             raise ValueError(f"unknown house life action '{what}' (have: {', '.join(table)})")
@@ -151,7 +190,8 @@ class HouseLife:
         return self.home.voice.speak("exam_list" if text else "exam_none", room=room, list=text)
 
     # ---------- sentences with details, before the AI ----------
-    def quick(self, said: str, room: str | None = None, person: str | None = None, strict: bool = False) -> bool:
+    def quick(self, said: str, room: str | None = None, person: str | None = None, strict: bool = False,
+              reply=None) -> bool:
         """True if one of the house life features understood it (and has answered). strict: said in their
         own room without the house's name, so remarks about people aren't saved as facts."""
         h = self.home
@@ -169,17 +209,46 @@ class HouseLife:
         if re.match(r"^should (?:i|we) open (?:a|the|some) windows?|^(?:is|how's|how is|what's) the pollen", s):
             self.watch.window_advice(room)
             return True
-        for fn in (lambda: self.walk.heard(said, speaker, room), lambda: self.meeting.heard(said),
-                   lambda: self.door_status.heard(said, room, speaker), lambda: self.exams.heard(said, speaker),
-                   lambda: None if strict else self.people.heard(said, speaker)):
+        handlers = [lambda: self.walk.heard(said, speaker, room), lambda: self.meeting.heard(said),
+                    lambda: self.door_status.heard(said, room, speaker), lambda: self.exams.heard(said, speaker)]
+        handlers += [lambda p=p: p.heard(said, room, speaker) for p in self.parts
+                     if not (strict and p in (self.points, self.things, self.borrow, self.secrets, self.nicknames))]
+        if not strict:
+            handlers.append(lambda: self.people.heard(said, speaker))
+        for fn in handlers:
             got = fn()
             if got is None:
                 continue
             if isinstance(got, tuple):
                 key, values = got
-                h.voice.speak(key, room=room, **values)
+                if reply is not None:
+                    reply(h.voice.resolve(key, **values)[0])
+                else:
+                    h.voice.speak(key, room=room, **values)
             return True
         return False
+
+    def from_phone(self, text: str, title: str = "") -> bool:
+        """A message on the house's ntfy topic: "Finn locked out", "vote pizza" (title: Finn), "Parker walking home 20"."""
+        text = (text or "").strip()
+        if not text:
+            return False
+        if self.walk.heard(text, title=title) is not None:
+            return True
+        who = self.people.find(title) if title else None
+        if who is None:
+            m = re.match(rf"^({self.points.who_rx()})[:,]?\s+(.+)$", text.lower())
+            if m:
+                who, text = self.people.find(m.group(1)), m.group(2)
+        if who is None:
+            return False
+        if re.match(r"^(?:locked out|i'm locked out|let me in)$", text.lower()):
+            self.locked_out.start(who)
+            return True
+        if re.match(r"^(?:safe word|help|sos)$", text.lower()):
+            self.safe_word.trigger(None, who.id)
+            return True
+        return self.quick(text, person=who.id, reply=lambda msg: self.home.notify_person(who, msg, title="House"))
 
     # ---------- for the AI ----------
     def context_line(self) -> str:

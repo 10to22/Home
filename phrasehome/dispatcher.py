@@ -247,7 +247,7 @@ class Dispatcher:
                 log.error("step %s failed: %s", st, e)
         return failed
 
-    def notify_person(self, inst, message: str, title: str = "") -> None:
+    def notify_person(self, inst, message: str, title: str = "", priority: int | None = None) -> None:
         """Push to an instance's phone (ntfy topic), if it has one and an ntfy backend exists."""
         if not inst.phone:
             return
@@ -257,7 +257,8 @@ class Dispatcher:
             return
         try:
             self.run_action({"backend": ntfy, "topic": inst.phone, "message": message,
-                             "title": title or inst.name})
+                             "title": title or inst.name, **({"priority": priority, "tags": "rotating_light"}
+                                                             if priority else {})})
         except Exception as e:
             log.warning("phone notification failed: %s", e)
 

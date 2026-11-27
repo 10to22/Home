@@ -140,6 +140,12 @@ class Engine:
                 smoke.feed(room or source, pcm)  # beep patterns only, even in privacy mode
             except Exception as e:
                 log.debug("smoke listener: %s", e)
+        life = getattr(self.dispatcher, "life", None)
+        if life is not None and not self._hub_talking():
+            try:
+                life.noise.level(room or source, pcm)  # loudness only, for quiet hours
+            except Exception as e:
+                log.debug("noise meter: %s", e)
         plus = self._plus()
         pcm = plus.pre(source, room, pcm)  # mic health, echo cancelling, the room's noise, direction
         if not pcm:

@@ -376,4 +376,5 @@ class LifeBackend(_Builtin):
 
     def run(self, action: dict[str, Any], phrase: str) -> str:
         ctx = action.get("_context", {})
-        return self.home.life.do(str(action.get("life")), self.room(action), ctx.get("person"), action)
+        return self.home.life.do(str(action.get("life")), self.room(action), ctx.get("person"),
+                                 {**action, "_phrase": phrase})
