@@ -51,6 +51,21 @@ class _Lang:
         have = set(words)
         heard_too = [w for w in dict.fromkeys(heard_too) if w not in have]
         words = words[:-1] + heard_too + words[-1:]
+        find = getattr(model, "find_word", None) or getattr(model, "vosk_model_find_word", None)
+        if find is not None and s.restrict_vocabulary:
+            # words the speech model has never heard of can't be recognised: leave them (and phrases with
+            # them) out, instead of Vosk warning about each one. `phrasehome train-hearing` lists them.
+            try:
+                known: dict[str, bool] = {}
+
+                def ok(w: str) -> bool:
+                    if w not in known:
+                        known[w] = find(w) >= 0
+                    return known[w]
+
+                words = [x for x in words if x == "[unk]" or all(ok(w) for w in x.split())]
+            except Exception as e:
+                log.debug("vocabulary check: %s", e)
         self.grammar = json.dumps(words) if s.restrict_vocabulary else None
 
 
