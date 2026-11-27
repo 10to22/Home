@@ -159,13 +159,19 @@ def test_listener_runs_named_commands_and_respects_confidence(home, monkeypatch)
 def test_slang_and_other_wordings():
     v = variants("turn on the {room} lights", None)
     for said in ("flick the {room} lights on", "whack the {room} lights on", "chuck on the {room} lights",
-                 "pop the {room} lights on", "power up the {room} lights"):
+                 "pop the {room} lights on", "power on the {room} lights"):
         assert said in v, said
     assert "crank the volume" in variants("turn up the volume", None)
     assert "kettle on" in variants("put on the kettle", None) and "put on the jug" in variants("put on the kettle", None)
     assert "get the dishwasher going" in variants("start the dishwasher", None)
     assert "turn off the telly" in variants("turn off the tv", None)
     assert "night night" in variants("good night", None) and "off to bed" in variants("goodnight", None)
+
+
+def test_easily_misheard_wordings_are_left_out():
+    # train-hearing: "power up" was heard as "power of" (-> power off), "end the" as "in the"
+    assert "power up the {room} lights" not in variants("turn on the {room} lights", None)
+    assert "end the radio" not in variants("stop the radio", None)
 
 
 def test_everyday_verbs_arent_mistaken_for_things():

@@ -46,6 +46,7 @@ class Match:
     notify: Callable[[str], None] | None = None  # feedback to the mic: "matched"/"done"/"failed"
     via: str = "voice"  # voice | typed | did-you-mean
     confirmed: bool = False  # a risky command someone said yes to
+    unsure: bool = False  # the word that decides on/off (up/down, lock/unlock...) was unclear: ask first
 
 
 def expand(commands: list[Command], slots: dict[str, dict[str, str]],
@@ -119,9 +120,12 @@ class Matcher:
         block_words: list[str] | None = None,
         phonetic: bool = True,
         synonyms: bool = True,
+        fixes: dict[str, str] | None = None,
     ) -> None:
         self.candidates = candidates
         self.synonyms = synonyms  # telly = tv = television on both sides (wordbank.same_words)
+        # words train-hearing proved the recognizer gets wrong: tried as well as what was heard, never instead
+        self.fixes = dict(fixes or {})
         self._texts = [self._same(c.text) for c in candidates]
         self.phonetic = phonetic
         self._sounds: list[str] | None = None  # how each candidate sounds (speech_tuning.phonetic), made on first use
@@ -165,6 +169,11 @@ class Matcher:
         # "could you please lock the doors for me" is scored as "lock the doors" too
         bare = strip_filler(" ".join(words)).split()
         tries = [words] if bare == words else [words, bare]
+        if getattr(self, "fixes", None):
+            for w in list(tries):
+                fixed = [self.fixes.get(x, x) for x in w]
+                if fixed != w:
+                    tries.append(fixed)
         if self.mode == "utterance" and self.synonyms:
             tries = [self._same(" ".join(w)).split() for w in tries]
         best: tuple[float, int, Candidate] | None = None

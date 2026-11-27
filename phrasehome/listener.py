@@ -33,8 +33,11 @@ class _Lang:
         from .wordbank import FILLER_WORDS
 
         self.candidates = candidates_with_aliases(config, lang)  # + sentences taught on the History page
+        from .hearing_train import trained_fixes
+
         self.matcher = Matcher(self.candidates, s.match_mode, s.match_threshold, s.block_words,
-                               phonetic=bool(getattr(s, 'phonetic_match', True)))
+                               phonetic=bool(getattr(s, 'phonetic_match', True)),
+                               fixes=trained_fixes(config) if lang.startswith("en") else None)
         # Vosk's fixed vocabulary: the most common wordings as whole phrases (a small, fast graph), and every
         # word of every wording, so "whack the telly on" can still be written down and matched
         short = candidates_with_aliases(config, lang, for_grammar=True) if s.restrict_vocabulary else self.candidates
@@ -666,6 +669,8 @@ def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config
                             confidence=round(conf, 2))
             return
     if matches:
+        for m in matches:
+            m.unsure = polarity_unsure(m, words, config)
         run_all(matches, delays, dispatcher, config, room, reply, person, conf)
         return
     if history:
@@ -845,6 +850,25 @@ def _flipped(v):
     return v
 
 
+POLARITY = {"on", "off", "up", "down", "open", "close", "shut", "lock", "unlock", "start", "stop", "arm", "disarm"}
+
+
+def polarity_unsure(m, words: list[dict], config: Config) -> bool:
+    """The word that makes this command the opposite of another ("lights *off*") was heard unclearly, and
+    getting it wrong would do the opposite thing. Training with 1,800 clips found "off" heard as "on" (and
+    "power up" as "power of") as the worst mistakes: these get "did you say ...?" instead of a guess."""
+    limit = float(getattr(config.settings, "polarity_confidence", 0.85) or 0)
+    if limit <= 0 or not words:
+        return False
+    from .understanding import is_risky
+
+    said = set(m.phrase.split()) & POLARITY
+    if not said:
+        return False
+    shaky = any(str(w.get("word", "")).lower() in POLARITY and float(w.get("conf", 1.0)) < limit for w in words)
+    return shaky and (_opposite(m.command, config) is not None or is_risky(m.command, config))
+
+
 def _opposite(cmd, config: Config):
     """The command that undoes `cmd` (lights on <-> lights off), if the config has one. Never for locks,
     the alarm or routines: those stay as they are."""
@@ -865,7 +889,8 @@ def run_or_confirm(m, dispatcher: Dispatcher, config: Config) -> None:
 
     history = getattr(dispatcher, "history", None)
     confirm = getattr(dispatcher, "confirm", None)
-    if confirm is not None and not m.confirmed and is_risky(m.command, config) and not is_sure(m):
+    if confirm is not None and not m.confirmed and (getattr(m, "unsure", False)
+                                                    or (is_risky(m.command, config) and not is_sure(m))):
         if history:
             history.add(kind="asked", room=m.room, person=m.person, heard=m.heard, matched=m.command.name,
                         confidence=round(m.confidence, 2), via=m.via)

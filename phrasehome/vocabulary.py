@@ -15,6 +15,8 @@ Add your own the same way; a wording never replaces a phrase written in config.y
 
 from __future__ import annotations
 
+# Left out on purpose (train-hearing, 1,800 clips): "power up the {x}" (heard as "power of", which matched
+# "power off") and "end the {x}" (heard as "in the {x}").
 # A form starting with "~" is only ever said, never matched against your phrase ("more {x}" is a fine
 # way to ask for more volume, but "more coffee" in your config shouldn't turn into "turn up the coffee").
 FAMILIES: dict[str, list[str]] = {
@@ -22,7 +24,7 @@ FAMILIES: dict[str, list[str]] = {
         "turn on the {x}", "turn the {x} on", "switch on the {x}", "{x} on", "switch the {x} on",
         "put the {x} on", "put on the {x}", "get the {x} on", "flick on the {x}", "flick the {x} on",
         "whack the {x} on", "whack on the {x}", "chuck the {x} on", "chuck on the {x}", "pop the {x} on",
-        "pop on the {x}", "power on the {x}", "power up the {x}", "~can we get the {x} on",
+        "pop on the {x}", "power on the {x}", "~can we get the {x} on",
         "~can we have the {x} on", "~i need the {x} on", "~i want the {x} on", "~on with the {x}",
     ],
     "off": [
@@ -68,7 +70,7 @@ FAMILIES: dict[str, list[str]] = {
         "get the {x} going", "run the {x}", "set off the {x}", "set the {x} going", "get the {x} started",
     ],
     "stop": [
-        "stop the {x}", "end the {x}", "cancel the {x}", "~kill the {x}", "shut down the {x}",
+        "stop the {x}", "cancel the {x}", "~kill the {x}", "shut down the {x}",
         "~knock off the {x}", "~that's enough {x}", "~no more {x}", "quit the {x}",
     ],
     "play": [

@@ -40,7 +40,9 @@ def test_a_job_done_is_just_done_and_a_missed_one_costs(home):
     assert L.points.totals()["finn"] == 0 and not L.points.jobs(home.instances.all["finn"])
     q(home, "alex your job is to mop the kitchen by tonight")
     j = L.points.jobs(home.instances.all["alex"])[0]
-    L.points.tick(clock.now().replace(hour=23, minute=59) + timedelta(hours=3))
+    from datetime import datetime
+
+    L.points.tick(datetime.fromisoformat(j["due"]) + timedelta(hours=3))  # whenever "tonight" falls
     assert L.points.totals()["alex"] == -1 and any(s[0] == "alex" and "Minus one" in s[2] for s in home.sent)
     assert j["task"] == "mop the kitchen"
 

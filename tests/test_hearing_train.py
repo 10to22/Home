@@ -68,10 +68,38 @@ def test_learns_only_what_makes_a_difference(home):
     fixes = r["learned"]["word_fixes"]
     assert fixes.get("lice") == "lights"  # "lice on" ran nothing; now it runs lights on
     assert "kitten" not in fixes  # the matching already got "turn on the kitten lights" right: nothing to prove
-    assert any(a["heard"] == "lock town" and a["command"] == "lockdown" for a in Aliases(home.config).all())
+    # a wording from made-up voices is a suggestion, not learned (teach it on the History page if it's right)
+    assert any(a["heard"] == "lock town" and a["command"] == "lockdown" for a in r["learned"]["suggestions"])
+    assert not Aliases(home.config).all()
+    assert ht.trained_fixes(home.config).get("lice") == "lights" and r["learned"]["saved"]
     assert r["after"]["fake"]["accuracy"] > r["before"]["fake"]["accuracy"]
     h = r["after"]["fake"]["holdout"]
     assert h["voices"] == ["a"] and h["after"] > h["before"]  # and it helps a voice it never learned from
+
+
+def test_nothing_saved_unless_held_out_voices_get_better(home):
+    ToneVoice.table = []
+    voices = [ToneVoice("a"), ToneVoice("b"), ToneVoice("c")]  # "a" held out: hears everything right
+
+    def ear(pcm):
+        return fake_ear(lambda t: t)(pcm)
+
+    calls = {"n": 0}
+
+    def mishear_b_and_c_only(pcm):
+        calls["n"] += 1
+        return fake_ear(lambda t: t.replace("lights on", "lice on"))(pcm)
+
+    r = ht.run(home.config, per_phrase=3, voices=voices, hear={"fake": mishear_b_and_c_only}, show=lambda *a: None,
+               items=ITEMS)
+    assert r["learned"]["saved"]  # helps the held-out voice too (it mishears the same way)
+    ToneVoice.table = []
+    import shutil as _sh
+
+    _sh.rmtree(ht.trained_path(home.config).parent / "train-hearing", ignore_errors=True)
+    ht.trained_path(home.config).unlink()
+    r2 = ht.run(home.config, per_phrase=3, voices=voices, hear={"fake": ear}, show=lambda *a: None, items=ITEMS)
+    assert not r2["learned"]["saved"] and not ht.trained_fixes(home.config)
 
 
 def test_never_rewrites_common_words(home):
@@ -137,8 +165,11 @@ def test_shipped_learnings_apply_only_to_commands_the_house_has(home, monkeypatc
 
     m = Matcher(candidates_with_aliases(home.config))
     assert m.match("lock dow").command.name == "lockdown"
-    rules = AccentFixes(home.config).rules()
-    assert rules.get("loq") == "lockdown" and "kitchen" not in rules  # never rewrites a word the house uses
+    fixes = ht.trained_fixes(home.config)
+    assert fixes.get("loq") == "lockdown" and "kitchen" not in fixes  # never a word the house's commands use
+    assert AccentFixes(home.config).rules() == {}  # and what was said is never rewritten
+    m2 = Matcher(candidates_with_aliases(home.config), fixes=fixes)
+    assert m2.match("loq").command.name == "lockdown"
 
 
 def test_keep_then_rescore(home):

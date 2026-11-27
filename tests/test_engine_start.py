@@ -51,3 +51,21 @@ def test_engine_starts_with_whisper_and_sets_hotwords(home, monkeypatch):
     assert isinstance(e.whisper, FakeWhisper) and e.whisper.beam >= 1
     e.reload()  # after a command is added by voice
     assert isinstance(e.whisper.hotwords, str)
+
+
+def test_unclear_on_or_off_asks_instead_of_guessing(home):
+    from phrasehome.listener import polarity_unsure
+    from phrasehome.matcher import Matcher
+    from phrasehome.understanding import candidates_with_aliases
+
+    from phrasehome.config import Command
+
+    home.config.commands.append(Command("room_lights_off", ["turn off the {room} lights"],
+                                        {"backend": "dev", "node": "{room}", "channel": "lights", "state": False}))
+    m = Matcher(candidates_with_aliases(home.config)).match("turn on the kitchen lights")
+    clear = [{"word": w, "conf": 1.0} for w in "turn on the kitchen lights".split()]
+    shaky = [dict(x, conf=0.5) if x["word"] == "on" else x for x in clear]
+    assert not polarity_unsure(m, clear, home.config)
+    assert polarity_unsure(m, shaky, home.config)
+    home.config.settings.polarity_confidence = 0
+    assert not polarity_unsure(m, shaky, home.config)

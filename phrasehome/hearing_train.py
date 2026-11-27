@@ -7,11 +7,14 @@ run through the recognizer, and every mishearing it makes again and again is lea
     phrasehome train-hearing --dry                    # measure only, learn nothing
     phrasehome train-hearing --background party.mp3   # long real audio (music, TV, talk): what would fire?
 
-What it learns (into data/accent.json and data/aliases.json, the same places the History page teaches):
-  word fixes      the recognizer keeps writing X where you said Y, across different voices, and X isn't a word
-                  your commands use: X becomes Y everywhere ("kitten" -> "kitchen").
-  sentence fixes  a whole command comes out as something that runs nothing: that wording now means the command.
-It never learns anything that would make another command fire, and it lists:
+What it learns, only once it's proven: each candidate is tried on every clip and kept only if it turns
+some wrong ones right and none right ones wrong, and a quarter of the voices are kept back: if what was
+learned doesn't make *those* better too, nothing is saved.
+  word fixes      the recognizer keeps writing X where you said Y (X not a common word): for commands, the
+                  house also tries Y (data/accent_trained.json). What you said is never rewritten.
+  wordings        a whole command that came out as something that runs nothing: listed as suggestions (teach
+                  them on the History page), or added with --learn-wordings.
+It lists:
   clashes         wordings that came out as a *different* command (rename one of them),
   missing words   words in your commands that the speech model doesn't know (Vosk can never hear them;
                   Whisper can, or pick another word).
@@ -235,7 +238,7 @@ class Trainer:
 
         s = self.config.settings
         return Matcher(candidates_with_aliases(self.config), s.match_mode, s.match_threshold, s.block_words,
-                       phonetic=bool(getattr(s, "phonetic_match", True)))
+                       phonetic=bool(getattr(s, "phonetic_match", True)), fixes=trained_fixes(self.config))
 
     def make_clips(self, items: list[dict], per_phrase: int = 2) -> list[dict]:
         clips = []
@@ -303,11 +306,14 @@ class Trainer:
         return res
 
     # ---------- learning ----------
-    def learn(self, scored: dict, min_count: int = 2, dry: bool = False, holdout: set | None = None) -> dict:
+    def learn(self, scored: dict, min_count: int = 2, dry: bool = False, holdout: set | None = None,
+              wordings: bool = False) -> dict:
         """Learn only what's proven: each candidate fix is tried on every clip, and kept only if it turns
         some wrong ones right and no right one wrong. Common words are never rewritten (they'd change
         everyday speech and the AI's questions), wordings need two real words and to come back twice.
-        Clips from `holdout` voices are never learned from, only measured."""
+        Clips from `holdout` voices are never learned from, only measured: if what was learned doesn't make
+        them better, nothing is saved. Word fixes are only extra tries for matching commands (what was said is
+        never rewritten). Wordings from made-up voices are only suggestions, unless `wordings`."""
         from rapidfuzz import fuzz
 
         from .hearing_plus import AccentFixes
@@ -339,13 +345,14 @@ class Trainer:
             row = case["row"]
             return got == row["command"] and all(str(slots.get(k)) == str(v) for k, v in row["slots"].items())
 
-        fixes: dict[str, str] = {}
+        fixes: dict[str, str] = dict(m.fixes)  # what's proven so far (shipped and earlier runs), tried as extras
+        m.fixes = fixes
 
         def apply(text):
-            return " ".join(fixes.get(w, w) for w in text.split())
+            return text  # the matcher tries the fixes itself
 
         for c in cases:
-            c["ok"] = right(c, apply(c["raw"]))
+            c["ok"] = c["ok0"] = right(c, apply(c["raw"]))
         # ---- word fixes
         swaps: dict[tuple[str, str], set] = defaultdict(set)
         for c in cases:
@@ -393,6 +400,8 @@ class Trainer:
                     loss += c["ok"] and not now
             if gain >= 1 and loss == 0:
                 aliases.append({"heard": heard, "command": cmd, "slots": slots, "times": len(hits)})
+                if not wordings:
+                    continue  # a suggestion: made-up voices aren't proof enough to add a wording
                 from .matcher import Candidate
 
                 cmds = {x.name: x for x in self.config.commands}
@@ -408,21 +417,32 @@ class Trainer:
                 hit = m.match(apply(c["raw"]))
                 if hit and hit.command.name != c["row"]["command"]:
                     clashes[(c["row"]["said"], c["raw"], hit.command.name)] += 1
-        if not dry:
-            fx = AccentFixes(self.config)
-            counts = fx.counts()
-            for x, y in word_fixes.items():
-                counts[f"{x}>{y}"] = max(counts.get(f"{x}>{y}", 0), fx.MIN_SEEN)
-            if word_fixes:
-                fx.path.parent.mkdir(parents=True, exist_ok=True)
-                fx.path.write_text(json.dumps(counts, indent=1), encoding="utf-8")
-            al = Aliases(self.config)
-            for a in aliases:
-                try:
-                    al.add(a["heard"], a["command"], a["slots"])
-                except Exception as e:
-                    log.info("couldn't learn %r: %s", a["heard"], e)
-        return {"word_fixes": word_fixes, "sentences": aliases, "clashes": [list(k) + [n] for k, n in clashes.most_common(20)],
+        held = [c for c in cases if not c["train"]]
+        hb, ha = sum(c["ok0"] for c in held), sum(c["ok"] for c in held)
+        tb, ta = sum(c["ok0"] for c in cases if c["train"]), sum(c["ok"] for c in cases if c["train"])
+        helps = (ha > hb) if held else (ta > tb)
+        saved = bool(not dry and helps and (word_fixes or (wordings and aliases)))
+        if saved:
+            path = trained_path(self.config)
+            try:
+                old = json.loads(path.read_text())
+            except (OSError, ValueError):
+                old = {}
+            old.update(word_fixes)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(old, indent=1))
+            if wordings:
+                al = Aliases(self.config)
+                for a in aliases:
+                    try:
+                        al.add(a["heard"], a["command"], a["slots"])
+                    except Exception as e:
+                        log.info("couldn't learn %r: %s", a["heard"], e)
+        why = ("saved" if saved else "dry run: nothing saved" if dry else "nothing new to learn" if not word_fixes and
+               not (wordings and aliases) else "not saved: it didn't make the held-out voices any better")
+        return {"word_fixes": word_fixes, "sentences": aliases if wordings else [], "suggestions": [] if wordings else aliases,
+                "clashes": [list(k) + [n] for k, n in clashes.most_common(20)], "saved": saved, "why": why,
+                "holdout_check": {"clips": len(held), "before": hb, "after": ha},
                 "rejected_fixes": [t for t in tried if t[0] not in word_fixes][:30], "skipped": {}}
 
 
@@ -531,7 +551,11 @@ def report_md(before: dict, after: dict, learned: dict, missing: list[str], bg: 
             lines.append(f"\nHeld-out voices for {name} (never learned from, {h['clips']} clips): {h['before']}% before, "
                          f"{h['after']}% after.")
     lines += ["", "## Learned word fixes", ""] + ([f"- heard \"{x}\" means \"{y}\"" for x, y in learned["word_fixes"].items()] or ["- none"])
+    lines += ["", f"Result: {learned.get('why', '')}."]
     lines += ["", "## Learned wordings", ""] + ([f"- \"{a['heard']}\" means {a['command']} {a['slots'] or ''}" for a in learned["sentences"][:60]] or ["- none"])
+    if learned.get("suggestions"):
+        lines += ["", "## Suggested wordings (not added: teach them on the History page if they're right)", ""]
+        lines += [f"- \"{a['heard']}\" could mean {a['command']} {a['slots'] or ''}" for a in learned["suggestions"][:60]]
     lines += ["", "## Clashes (came out as a different command: consider renaming one)", ""]
     lines += [f"- said \"{s}\", heard \"{h}\", ran {g} ({n}x)" for s, h, g, n in learned["clashes"]] or ["- none"]
     lines += ["", "## Words the Vosk model doesn't know (it can never hear them; Whisper can)", "",
@@ -556,7 +580,7 @@ def report_md(before: dict, after: dict, learned: dict, missing: list[str], bg: 
 def run(config, n: int = 300, per_phrase: int = 2, voice_dirs: list[Path] = (), speakers: int = 6,
         noise_file: Path | None = None, background_files: list[Path] = (), dry: bool = False, keep: bool = False,
         hear: dict | None = None, voices: list[Voice] | None = None, show=print, seed: int = 1,
-        items: list[dict] | None = None, rescore: bool = False) -> dict:
+        items: list[dict] | None = None, rescore: bool = False, wordings: bool = False) -> dict:
     from .speechtest import recognizers
 
     rng = random.Random(seed)
@@ -583,10 +607,10 @@ def run(config, n: int = 300, per_phrase: int = 2, voice_dirs: list[Path] = (), 
     before = t.score(clips, "before")
     names = sorted({c["voice"] for c in clips})
     holdout = set(names[::4]) if len(names) >= 3 else set()  # a quarter of the voices: measured, never learned from
-    learned = t.learn(before, dry=dry, holdout=holdout)
-    show(f"  learned {len(learned['word_fixes'])} word fixes and {len(learned['sentences'])} wordings"
-         + (" (dry run: not saved)" if dry else ""))
-    after = before if dry else t.score(clips, "after ")
+    learned = t.learn(before, dry=dry, holdout=holdout, wordings=wordings)
+    show(f"  proved {len(learned['word_fixes'])} word fixes and {len(learned['sentences'] or learned['suggestions'])} "
+         f"wordings{' (suggestions only)' if learned['suggestions'] else ''}: {learned['why']}")
+    after = t.score(clips, "after ") if learned["saved"] else before
     if holdout and not dry:
         for name in before:
             b = [r for r in before[name]["rows"] if r["voice"] in holdout]
@@ -618,8 +642,29 @@ def main(args) -> int:
     run(cfg, n=args.phrases, per_phrase=args.per_phrase, voice_dirs=[Path(v) for v in args.voices or []],
         speakers=args.speakers, noise_file=Path(args.noise) if args.noise else None,
         background_files=[Path(b) for b in args.background or []], dry=args.dry, keep=args.keep or args.rescore,
-        rescore=args.rescore)
+        rescore=args.rescore, wordings=args.learn_wordings)
     return 0
+
+
+def trained_path(config) -> Path:
+    return Path(config.resolve_path(config.data_dir)) / "accent_trained.json"
+
+
+def trained_fixes(config) -> dict[str, str]:
+    """Word fixes proven by train-hearing (shipped ones, then this house's), for matching commands only:
+    the matcher tries them as well as what was heard; the transcript (and what the AI sees) never changes.
+    Never a word this house's own commands use."""
+    from .matcher import expand
+
+    out = dict(shipped().get("word_fixes", {}))
+    try:
+        out.update(json.loads(trained_path(config).read_text()))
+    except (OSError, ValueError):
+        pass
+    if not out:
+        return {}
+    vocab = {w for c in expand(config.commands, config.slots) for w in c.words}
+    return {x: y for x, y in out.items() if x not in vocab}
 
 
 _SHIPPED: dict | None = None

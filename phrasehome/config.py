@@ -49,6 +49,9 @@ class Settings:
     phrase_variants: bool = True
     # nothing matches word for word: compare how the words sound ("kitchin lites" ~ "kitchen lights")
     phonetic_match: bool = True
+    # the word that decides on or off (up/down, open/close, lock/unlock, start/stop) heard with less than
+    # this confidence: ask "did you say ...?" instead of maybe doing the opposite (0 = never ask)
+    polarity_confidence: float = 0.85
     whisper_beam: int = 0  # Whisper's beam search width: 0 = 5 on a Mac, 2 elsewhere (1 is fastest)
     # "lock the front door and turn off the lights": run both (every part must be a command)
     multi_commands: bool = True
