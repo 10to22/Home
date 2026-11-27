@@ -69,3 +69,43 @@ def test_unclear_on_or_off_asks_instead_of_guessing(home):
     assert polarity_unsure(m, shaky, home.config)
     home.config.settings.polarity_confidence = 0
     assert not polarity_unsure(m, shaky, home.config)
+
+
+def test_shipped_word_fixes_help_matching_only(home):
+    from phrasehome.hearing_train import trained_fixes
+    from phrasehome.hearing_plus import AccentFixes
+
+    fixes = trained_fixes(home.config)
+    assert fixes.get("delights") == "lights" and fixes.get("fleck") == "flick"
+    assert AccentFixes(home.config).apply("she delights in it") == "she delights in it"  # what was said stays
+
+
+def test_second_look_at_a_near_miss(home, monkeypatch):
+    import json as _json
+
+    from phrasehome.listener import Engine
+
+    _fake_vosk(monkeypatch)
+
+    class AltRec:
+        def __init__(self, *a):
+            pass
+
+        def SetMaxAlternatives(self, n):
+            pass
+
+        def AcceptWaveform(self, pcm):
+            return False
+
+        def FinalResult(self):
+            return _json.dumps({"alternatives": [{"text": "lock tow"}, {"text": "lockdown"}]})
+
+    e = Engine(home.config, object(), home)
+    e._vosk = type("V", (), {"KaldiRecognizer": AltRec})
+    home.config.settings.restrict_vocabulary = False
+    L = e._lang("kitchen")
+    L.grammar = None
+    assert e._second_guess("lock tow", b"\x00" * 3200, "kitchen", L) == "lockdown"
+    assert e._second_guess("what a lovely day it is", b"\x00" * 3200, "kitchen", L) is None  # not near anything
+    home.config.settings.alternatives = 0
+    assert e._second_guess("lock tow", b"\x00" * 3200, "kitchen", L) is None

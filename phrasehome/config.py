@@ -52,6 +52,10 @@ class Settings:
     # the word that decides on or off (up/down, open/close, lock/unlock, start/stop) heard with less than
     # this confidence: ask "did you say ...?" instead of maybe doing the opposite (0 = never ask)
     polarity_confidence: float = 0.85
+    # a short sentence that nearly matched a command: look again at the recognizer's next best guesses
+    # (Vosk's top 5) and, if Whisper is installed, ask it too ("auto": on a Mac when installed; "off")
+    alternatives: int = 5
+    second_opinion: str = "auto"
     whisper_beam: int = 0  # Whisper's beam search width: 0 = 5 on a Mac, 2 elsewhere (1 is fastest)
     # "lock the front door and turn off the lights": run both (every part must be a command)
     multi_commands: bool = True

@@ -99,7 +99,8 @@ def test_nothing_saved_unless_held_out_voices_get_better(home):
     _sh.rmtree(ht.trained_path(home.config).parent / "train-hearing", ignore_errors=True)
     ht.trained_path(home.config).unlink()
     r2 = ht.run(home.config, per_phrase=3, voices=voices, hear={"fake": ear}, show=lambda *a: None, items=ITEMS)
-    assert not r2["learned"]["saved"] and not ht.trained_fixes(home.config)
+    assert not r2["learned"]["saved"] and "lice" not in ht.trained_fixes(home.config)
+    assert not ht.trained_path(home.config).exists()
 
 
 def test_never_rewrites_common_words(home):
