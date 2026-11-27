@@ -52,6 +52,9 @@ class Dispatcher:
         from .freak import Freak
 
         self.freak = Freak(self)
+        from .house_life import HouseLife
+
+        self.life = HouseLife(self)  # party, study, exams, meetings, shower, walk home, quiz, radio...
         from .understanding import Confirmations, History
 
         self.history = History(self)  # what was heard and done (History page)
@@ -157,7 +160,8 @@ class Dispatcher:
                        "privacy": b.PrivacyBackend, "dnd": b.DndBackend, "logic": b.LogicBackend,
                        "report": b.ReportBackend, "security": b.SecurityBackend,
                        "energy": b.EnergyBackend, "spotify": b.SpotifyBackend,
-                       "pets": b.PetBackend, "voiceid": b.VoiceIdBackend, "freak": b.FreakBackend}
+                       "pets": b.PetBackend, "voiceid": b.VoiceIdBackend, "freak": b.FreakBackend,
+                       "life": b.LifeBackend}
             try:
                 if name in builtin:
                     b = builtin[name](name, {}, self.config)
@@ -232,6 +236,7 @@ class Dispatcher:
                     failed += self.run_steps(branch, values, phrase, _depth + 1)
                 elif st.get("backend") == "routine":
                     name = self.render(st, values)["routine"]
+                    self.events.log("routine", name=name)
                     extra = {k: v for k, v in st.items() if k not in ("routine", "backend")}
                     failed += self.run_steps(self.config.routines[name],
                                              {**(values or {}), **extra}, phrase, _depth + 1)
@@ -302,7 +307,7 @@ class Dispatcher:
 
 BUILTIN_NAMES = {"routine", "doors", "voice", "timer", "alarm", "mode", "presence", "assistant",
                  "privacy", "dnd", "logic", "report", "security", "energy", "spotify",
-                 "pets", "voiceid", "freak"}
+                 "pets", "voiceid", "freak", "life"}
 
 
 def _quality(m: Match) -> float:

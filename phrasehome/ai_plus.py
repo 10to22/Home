@@ -377,7 +377,9 @@ sentences, ending with a question, so they answer and you go on.
 
 
 def system_extras(home, inst) -> str:
-    return PROMPT_EXTRAS + (HOMEWORK if (inst.kid_mode or (home.config.extra.get("homework") or {})) else "")
+    life = getattr(home, "life", None)
+    return (PROMPT_EXTRAS + (HOMEWORK if (inst.kid_mode or (home.config.extra.get("homework") or {})) else "")
+            + ("\n" + life.SYSTEM if life is not None else ""))
 
 
 def homework_mode(home, inst, person: str | None) -> bool:

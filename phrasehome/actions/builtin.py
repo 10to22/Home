@@ -369,3 +369,11 @@ class FreakBackend(_Builtin):
         if what in ("on", "true", "start"):
             return self.home.freak.start(room, action.get("minutes"))
         return self.home.freak.stop(room)
+
+
+class LifeBackend(_Builtin):
+    """{life: party_start} and the other student-house features (house_life.py), in the room it was said in."""
+
+    def run(self, action: dict[str, Any], phrase: str) -> str:
+        ctx = action.get("_context", {})
+        return self.home.life.do(str(action.get("life")), self.room(action), ctx.get("person"), action)

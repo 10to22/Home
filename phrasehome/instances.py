@@ -80,7 +80,8 @@ def parse_instances(raw: dict[str, Any] | None) -> list[Instance]:
             people=[str(p) for p in cfg.get("people", [])],
             diet=dict(cfg.get("diet") or {}),
             extra={k: v for k, v in cfg.items() if k in ("commute", "sunrise", "language", "spotify",
-                                                          "pre_alarm_minutes", "bed")},
+                                                          "pre_alarm_minutes", "bed", "about", "exams",
+                                                          "door_light", "winter_lamp")},
         ))
     if not any(i.main for i in out):
         main = next((i for i in out if i.id in ("household", "main", "home")), None)

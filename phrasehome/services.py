@@ -20,6 +20,10 @@ def start_services(home) -> list:
     except Exception as e:
         log.error("scheduler not started: %s", e)
     try:
+        add(home.life)  # party, study, exams, meetings, shower, walk home, quiz, radio (house_life.py)
+    except Exception as e:
+        log.error("house life not started: %s", e)
+    try:
         from .sensors import SensorWatcher
 
         add(SensorWatcher(home))

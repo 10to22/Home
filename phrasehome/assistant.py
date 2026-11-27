@@ -392,6 +392,10 @@ who came to the door and when.
         from . import ai_plus
 
         tools += ai_plus.tools_for(self.home, inst)  # facts, why, recipes, homework
+        life = getattr(self.home, "life", None)
+        if life is not None:
+            tools += [_strict(t["name"], t["description"], t["input_schema"]["properties"],
+                              t["input_schema"]["required"]) for t in life.tools(inst)]  # housemates, exams...
         if self.web_search:
             tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 3})
         if self.search:
@@ -579,6 +583,9 @@ who came to the door and when.
 
         if name in ai_plus.TOOL_NAMES:
             return ai_plus.run_tool(self.home, name, args, room, inst, getattr(self, "_person", None))
+        life = getattr(self.home, "life", None)
+        if life is not None and name in life.TOOL_NAMES:
+            return life.run_tool(name, args, room, inst)
         return run(self.home, name, args, room, inst)
 
     # ---------- the conversation ----------
@@ -604,7 +611,14 @@ who came to the door and when.
             extra = extra_context(self.home, inst, person)
         except Exception as e:
             log.debug("extra context: %s", e)
-            return ""
+            extra = ""
+        life = getattr(self.home, "life", None)
+        if life is not None:
+            try:
+                more = life.context_line()  # what the house knows about everyone, exams, door status...
+                extra = f"{extra} {more}".strip() if more else extra
+            except Exception as e:
+                log.debug("house life context: %s", e)
         return f" {extra}" if extra else ""
 
     def instance_for(self, room: str | None, person: str | None = None):
@@ -1058,7 +1072,7 @@ class AssistantRouter:
         check = kind != "reply" and getattr(self.assistant, "only_requests", True)
         if not self._claim(source, normalize(question)):
             return True  # another mic heard the same question and is answering it
-        threading.Thread(target=self._answer, args=(question, room, reply, person, source, check),
+        threading.Thread(target=self._answer, args=(question, room, reply, person, source, check, owner),
                          daemon=True).start()
         return True
 
@@ -1092,7 +1106,7 @@ class AssistantRouter:
         return False
 
     def _answer(self, question: str, room: str | None, reply, person: str | None = None,
-                source: str | None = None, check: bool = False) -> None:
+                source: str | None = None, check: bool = False, owner: bool = False) -> None:
         self._state()
         before = self._recent(self._ignored, room, 30)
         if check and before is not None and _similar(before, question):
@@ -1102,6 +1116,20 @@ class AssistantRouter:
             examples_for(self.assistant.home).add(before, True, "said it again")
             self._ignored.pop(room, None)
             check = False
+        life = getattr(self.assistant.home, "life", None)
+        if life is not None:  # "Parker's a vegetarian", "add the bins to the meeting agenda"...: no AI needed
+            try:
+                if life.quick(question, room, person, strict=owner):  # owner: said without the name
+                    log.info("assistant: house life handled %r", question)
+                    h = getattr(self.assistant.home, "history", None)
+                    if h:
+                        h.add(kind="command", room=room, person=person, heard=question, matched="house life",
+                              via="voice")
+                    if reply:
+                        reply("done")
+                    return
+            except Exception as e:
+                log.error("house life couldn't handle %r: %s", question, e)
         if check and not self._for_the_house(question, room, person):
             return
         if reply:

@@ -98,6 +98,10 @@ KEY_EMOTIONS = {
                      "fingerprint_prompt"], "calm"),
     **dict.fromkeys(["package_taken", "device_offline"], "urgent"),
 }
+from .house_lines import MOODS as _HOUSE_MOODS, SAFETY as _HOUSE_SAFETY  # noqa: E402
+
+KEY_EMOTIONS.update({k: v for k, v in _HOUSE_MOODS.items() if k not in KEY_EMOTIONS})
+SAFETY_KEYS |= _HOUSE_SAFETY
 
 # the usual mood of a style's lines when nothing more specific is known
 STYLE_MOOD = {"mean": "cheeky", "aussie": "cheeky", "aussie_uncut": "cheeky", "deadpan": "neutral"}

@@ -71,7 +71,8 @@ BUILTIN_BACKENDS = {"speak": "voice", "door": "doors", "routine": "routine", "ti
                     "alarm": "alarm", "mode": "mode", "presence": "presence", "ask": "assistant",
                     "privacy": "privacy", "dnd": "dnd", "if": "logic", "report": "report",
                     "security": "security", "plug": "energy", "spotify": "spotify",
-                    "pet": "pets", "voiceid": "voiceid", "freak": "freak", "hush": "voice"}
+                    "pet": "pets", "voiceid": "voiceid", "freak": "freak", "hush": "voice",
+                    "life": "life"}
 RESERVED = set(BUILTIN_BACKENDS.values())
 
 
@@ -161,6 +162,42 @@ BUILTIN_COMMANDS = [
     ("fire", ["fire", "there's a fire", "fire fire", "fire fire fire", "house fire", "something's on fire",
               "help fire"], {"backend": "routine", "routine": "fire_mode"}),
 ]
+# the student-house features (house_life.py): {life: <what>}
+LIFE_COMMANDS = [
+    ("party_start", ["party mode", "start the party", "party time", "let's party", "we're having a party",
+                     "party planner", "party mode on"]),
+    ("party_stop", ["party's over", "the party's over", "end the party", "party mode off", "stop the party"]),
+    ("party_wifi", ["guest wifi", "what's the guest wifi", "guest wifi password"]),
+    ("party_quiet", ["when's quiet time", "how long until quiet time", "how long till quiet time",
+                     "what time is quiet time"]),
+    ("study_on", ["study mode", "study mode on", "focus mode", "i'm studying", "start studying",
+                  "start a study session", "pomodoro", "time to study"]),
+    ("study_off", ["study mode off", "stop studying", "end study mode", "focus mode off", "done studying",
+                   "i'm done studying", "end the study session"]),
+    ("study_skip", ["skip the break", "skip break", "no break"]),
+    ("study_left", ["how long until my break", "how long till my break", "when's my break",
+                    "how long left in this block"]),
+    ("meeting_book", ["house meeting", "call a house meeting", "schedule a house meeting", "book a house meeting",
+                      "we need a house meeting", "find a time for a house meeting"]),
+    ("meeting_cancel", ["cancel the house meeting", "cancel house meeting", "call off the house meeting"]),
+    ("meeting_when", ["when's the house meeting", "when is the house meeting"]),
+    ("meeting_agenda", ["what's on the agenda", "read the agenda", "read out the agenda", "meeting agenda"]),
+    ("shower_start", ["shower timer", "start the shower timer", "time my shower", "i'm getting in the shower",
+                      "i'm having a shower"]),
+    ("shower_stop", ["stop the shower timer", "shower timer off", "i'm out of the shower", "done showering"]),
+    ("shower_record", ["who had the longest shower", "longest shower", "shower record"]),
+    ("quiz_start", ["quiz time", "house quiz", "start the quiz", "start the house quiz", "weekly quiz"]),
+    ("quiz_next", ["next question", "skip the question"]),
+    ("quiz_stop", ["stop the quiz", "end the quiz", "quiz off"]),
+    ("radio_on", ["house radio", "radio mode", "start the radio", "radio on", "house radio on",
+                  "start house radio"]),
+    ("radio_off", ["radio off", "stop the radio", "house radio off", "end the radio", "radio mode off"]),
+    ("windows_advice", ["should i open the windows", "should we open the windows", "should i open a window",
+                        "is the pollen bad", "how's the pollen", "what's the pollen like", "pollen today"]),
+    ("exams_list", ["any exams coming up", "what exams are coming up", "who has exams", "exam schedule"]),
+    ("walk_status", ["is anyone walking home", "who's walking home", "who's on the way home"]),
+]
+BUILTIN_COMMANDS += [(f"life_{n}", phrases, {"backend": "life", "life": n}) for n, phrases in LIFE_COMMANDS]
 NEEDS_ROUTINE = {"fire": "fire_mode"}
 
 
@@ -176,16 +213,27 @@ def _identity(action: dict) -> tuple | None:
         return ("routine", str(action["routine"]))
     if action.get("backend") == "freak" or "freak" in action:
         return ("freak", _is_on(action.get("freak")))
+    if action.get("backend") == "life" or "life" in action:
+        return ("life", str(action.get("life")))
     return None
 
 
 def missing_builtin_commands(commands: list["Command"], routines=()) -> list["Command"]:
+    """Built-in commands the config doesn't already cover. A phrase your config already uses ("party
+    mode" for your own party routine) stays yours: the built-in one just doesn't use it."""
     have_names = {c.name for c in commands}
     have = {_identity(c.action) for c in commands} - {None}
-    return [Command(name=name, phrases=list(phrases), action=dict(action))
-            for name, phrases, action in BUILTIN_COMMANDS
-            if name not in have_names and _identity(action) not in have
-            and (name not in NEEDS_ROUTINE or NEEDS_ROUTINE[name] in routines)]
+    used = {" ".join(str(p).lower().split()) for c in commands for p in c.phrases}
+    out = []
+    for name, phrases, action in BUILTIN_COMMANDS:
+        if name in have_names or _identity(action) in have:
+            continue
+        if name in NEEDS_ROUTINE and NEEDS_ROUTINE[name] not in routines:
+            continue
+        free = [p for p in phrases if p not in used]
+        if free:
+            out.append(Command(name=name, phrases=free, action=dict(action)))
+    return out
 
 
 def normalize_action(action: dict[str, Any], default_backend: str | None,
@@ -215,7 +263,10 @@ EXTRA_SECTIONS = ("weather", "alarm", "energy", "packages", "meals", "spotify", 
                   "follow_lights", "smoke", "wake", "freak", "history",
                   # the newer features (hearing_plus, understanding_plus, extras/*)
                   "hearing", "groups", "relative", "safety", "upkeep", "privacy", "comfort", "family", "facts",
-                  "notify_rules", "backup", "guests", "homework", "ai_extras")
+                  "notify_rules", "backup", "guests", "homework", "ai_extras",
+                  # the student house (house_life.py)
+                  "party", "study", "exams", "door_status", "house_meeting", "shower", "last_out", "windows",
+                  "winter_lamp", "pollen", "walk_home", "quiz", "radio")
 
 
 def load_config(path: str | Path) -> Config:
@@ -312,7 +363,9 @@ def load_config(path: str | Path) -> Config:
             raise ConfigError(f"door_scanner {i + 1}: door '{sc.get('door', 'front')}' isn't in `doors:`")
         scanners.append(sc)
 
-    for section, keys in (("wake", ("escalate", "on_up")), ("freak", ("on_start", "on_end"))):
+    for section, keys in (("wake", ("escalate", "on_up")), ("freak", ("on_start", "on_end")),
+                          ("party", ("at_quiet",)), ("study", ("light", "light_after")),
+                          ("last_out", ("lights_off",))):
         if isinstance(data.get(section), dict):  # steps inside these sections work like routines
             data[section] = dict(data[section])
             for k in keys:

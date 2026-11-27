@@ -478,6 +478,16 @@ STYLES["aussie_uncut"] = {**STYLES["aussie"], **{
 # what a sweary style turns into in guest mode and kids' rooms
 CLEAN_STYLE = {"aussie_uncut": "aussie"}
 
+from .house_lines import add_to as _add_house_lines  # noqa: E402  party, study, shower, walk home...
+
+_add_house_lines(DEFAULT_PHRASES, STYLES)
+
+
+def _safety_keys() -> set:
+    from .voice_style import SAFETY_KEYS
+
+    return SAFETY_KEYS
+
 # `voice: {effect: synthetic}` (or any ffmpeg -af filter string). {up}/{rate} are filled in.
 EFFECTS: dict[str, str] = {
     # a cool, slightly-too-perfect machine voice: nudged up in pitch, metallic, a hint of echo
@@ -930,6 +940,12 @@ class Voice:
             for t in targets:
                 v = self.settings_for(t)
                 quiet = bool(home is not None and t and home.instances.for_room(t).quiet_now())
+                life = getattr(home, "life", None) if home is not None else None
+                if not quiet and life is not None and key not in _safety_keys():
+                    try:
+                        quiet = life.exams.quiet_now()  # the night before someone's exam: everything softer
+                    except Exception:
+                        pass
                 mood = self.style.pick(key, text, explicit=emotion, phrase_mood=phrase_mood, tagged=tagged,
                                        quiet=quiet)
                 made_key = repr(sorted((k, str(x)) for k, x in v.items() if k != "volume")) + f"|{mood}"
