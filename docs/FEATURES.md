@@ -165,6 +165,92 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Weekly house quiz | Sunday 7pm or "quiz time": questions from the week's events (the most used command, how often it got told to shut up, the longest shower, who left the door unlocked, who got home latest, study minutes, parcels, parties) |
 | House Radio | "house radio": the playlist, and every few songs a short break with the house news (weather, who's home, exams, the meeting, records, birthdays, bin night), written fresh by the AI. It names songs, never quotes lyrics |
 
+## House points, jobs and money
+
+| Feature | How |
+|---|---|
+| House points | +1 for anything good done willingly: "I did the dishes", "Parker cleaned the bathroom", the bins when it wasn't your turn, shopping for others, letting someone in, finishing your cleaning-blitz bit. −1 for a job you were given and didn't do (your bin night, your party cleanup, any "Finn, your job is to clean the bathroom by Sunday"). Your own job done on time is just done. "that's a lie" takes a point back (another person, within 10 minutes). Three self-claimed points a day at most. "house points", "how many points do I have"; Sunday evening winner; +1/−1 buttons on /house |
+| Who owes whom | Takeout ("who's in on Thai?", "I'm in, pad thai", "it came to 60 dollars": split), bets ("Finn bets Parker a coffee it rains tomorrow", "Parker won the bet"), "who owes what", "Jo paid Finn back" |
+
+## Living together
+
+| Feature | How |
+|---|---|
+| Noise meter | Quiet hours (and exam nights, and after a party's quiet time): too loud in a shared room for 20 seconds and it says so. Loudness only, never words. "how loud is it in here?" helps set `noise: {level}` |
+| Bathroom queue | "I'm next for the shower"; told when it's free (door sensor, shower timer, or "bathroom's free"). A hall LED can show free/busy |
+| Bin night | Whoever's turn it is gets reminded every half hour until "bins are out" |
+| Borrow log | "Parker borrowed my charger", "who has my charger?", "Parker gave back my charger" |
+| Rules and the lease | "new house rule: shoes off inside", "are we allowed to...?", upload the lease on /house: "what does the lease say about pets?" (not legal advice) |
+| Referee | "flip a coin", "roll a dice", "pick one of us", "settle this: ..." |
+| Locked out | "I'm locked out" (at the door, or "Finn locked out" on the house's ntfy topic): whoever's home is asked; nobody home, everyone's asked who's closest. Never unlocks on a message |
+| Polls | "poll: pizza or tacos?" to every phone; "I vote pizza" or "vote pizza" from the phone; results when everyone's in |
+| Thermostat truce | Who keeps changing it, and the fair middle: "thermostat truce" |
+| House calendar | "the inspection is on Friday at 10", "Jo's got a guest staying Saturday", "what's on this week?"; book the TV or lounge ("I've got the TV Saturday at 7"); phones subscribe to /house.ics |
+| Errands | "anyone going to the shops?", "I'm going to the shops", "get me milk" |
+| Moving in | "I'm bringing a kettle", "who's bringing a toaster?", "what do we still need?" |
+| Birthday stealth | "secret from Parker: surprise dinner Saturday": never said in Parker's room or to Parker; a week before, the others get the plans |
+
+## Uni life
+
+| Feature | How |
+|---|---|
+| Deadline crunch | Deadlines from calendars or "my essay is due Friday at 5, 2000 words"; the last 24 hours: door busy, room quiet, hourly check-ins. "I'm at 1200 words" keeps the pace |
+| Study together | "join Parker", "study together in the lounge": one timer, the same breaks |
+| Readings aloud | PDF, web page or text on /house (or "read my screen"): "pause reading", "keep reading" |
+| Slides and photos | "explain this slide" from your phone's camera on /house, or the laptop screen |
+| Exam-morning kit | An hour before: "student card, calculator, pens, water?" |
+| Group projects | "group project: marketing report due Friday with Sam and Lee", "I'm doing the intro", "what's left on the marketing report?" |
+| Grades | "my calc grades are assignments 85 worth 40 percent...", "what do I need on the final to get a B in calc?" |
+| Hangover mode | Quiet, do not disturb, water every half hour |
+| Shower slots | The night before, close-together alarms get staggered shower times |
+| What to wear | Weather plus your calendar (gym, interview, formal) |
+
+## Kitchen and safety
+
+| Feature | How |
+|---|---|
+| Recipes and conversions | "double it", "make it for six" while cooking; "how many grams in a cup of flour", "350 fahrenheit in celsius" |
+| What's open now / price check | Web search with your location: "what's open now?", "which supermarket is cheapest for our list?" |
+| Stove left on | A temperature sensor (or power plug): hot when everyone leaves, or for hours with nobody in the kitchen: everyone's told, plainly |
+| Night out | "we're going out, back by 2": anyone not back gets checked on, calmly |
+| Safe word | `safe_word: {phrase}`: the house says nothing and quietly texts the others |
+| Ring my phone | "where's my phone?": an urgent ntfy notification |
+| New Wi-Fi devices | Reported after a day of learning what's normal; party guests ignored; approve on /house |
+| Party head count | Beam counter at the door, or "five more people arrived": doors lock after the last guest leaves |
+
+## Personal
+
+| Feature | How |
+|---|---|
+| What did I miss | Since you left: deliveries, visitors, polls, jobs, points (`missed: {auto: true}` says it as you get home) |
+| My calendar | "add dentist Tuesday at 3 to my calendar": CalDAV (iCloud, Fastmail, Nextcloud) or /cal/you.ics |
+| Where I put things | "my passport is in the desk drawer", "where's my passport?" (keys, cards, passports only in your room) |
+| Reminders by place | "remind me when I get home to call mum", "remind Parker when they get home to pay rent" |
+| Nicknames | "Parks means Parker", "call me Finny" |
+| My usual | "set my usual to lamp on and play lo-fi", then "my usual" |
+| TV cut-off | "cut me off at 1am" (no extensions), "TV sleep timer 45 minutes": a 10-minute warning, then off |
+| Mood dial | A knob on the wall picks the scene |
+| Cleaning blitz / semester break | "cleaning blitz" (20 minutes, a job each); "semester break mode" (vacation, alarms paused, eco heating, back when someone's home) |
+| Horoscopes / year in review | Roast horoscopes from your week (Monday 9am); "year in review" |
+
+## Laptop companion
+
+`phrasehome companion --person finn --hub http://<house>:8080` (add `--install` to start at login). Runs in the background: knows if you're studying, coding, in a call or distracted (decided on the laptop; only that and the app's name go to the house, never window titles, never private apps). Calls make your door say busy; distractions during study mode or a deadline crunch get a nudge; "house, look at my screen" / "what's this error?" / "explain this slide" / "read my screen" take one screenshot, only when asked. With OCR (`pip install ocrmac` on a Mac) your document's word count feeds the deadline pace, and an error stuck in your terminal gets an offer of help. "stop watching my screen" pauses it.
+
+## Hearing, precision and learning
+
+| Feature | How |
+|---|---|
+| Sounds-like matching | No word-for-word match: compares how it sounds ("tirn on the kichin lites"); never "sure", so risky commands still ask. `phonetic_match` |
+| Learns from a second try | Missed, then said it differently and it worked within 20 seconds: the first wording is learned (and the misheard words, for accent fixes) |
+| Learned words prime Whisper | Accent fixes and taught sentences go into Whisper's prompt; names go in as hotwords |
+| Stronger Whisper | Beam search (`whisper_beam`, 5 on a Mac) and distil-medium.en on a Mac with 16 GB or more |
+| Clearer moods | `voice: {emotion_strength: 1.25}` (the default): every mood a bit further from neutral; 1 is as before |
+
+## Simulator scenarios
+
+`phrasehome scenario run friday_night` (also exam_week, walk_home_late, points_week, locked_out, or `all`): a whole evening against your config in seconds, dry run, with everything the house said and sent, and PASS/FAIL checks. Write your own under `scenarios:`.
+
 ## Morning alarms that make sure you're up
 
 | Feature | How |

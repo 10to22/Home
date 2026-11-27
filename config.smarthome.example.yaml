@@ -271,6 +271,15 @@ walk_home:
   topic: CHANGE-ME-house-walk-8f2k1   # ntfy topic: "Parker walking home 20" from anywhere
 quiz: { day: sun, time: "19:00", questions: 6 }
 radio: { playlist: "house radio", every_songs: 3 }
+inbox: { topic: CHANGE-ME-house-inbox-8f2k1 }   # your phones message the house here (ntfy app): "Finn locked out"
+points: { max_claims_per_day: 3, winner: { day: sun, time: "19:30" } }
+bins: { night: thu, time: "19:00", until: "23:00" }       # rota: the housemates, in turn
+house_rules: [shoes off inside, quiet after 11 on weeknights, label your food]
+noise: { quiet_hours: "23:00-07:00", level: -30 }
+bathroom: { sensor: { node: bathroom, input: door, busy_when: off } }
+# safe_word: { phrase: "CHANGE ME to something you'd never say by accident" }
+tv: { strict: true }               # "cut me off at 1am" can't be cancelled
+blitz: { minutes: 20 }
 wake:                              # alarms that make sure you're actually up (edit each one at /alarms)
   make_sure_up: true               # "stop" from bed only quiets it; it comes back until you're up
   recheck_minutes: 3
