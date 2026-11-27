@@ -202,6 +202,14 @@ PLAIN: dict = {
     "semester_on": "Semester break mode: {result}, eco heating, and I'll keep an eye on the place. Have a good break.",
     "semester_off": "Welcome back. Alarms are back on and the house is out of holiday mode.",
     "year_review": "{text}",
+    # the laptop companion
+    "companion_looking": "Taking a look at your screen.",
+    "companion_offline": "Your laptop companion isn't running. Start it with: phrasehome companion --person and your name.",
+    "companion_refused": "I couldn't look: {why}.",
+    "companion_paused": "Okay, I've stopped watching your screen.",
+    "companion_resumed": "Okay, back to keeping an eye on your screen.",
+    "companion_report": "Today: {study} minutes studying or coding, {distraction} minutes of distractions, {calls} in calls.",
+    "companion_nudge": "{name}, you've been on {app} for {minutes} minutes. You're meant to be studying.",
 }
 
 MEAN: dict = {
@@ -248,6 +256,9 @@ MEAN: dict = {
     "missed_nothing": "Nothing happened while you were out, {name}. The house was peaceful. Then you came back.",
     "things_saved": "Got it: {item}, {where}. I'll remember, since you won't.",
     "things_where": "Your {item}: {where}. You told me {since}. You're welcome.",
+    "companion_nudge": ["{name}. {app}. {minutes} minutes. Your degree called, it's disappointed.",
+                        "{minutes} minutes on {app}, {name}. Fascinating. Back to work."],
+    "companion_report": "Today: {study} minutes of work, {distraction} minutes of distractions. Do the maths.",
 }
 
 AUSSIE: dict = {
@@ -276,12 +287,14 @@ UNCUT: dict = {
     "points_revoked": "Point revoked. {name}, lying to a house. Ya cheeky bastard.",
     "blitz_on": "Cleaning blitz, ya grubs. {minutes} minutes. {jobs}. Go.",
     "owes_none": "Nobody owes anybody a bloody cent. Suspicious as hell.",
+    "companion_nudge": "Oi {name}. {minutes} bloody minutes on {app}. Back to the study, ya slacker.",
 }
 
 MOODS: dict = {
     **dict.fromkeys(["points_good", "bins_helper", "errand_done", "blitz_done_me", "night_out_ok", "together_joined",
                      "bet_settled", "poll_result", "points_winner", "semester_off"], "cheerful"),
-    **dict.fromkeys(["job_missed", "bins_someone_else", "points_revoked", "noise_warn", "tv_strict", "bins_reminder"],
+    **dict.fromkeys(["job_missed", "bins_someone_else", "points_revoked", "noise_warn", "tv_strict", "bins_reminder",
+                     "companion_nudge"],
                     "annoyed"),
     **dict.fromkeys(["hangover_on", "hangover_water", "reading_paused", "mood_dial", "tv_warn", "deadline_crunch"], "calm"),
     **dict.fromkeys(["blitz_on", "blitz_left", "exam_kit", "job_reminder", "locked_out_ask"], "urgent"),

@@ -296,7 +296,8 @@ EXTRA_SECTIONS = ("weather", "alarm", "energy", "packages", "meals", "spotify", 
                   "winter_lamp", "pollen", "walk_home", "quiz", "radio",
                   "points", "noise", "bathroom", "bins", "house_rules", "thermostat", "move_in", "deadlines",
                   "grades", "hangover", "showers", "conversions", "stove", "price_check", "night_out", "safe_word",
-                  "network", "missed", "tv", "mood_dial", "blitz", "semester_break", "inbox")
+                  "network", "missed", "tv", "mood_dial", "blitz", "semester_break", "inbox", "companion",
+                  "scenarios")
 
 
 def load_config(path: str | Path) -> Config:

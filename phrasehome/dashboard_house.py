@@ -50,6 +50,24 @@ button{cursor:pointer}a{color:var(--acc)}.mute{color:var(--mute);font-size:13px}
 <section class="card"><h2>This week</h2><div id="week"></div><div class="btns" style="margin-top:8px">
 <button onclick="act('quiz_start')">Start the quiz</button><button onclick="act('radio_on')">House Radio on</button>
 <button onclick="act('radio_off')">Radio off</button><button onclick="act('windows_advice')">Open the windows?</button></div></section>
+<section class="card"><h2>House points</h2><div id="points"></div><div id="jobs" style="margin-top:8px"></div>
+<div class="mute" style="margin-top:6px">+1 for good things done willingly ("I did the dishes"), −1 for jobs not done. "that's a lie" takes a point back.</div></section>
+
+<section class="card"><h2>House calendar</h2><div id="hcal"></div>
+<div class="mute" style="margin-top:6px">Subscribe on your phone: <a href="/house.ics">/house.ics</a> (on the home Wi-Fi). Your own: /cal/your-name.ics</div></section>
+
+<section class="card"><h2>Money and bets</h2><div id="owes"></div></section>
+
+<section class="card"><h2>House rules and the lease</h2><div id="rules"></div>
+<form onsubmit="event.preventDefault();upload(lf.files[0],'/api/house/lease').then(load)"><input id="lf" type="file" accept=".pdf,.txt"><button>Upload lease</button></form></section>
+
+<section class="card"><h2>Read to me / ask about a photo</h2>
+<form onsubmit="event.preventDefault();readIt()"><select id="rr"></select><input id="ru" placeholder="web page link" style="flex:1"><input id="rf" type="file" accept=".pdf,.txt"><button>Read it</button></form>
+<form onsubmit="event.preventDefault();photo()"><input id="pfile" type="file" accept="image/*" capture="environment"><select id="pk"><option value="slide">Explain this slide</option><option value="photo">Photo question</option></select>
+<input id="pq" placeholder="question (optional)" style="flex:1"><button>Ask</button></form><div id="pans" class="mute" style="margin-top:6px"></div><div id="reading"></div></section>
+
+<section class="card"><h2>Moving in</h2><div id="movein"></div></section>
+<section class="card" id="devcard" hidden><h2>New devices on the Wi-Fi</h2><div id="devices"></div></section>
 </main>
 <script>
 let D=null;
@@ -75,7 +93,35 @@ function draw(){
  const sh=D.shower.record,lo=Object.entries(D.last_out);
  week.innerHTML=`<div class="row"><span>Longest shower</span><span>${sh?esc(sh.name)+', '+sh.minutes+' min':'–'}${D.shower.running?' · <span class=bad>someone\'s in there</span>':''}</span></div>`+
   `<div class="row"><span>Left a door unlocked (30 days)</span><span>${lo.map(([n,c])=>esc(n)+' ×'+c).join(', ')||'nobody'}</span></div>`+
-  `<div class="row"><span>Quiz / radio</span><span>${D.quiz.running?'quiz on':'–'} · ${D.radio.on?'radio on':'radio off'}</span></div>`}
+  `<div class="row"><span>Quiz / radio</span><span>${D.quiz.running?'quiz on':'–'} · ${D.radio.on?'radio on':'radio off'}</span></div>`+
+  (D.bins?`<div class="row"><span>Bins this week</span><span>${esc(D.bins.turn)}</span></div>`:'')+
+  (D.bathroom.queue.length?`<div class="row"><span>Bathroom queue</span><span>${D.bathroom.queue.map(esc).join(', ')}</span></div>`:'')+
+  (D.poll?`<div class="row"><span>Poll: ${esc(D.poll.question)}</span><span>${D.poll.votes} votes</span></div>`:'')+
+  (D.errand?`<div class="row"><span>${esc(D.errand.by)} → ${esc(D.errand.where)}</span><span>${D.errand.list.map(esc).join(', ')||'nothing asked yet'}</span></div>`:'')+
+  D.deadlines.map(d=>`<div class="row"><span>${esc(d.person)}: ${esc(d.what)}</span><span>due ${esc(d.due)}${d.target?` · ${d.words||0}/${d.target} words`:''}</span></div>`).join('');
+ drawMore()}
+const b64=f=>new Promise(r=>{const x=new FileReader();x.onload=()=>r(String(x.result).split(',')[1]);x.readAsDataURL(f)});
+async function upload(f,path){if(!f)return;return post(path,{data:await b64(f),filename:f.name})}
+async function readIt(){const body={room:rr.value,url:ru.value};if(rf.files[0]){body.data=await b64(rf.files[0]);body.filename=rf.files[0].name;body.title=rf.files[0].name}
+ if(!body.url&&!body.data)return;await post('/api/house/read',body);ru.value='';load()}
+async function photo(){const f=pfile.files[0];if(!f)return;pans.textContent='Looking…';
+ const j=await post('/api/house/photo',{image:await b64(f),kind:pk.value,question:pq.value,room:rr.value});pans.textContent=j?j.answer:''}
+function drawMore(){const P=D.points;
+ points.innerHTML=P.board.map(([n,p])=>`<div class="row"><span>${esc(n)}</span><span><b>${p}</b> <span class=mute>(${(P.week.find(w=>w[0]==n)||[0,0])[1]} this week)</span>
+  <button data-pp="${esc(n)}" data-d="1">+1</button><button data-pp="${esc(n)}" data-d="-1">−1</button></span></div>`).join('');
+ jobs.innerHTML=P.jobs.map(j=>`<div class="row"><span>${esc(j.name)}: ${esc(j.task)}</span><span class=mute>by ${esc(j.due.replace('T',' '))}</span></div>`).join('')+
+  (P.recent.length?'<div class=mute style="margin-top:6px">'+P.recent.slice(0,6).map(r=>`${esc(r.name)} ${r.delta>0?'+1':'−1'}: ${esc(r.why)}`).join('<br>')+'</div>':'');
+ hcal.innerHTML=D.calendar.map(e=>`<div class="row"><span>${esc(e.what)}${e.resource?' ('+esc(e.resource)+(e.by?', '+esc(e.by):'')+')':''}</span><span class=mute>${esc(e.start)}</span></div>`).join('')||'<span class=mute>Nothing on.</span>';
+ owes.innerHTML=D.owes?esc(D.owes):'<span class=mute>Nobody owes anybody anything.</span>';
+ rules.innerHTML=(D.rules.length?'<ul>'+D.rules.map(r=>`<li>${esc(r)}</li>`).join('')+'</ul>':'<span class=mute>No house rules yet.</span>')+
+  `<div class=mute>${D.lease?'Lease uploaded: ask "what does the lease say about pets?"':'No lease uploaded yet.'}</div>`;
+ const rv=rr.value;rr.innerHTML=(D.rooms||[]).map(r=>`<option>${esc(r)}</option>`).join('')+'<option value="">the hub</option>';if(rv)rr.value=rv;
+ reading.innerHTML=D.reading.map(x=>`<div class=mute>Reading ${esc(x.title)} in ${esc(x.room)}: ${x.at}/${x.of}${x.paused?' (paused)':''}</div>`).join('');
+ movein.innerHTML=Object.entries(D.move_in).map(([t,n])=>`<span class="chip">${esc(t)}: ${esc(n)}</span>`).join(' ')||'<span class=mute>Say "I\'m bringing a kettle".</span>';
+ const dv=Object.entries(D.devices||{});devcard.hidden=!dv.length;
+ devices.innerHTML=dv.map(([m,v])=>`<div class="row"><span>${esc(v.ip)} <span class=mute>${esc(m)} · ${esc(v.first)}</span></span><button data-mac="${esc(m)}">That's ours</button></div>`).join('')}
+points.addEventListener('click',ev=>{const b=ev.target;if(!b.dataset.pp)return;post('/api/house/points',{person:b.dataset.pp,delta:+b.dataset.d}).then(load)});
+devices.addEventListener('click',ev=>{const m=ev.target.dataset.mac;if(m)post('/api/house/network',{mac:m}).then(load)});
 people.addEventListener('click',ev=>{const b=ev.target;if(!b.dataset.f)return;post('/api/house/people',{action:'forget',person:b.dataset.p,fact:b.dataset.f}).then(load)});
 walking.addEventListener('click',ev=>{const p=ev.target.dataset.home;if(p)post('/api/walkhome',{action:'arrived',person:p}).then(load)});
 let liveOn=false,lt=null;

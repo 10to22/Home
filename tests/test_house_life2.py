@@ -364,3 +364,84 @@ def test_quick_sentences_are_commands_too(home):
     assert {"life_say_referee", "life_say_blitz", "life_say_points"} <= names
     home.run_action({"backend": "life", "life": "quick"}, {"here": "kitchen"}, "flip a coin")
     assert keys(home)[-1] == "coin"
+
+
+def test_house_page_has_the_new_cards(home):
+    import requests
+
+    from phrasehome.web import WebServer
+
+    home.config.web = {"port": 0, "host": "127.0.0.1"}
+    web = WebServer(home)
+    web.start()
+    try:
+        base = f"http://127.0.0.1:{web.port}"
+        assert "House points" in requests.get(base + "/house", timeout=5).text
+        assert requests.post(base + "/api/house/points", json={"person": "jo", "delta": 1}, timeout=5).ok
+        st = requests.get(base + "/api/house", timeout=5).json()
+        assert ["Jo", 1] in st["points"]["board"] and "rooms" in st
+        assert requests.post(base + "/api/house/say", json={"text": "the inspection is on friday at 10"}, timeout=5).ok
+        assert "BEGIN:VCALENDAR" in requests.get(base + "/house.ics", timeout=5).text
+        assert requests.post(base + "/api/house/lease", json={"text": "Pets are not allowed."}, timeout=5).ok
+        assert requests.get(base + "/api/house", timeout=5).json()["lease"] is True
+    finally:
+        web.stop()
+
+
+# ---------------------------------------------------------------- the laptop companion
+def test_companion_classifies_without_sending_titles():
+    from phrasehome.companion import classify
+
+    assert classify("Google Chrome", "YouTube - lofi beats") == "distraction"
+    assert classify("zoom.us", "Zoom Meeting") == "call"
+    assert classify("1Password", "Vault") == "private"
+    assert classify("Code", "main.py") == "code" and classify("Microsoft Word", "Essay.docx") == "study"
+
+
+def test_companion_call_makes_the_door_busy_and_distraction_gets_a_nudge(home):
+    c = home.life.companion
+    c.report("finn", {"category": "call", "app": "zoom.us"})
+    assert home.life.door_status.status("finn's room") == "busy"
+    c.report("finn", {"category": "study", "app": "Word"})
+    assert home.life.door_status.status("finn's room") == "free"
+    home.run_action({"backend": "life", "life": "study_on"}, {"here": "finn's room"})
+    c.report("finn", {"category": "distraction", "app": "YouTube"})
+    home.clock.advance(home, 4 * 60)
+    out = c.report("finn", {"category": "distraction", "app": "YouTube"})
+    assert out["notify"] and "YouTube" in out["notify"][0] and keys(home)[-1] == "companion_nudge"
+
+
+def test_look_at_my_screen_round_trip(home, monkeypatch):
+    c = home.life.companion
+    c.report("finn", {"category": "code", "app": "Terminal"})
+    monkeypatch.setattr(home.life.vision, "ask", lambda img, question, kind, room, person: f"{kind}: fix the import")
+    assert q(home, "what's this error", room="finn's room") and keys(home)[-1] == "companion_looking"
+    reqs = c.poll("finn")["requests"]
+    assert reqs and reqs[0]["kind"] == "screen"
+    import base64
+
+    out = c.screen("finn", {"id": reqs[0]["id"], "image": base64.b64encode(b"\xff\xd8\xffjpeg").decode()})
+    assert out["answer"] == "screen: fix the import"
+    assert q(home, "stop watching my screen", room="finn's room")
+    assert c.report("finn", {"category": "distraction"})["paused"] is True
+
+
+def test_party_cleanup_counts_for_points(home):
+    home.run_action({"backend": "life", "life": "party_start"}, {"here": "living room"})
+    home.run_action({"backend": "life", "life": "party_stop"}, {"here": "living room"})
+    jobs = home.life.points.jobs()
+    assert {j["task"] for j in jobs} == {"bottles", "kitchen", "vacuum", "bins"}
+    finn_job = next(j for j in jobs if j["person"] == "finn")
+    assert q(home, f"i did the {finn_job['task']}", room="finn's room")
+    assert home.life.points.totals()["finn"] == 0  # their own job: just done
+
+
+def test_scenarios_run_against_a_config(tmp_path):
+    from phrasehome import scenarios
+    from tests.test_house_life import CONFIG
+
+    (tmp_path / "c.yaml").write_text(CONFIG + '\nscenarios:\n  mine:\n    - { time: "19:00" }\n'
+                                     '    - { say: "flip a coin", person: p1 }\n    - { expect: "it\'s" }\n')
+    for name in ("friday_night", "walk_home_late", "points_week", "mine"):
+        r = scenarios.run(tmp_path / "c.yaml", name, show=lambda *a: None)
+        assert r["failed"] == 0 and r["passed"] >= 1, (name, r["log"][-8:])

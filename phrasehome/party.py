@@ -171,6 +171,10 @@ class Party:
             inst = people[(n + turn) % len(people)]
             text, _ = h.voice.resolve("party_cleanup", task=task, name=inst.name)
             h.instances.add(inst, "reminder", at, text=f"Party cleanup: {task}")
+            life = getattr(h, "life", None)
+            if life is not None and getattr(life, "points", None) is not None:  # not done by then: minus one
+                life.points.give_job(inst, task, at + timedelta(hours=float(self.cfg.get("cleanup_hours", 3))),
+                                     kind="party cleanup")
             h.notify_person(inst, f"{text} (tomorrow at {clock.spoken_time(at)})", title="Party cleanup")
             jobs.append((inst.name, task))
         return jobs

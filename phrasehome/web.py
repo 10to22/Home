@@ -468,6 +468,41 @@ class WebServer:
 
             return {"result": run_tool(h, {"action": body.get("action", "remember"), "person": body["person"],
                                            "fact": body.get("fact", "")})}
+        if path == "/api/companion/report":  # from a laptop companion: {person, category, app, minutes, words}
+            return h.life.companion.report(str(body["person"]).lower(), body)
+        if path == "/api/companion/screen":  # {person, id, image | text | refused}
+            return h.life.companion.screen(str(body["person"]).lower(), body)
+        if path == "/api/house/points":  # {person, delta: 1 | -1, why}
+            inst = h.life.points.find(str(body["person"]))
+            if inst is None:
+                raise ValueError("nobody by that name lives here")
+            h.life.points.add(inst.id, 1 if int(body.get("delta", 1)) > 0 else -1, str(body.get("why") or "from the house page"),
+                              "dashboard", willing=int(body.get("delta", 1)) > 0)
+            return {"result": h.life.points.totals()}
+        if path == "/api/house/lease":  # {text} or {data: base64, filename}
+            import base64
+
+            data = base64.b64decode(body["data"]) if body.get("data") else str(body.get("text", "")).encode()
+            return {"result": f"{h.life.rules.save_lease(data, str(body.get('filename', '')))} words saved"}
+        if path == "/api/house/read":  # {room, text | url | data (base64 pdf), title}
+            import base64
+
+            r = h.life.reader
+            text = r.load_text(base64.b64decode(body["data"]) if body.get("data") else str(body.get("text", "")),
+                               str(body.get("filename", "")), str(body.get("url", "")))
+            return {"result": r.start(body.get("room"), text, str(body.get("title") or "that"))}
+        if path == "/api/house/photo":  # {image: base64 jpeg/png, question, kind: photo|slide|screen, room, person, speak}
+            import base64
+
+            return {"answer": h.life.vision.ask(base64.b64decode(body["image"]), str(body.get("question", "")),
+                                                str(body.get("kind", "photo")), body.get("room"), body.get("person"),
+                                                bool(body.get("speak", True)))}
+        if path == "/api/house/network":  # {mac, label}
+            h.life.network.approve(str(body["mac"]), str(body.get("label") or "ok"))
+            return {"result": "approved"}
+        if path == "/api/house/say":  # anything the house life features understand, typed: {text, person}
+            ok = h.life.quick(str(body["text"]), body.get("room"), body.get("person"))
+            return {"result": "done" if ok else "not understood"}
         if path == "/api/house/agenda":
             return {"result": h.life.meeting.add(str(body["item"]))}
         if path == "/api/house/exam":
@@ -583,6 +618,12 @@ class _Handler(BaseHTTPRequestHandler):
             from .dashboard_house import HOUSE_PAGE
 
             return self._send(200, HOUSE_PAGE, "text/html; charset=utf-8")
+        if u.path in ("/house.ics",) or (u.path.startswith("/cal/") and u.path.endswith(".ics")):
+            if not self._authorized(q):
+                return self._send(401, {"error": "token required"})
+            life = self.web.home.life
+            body = life.calendar.ics() if u.path == "/house.ics" else life.my_calendar.ics(u.path[5:-4].lower())
+            return self._send(200, body, "text/calendar; charset=utf-8")
         if not self._authorized(q):
             return self._send(401, {"error": "token required"})
         if u.path == "/api/status":
@@ -600,6 +641,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(200, self.web.history_get(q.get("q", [""])[0]))
         if u.path == "/api/house":
             return self._send(200, self.web.home.life.status())
+        if u.path == "/api/companion/poll":
+            return self._send(200, self.web.home.life.companion.poll(q.get("person", [""])[0].lower()))
         if u.path == "/api/voice/tune":
             return self._send(200, self.web.voice_tune_get())
         if u.path == "/api/meals":

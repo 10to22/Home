@@ -72,6 +72,9 @@ class HouseLife:
         self.usual, self.tv, self.mood_dial = personal.Usual(home), personal.TVTimer(home), personal.MoodDial(home)
         self.blitz, self.semester = personal.Blitz(home), personal.SemesterBreak(home)
         self.horoscope, self.year = personal.Horoscope(home), personal.YearReview(home)
+        from .companion import CompanionHub
+
+        self.companion = CompanionHub(home)  # the laptop companions (companion.py)
         # the order sentences are tried in: specific first, then house points, then facts about people
         self.parts = [self.kitchen, self.takeout, self.bets, self.bins, self.bathroom, self.borrow, self.calendar,
                       self.things, self.place_reminders, self.nicknames, self.usual, self.tv, self.rules, self.referee,
@@ -209,7 +212,8 @@ class HouseLife:
         if re.match(r"^should (?:i|we) open (?:a|the|some) windows?|^(?:is|how's|how is|what's) the pollen", s):
             self.watch.window_advice(room)
             return True
-        handlers = [lambda: self.walk.heard(said, speaker, room), lambda: self.meeting.heard(said),
+        handlers = [lambda: self.companion.heard(said, room, speaker),
+                    lambda: self.walk.heard(said, speaker, room), lambda: self.meeting.heard(said),
                     lambda: self.door_status.heard(said, room, speaker), lambda: self.exams.heard(said, speaker)]
         handlers += [lambda p=p: p.heard(said, room, speaker) for p in self.parts
                      if not (strict and p in (self.points, self.things, self.borrow, self.secrets, self.nicknames))]
@@ -378,6 +382,28 @@ class HouseLife:
             "last_out": {self.watch.name(k): v for k, v in self.watch.last_out_counts(30).items()},
             "quiz": {"running": self.quiz.running, "last": self.quiz.last},
             "radio": {"on": self.radio.on, "segments": self.radio.segments},
+            "points": {"board": self.points.board(), "week": self.points.board(7), "recent": self.points.recent(12),
+                       "jobs": [{**j, "name": self.points.name(j["person"])} for j in self.points.jobs()]},
+            "owes": self.points.owes_text(),
+            "calendar": [{"what": e["what"], "start": e["start"].replace("T", " "), "resource": e["resource"],
+                          "by": self.points.name(e["by"]) if e["by"] else ""} for e in self.calendar.events(14)
+                         if not e.get("secret_from")],
+            "bins": {"turn": self.bins.turn().name} if self.bins.cfg else None,
+            "bathroom": {"queue": [self.points.name(p) for p in self.bathroom.queue], "busy": self.bathroom.busy()},
+            "poll": ({"question": self.polls.poll["question"], "options": self.polls.poll["options"],
+                      "votes": len(self.polls.poll["votes"])} if self.polls.poll else None),
+            "errand": ({"by": self.points.name(self.errands.run["by"]), "where": self.errands.run["where"],
+                        "list": self.errands.run["list"]} if self.errands.run else None),
+            "move_in": {t: self.points.name(p) for t, p in self.move_in.load({}).get("claims", {}).items()},
+            "rules": self.rules.rules(), "lease": bool(self.rules.lease()),
+            "deadlines": [{"person": i.name, "what": d["what"], "due": d["due"][:16].replace("T", " "),
+                           "words": d.get("words"), "target": d.get("target")} for i, d in self.deadlines.all(14)],
+            "secrets": len(self.secrets.secrets()),
+            "devices": {m: v for m, v in self.network.load({}).get("known", {}).items() if v.get("label") == "new"},
+            "rooms": sorted({r for i in insts.all.values() for r in i.rooms}),
+            "companions": self.companion.status(),
+            "reading": [{"room": r, "title": st["title"], "at": st["i"], "of": len(st["paras"]), "paused": st["paused"]}
+                        for r, st in self.reader.active.items()],
         }
 
 

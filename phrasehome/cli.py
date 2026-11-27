@@ -1162,6 +1162,22 @@ def main(argv: list[str] | None = None) -> int:
     au.add_argument("--days", type=int, default=31)
     au.set_defaults(fn=_cmd_ai_usage)
 
+    sc = sub.add_parser("scenario", help="play a whole evening against your config in seconds (dry run)")
+    sc.add_argument("action", choices=["list", "run"], nargs="?", default="list")
+    sc.add_argument("name", nargs="?", default="", help="a scenario name, or all")
+    sc.set_defaults(fn=lambda a: __import__("phrasehome.scenarios", fromlist=["main"]).main(a))
+
+    cp = sub.add_parser("companion", help="the laptop companion: runs in the background and helps when needed")
+    cp.add_argument("--person", default="", help="whose laptop this is (their instance name)")
+    cp.add_argument("--hub", default="http://localhost:8080", help="the house's dashboard address")
+    cp.add_argument("--token", default="", help="the dashboard token, if it has one (or PHRASEHOME_TOKEN)")
+    cp.add_argument("--every", type=float, default=5.0, help="seconds between checks")
+    cp.add_argument("--auto-help", action="store_true", help="explain an error that's stuck on screen, unasked")
+    cp.add_argument("--speak-here", action="store_true", help="also say answers on this laptop")
+    cp.add_argument("--install", action="store_true", help="start it at every login")
+    cp.add_argument("--uninstall", action="store_true", help="stop starting it at login")
+    cp.set_defaults(fn=lambda a: __import__("phrasehome.companion", fromlist=["main"]).main(a))
+
     st = sub.add_parser("speech-test", help="measure how well the house hears you (record, then score)")
     st.add_argument("--record", action="store_true", help="say a set of phrases into the microphone first")
     st.add_argument("--tts", action="store_true", help="have the house's voice say them instead (quick)")
