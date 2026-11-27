@@ -2,7 +2,7 @@
 
 Recipe scaler   while a recipe's on: "make it for four", "double it", "halve it".
 Conversions     "how many grams in a cup of flour", "350 fahrenheit in celsius", "2 tablespoons in ml",
-                "8 ounces in grams" (metric cups by default: conversions: {cup_ml: 240} for US cups).
+                "8 ounces in grams" (US cups by default; conversions: {cup_ml: 250} for metric cups).
 What's open     "what's open now?", "where can I get food right now?" (the AI and web search, your location).
 Stove left on   the stove's temperature sensor (or a power plug) is hot when the last person leaves, or
                 hot for a long time with nobody in the kitchen: everyone's told, plainly. `off` steps can
@@ -63,7 +63,7 @@ def _fmt(x: float) -> str:
     return f"{x:.1f}"
 
 
-def convert(text: str, cup_ml: float = 250) -> str | None:
+def convert(text: str, cup_ml: float = 240) -> str | None:
     """'how many grams in a cup of flour', '350 fahrenheit in celsius', '2 tbsp in ml'. None if it isn't one."""
     s = clean(text)
     m = re.search(r"(-?\d+(?:\.\d+)?) ?(?:degrees )?(fahrenheit|f|celsius|c)\b.*?\b(?:in|to|into) (?:degrees )?(celsius|c|fahrenheit|f)\b", s)
@@ -117,7 +117,7 @@ class Kitchen(Part):
 
     def heard(self, said, room, speaker):
         s = clean(said)
-        ans = convert(s, float(self.cfg.get("cup_ml", 250)))
+        ans = convert(s, float(self.cfg.get("cup_ml", 240)))
         if ans:
             self.say(ans, room=room)
             return "done"
@@ -292,7 +292,7 @@ class Bets(Part):
         s = clean(said)
         who = self.who_rx()
         me = speaker if speaker is not None and not speaker.main else None
-        m = re.match(rf"^(?:bet[:,]? )?({who}|i) bets? ({who}) (?:a |an |one |some )?(.+?) (?:that|it'll|it will|they'll) (.+)$", s)
+        m = re.match(rf"^(?:bet[:,]? )?({who}|i) bets? ({who}) (.+?) (?:that|it'll|it will|they'll) (.+)$", s)
         if m:
             a = me if m.group(1) == "i" else self.find(m.group(1))
             b = self.find(m.group(2))

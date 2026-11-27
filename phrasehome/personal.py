@@ -417,7 +417,7 @@ class TVTimer(Part):
         if m:
             t = next(g for g in m.groups() if g)
             t = t.replace("midnight", "12 am").replace("noon", "12 pm")
-            at = parse_when(" today at " + t) or parse_when(" today " + t)
+            at = parse_when(" today at " + t, mode="night") or parse_when(" today " + t, mode="night")
             if at is None:
                 return None
             if at <= clock.now():

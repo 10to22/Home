@@ -438,8 +438,23 @@ def _day(at: datetime) -> str:
 DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
-def parse_when(text: str, now: datetime | None = None) -> datetime | None:
-    """'tomorrow at 9', 'on friday at 2pm', 'next monday', 'today at 14:30' -> a time (9am if none)."""
+def _guess_hour(hour: int, ampm: str, mode: str) -> int:
+    """A bare "at 8": daytime things (exams) read 1-7 as the afternoon; evening things (the TV, the
+    lounge) read 1-11 as pm; night things (a cut-off) read 7-11 as pm, 12 as midnight, 1-6 as early morning."""
+    if ampm == "pm" and hour < 12:
+        return hour + 12
+    if ampm == "am":
+        return 0 if hour == 12 else hour
+    if mode == "evening" and 1 <= hour <= 11:
+        return hour + 12
+    if mode == "night":
+        return hour + 12 if 7 <= hour <= 11 else 0 if hour == 12 else hour
+    return hour + 12 if 1 <= hour <= 7 else hour
+
+
+def parse_when(text: str, now: datetime | None = None, mode: str = "day") -> datetime | None:
+    """'tomorrow at 9', 'on friday at 2pm', 'next monday', 'today at 14:30' -> a time (9am if none).
+    mode: how to read a bare hour ("day", "evening" or "night", see _guess_hour)."""
     now = now or clock.now()
     t = text.lower()
     day = None
@@ -463,16 +478,14 @@ def parse_when(text: str, now: datetime | None = None) -> datetime | None:
     if m and (m.group(3) or ":" in m.group(0) or "at" in m.group(0)):
         hour, minute = int(m.group(1)), int(m.group(2) or 0)
         ampm = (m.group(3) or "").replace(".", "")
-        if ampm == "pm" and hour < 12:
-            hour += 12
-        elif not ampm and 1 <= hour <= 7:
-            hour += 12  # "at 2" is the afternoon
+        if not (":" in m.group(0) and hour >= 13):
+            hour = _guess_hour(hour, ampm, mode)
     elif wm:
         hour = words[wm.group(1)]
         minute = {"thirty": 30, "fifteen": 15, "forty five": 45}.get(wm.group(2) or "", 0)
         tail = wm.group(3) or ""
-        if (tail in ("pm", "in the afternoon") or (not tail and 1 <= hour <= 7)) and hour < 12:
-            hour += 12
+        hour = _guess_hour(hour, "pm" if tail in ("pm", "in the afternoon") else "am" if tail in ("am", "in the morning")
+                           else "", mode)
     if hour > 23 or minute > 59:
         return None
     return datetime(day.year, day.month, day.day, hour, minute, tzinfo=now.tzinfo)

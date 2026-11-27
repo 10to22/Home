@@ -76,7 +76,7 @@ class HouseLife:
         self.parts = [self.kitchen, self.takeout, self.bets, self.bins, self.bathroom, self.borrow, self.calendar,
                       self.things, self.place_reminders, self.nicknames, self.usual, self.tv, self.rules, self.referee,
                       self.locked_out, self.polls, self.thermostat, self.errands, self.move_in, self.secrets,
-                      self.deadlines, self.together, self.reader, self.projects, self.grades, self.hangover,
+                      self.projects, self.deadlines, self.together, self.reader, self.grades, self.hangover,
                       self.shower_slots, self.wear, self.noise, self.night_out, self.ring_phone, self.head_count,
                       self.missed, self.my_calendar, self.blitz, self.semester, self.horoscope, self.year,
                       self.exam_kit, self.stove, self.network, self.mood_dial, self.points]

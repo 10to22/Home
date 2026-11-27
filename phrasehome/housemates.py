@@ -726,7 +726,7 @@ class HouseCalendar(Part):
         m = re.match(r"^(?:i've got|i have|i'm booking|book|i'm taking|i'll have|can i have|i want) (?:the )?"
                      r"(tv|telly|television|lounge|living room|car|washing machine)(?: room)? (.+?)(?: for (.+))?$", s)
         if m and speaker is not None and not speaker.main:
-            start = parse_when(" " + m.group(2))
+            start = parse_when(" " + m.group(2), mode="evening")
             if start is None:
                 return None
             end = None
