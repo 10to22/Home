@@ -303,49 +303,114 @@ class Trainer:
         return res
 
     # ---------- learning ----------
-    def learn(self, scored: dict, min_count: int = 2, dry: bool = False) -> dict:
+    def learn(self, scored: dict, min_count: int = 2, dry: bool = False, holdout: set | None = None) -> dict:
+        """Learn only what's proven: each candidate fix is tried on every clip, and kept only if it turns
+        some wrong ones right and no right one wrong. Common words are never rewritten (they'd change
+        everyday speech and the AI's questions), wordings need two real words and to come back twice.
+        Clips from `holdout` voices are never learned from, only measured."""
+        from rapidfuzz import fuzz
+
         from .hearing_plus import AccentFixes
         from .matcher import expand, normalize
         from .understanding import Aliases
+        from .wordbank import same_words, strip_filler
 
+        holdout = holdout or set()
         vocab = {w for c in expand(self.config.commands, self.config.slots, variants=True, limit=40) for w in c.words}
-        swaps: dict[tuple[str, str], set] = defaultdict(set)
-        sentences: dict[tuple[str, str, str], set] = defaultdict(set)
-        clashes: Counter = Counter()
+        m = self.matcher()
+        # every (recognizer, clip): what was heard, what it should be, and what the matcher makes of it now
+        cases = []
         for name, r in scored.items():
             for row in r["rows"]:
                 if row["command"] == "(ai)":
                     continue
-                # a word it keeps getting wrong is worth fixing even when the fuzzy matching saved the command
-                for x, y in AccentFixes.differences(row["raw"], row["said"]):
-                    swaps[(x, y)].add(row["voice"])
-                if row["ok"]:
-                    continue
-                heard = normalize(row["heard"])
-                if row["got"] is None and len(heard.split()) >= 2:
-                    sentences[(heard, row["command"], json.dumps(row["slots"], sort_keys=True))].add(row["voice"])
-                elif row["got"] and row["got"] != row["command"]:
-                    clashes[(row["said"], row["heard"], row["got"])] += 1
-        word_fixes = {}
-        for (x, y), voices in swaps.items():
-            # often enough, by different voices, and never a word your commands need as it is
-            if len(voices) >= min_count and x not in vocab and y in vocab and len(x) > 1:
+                cases.append({"rec": name, "row": row, "raw": normalize(row["raw"]), "train": row["voice"] not in holdout})
+
+        def right(case, heard, extra=None):
+            hit = m.match(heard)
+            best = (hit.score, len(hit.phrase)) if hit else None
+            got, slots = (hit.command.name, hit.slots) if hit else (None, {})
+            if extra is not None:  # a wording being tried: does it beat what's there?
+                text, cmd, sl = extra
+                tries = {heard, strip_filler(heard)}
+                sc = max(fuzz.ratio(same_words(t), same_words(text)) for t in tries if t)
+                if sc >= m.threshold and not m._blocked(heard, text) and (best is None or (sc, len(text)) > best):
+                    got, slots = cmd, sl
+            row = case["row"]
+            return got == row["command"] and all(str(slots.get(k)) == str(v) for k, v in row["slots"].items())
+
+        fixes: dict[str, str] = {}
+
+        def apply(text):
+            return " ".join(fixes.get(w, w) for w in text.split())
+
+        for c in cases:
+            c["ok"] = right(c, apply(c["raw"]))
+        # ---- word fixes
+        swaps: dict[tuple[str, str], set] = defaultdict(set)
+        for c in cases:
+            if c["train"]:
+                for x, y in AccentFixes.differences(c["raw"], c["row"]["said"]):
+                    swaps[(x, y)].add(c["row"]["voice"])
+        tried, word_fixes = [], {}
+        for (x, y), voices in sorted(swaps.items(), key=lambda kv: -len(kv[1])):
+            if len(voices) < min_count or x in vocab or y not in vocab or len(x) < 3 or x in COMMON or x in fixes:
+                continue
+            touched = [c for c in cases if x in c["raw"].split()]
+            fixes[x] = y
+            gain = loss = 0
+            for c in touched:
+                now = right(c, apply(c["raw"]))
+                if c["train"]:
+                    gain += now and not c["ok"]
+                    loss += c["ok"] and not now
+            tried.append((x, y, gain, loss))
+            if gain >= 1 and loss == 0:
                 word_fixes[x] = y
-        fx = AccentFixes(self.config)
-        counts = fx.counts()
-        conflicts = {}
-        for x, y in word_fixes.items():
-            others = [k for k in counts if k.startswith(f"{x}>") and not k.endswith(f">{y}")]
-            if others:
-                conflicts[x] = y  # taught something else before: leave it to the History page
-        word_fixes = {x: y for x, y in word_fixes.items() if x not in conflicts}
-        m = self.matcher()
-        aliases = []
-        for (heard, cmd, slots), voices in sentences.items():
-            if m.match(heard) is not None:
-                continue  # it'd already run something
-            aliases.append({"heard": heard, "command": cmd, "slots": json.loads(slots), "voices": len(voices)})
+                for c in touched:
+                    c["ok"] = right(c, apply(c["raw"]))
+            else:
+                fixes.pop(x)
+        # ---- wordings
+        stop = {"the", "a", "an", "to", "on", "off", "in", "of", "my", "and", "it", "is", "please", "house", "unk", "up"}
+        seen: dict[tuple, list] = defaultdict(list)
+        for c in cases:
+            if c["train"] and not c["ok"]:
+                heard = apply(c["raw"])
+                if len([w for w in heard.split() if w not in stop]) >= 2:
+                    seen[(heard, c["row"]["command"], json.dumps(c["row"]["slots"], sort_keys=True))].append(c)
+        aliases, extra_cands = [], []
+        for (heard, cmd, sl), hits in sorted(seen.items(), key=lambda kv: -len(kv[1])):
+            if len(hits) < min_count:
+                continue
+            slots = json.loads(sl)
+            touched = [c for c in cases if fuzz.ratio(same_words(apply(c["raw"])), same_words(heard)) >= m.threshold - 5]
+            gain = loss = 0
+            for c in touched:
+                now = right(c, apply(c["raw"]), (heard, cmd, slots))
+                if c["train"]:
+                    gain += now and not c["ok"]
+                    loss += c["ok"] and not now
+            if gain >= 1 and loss == 0:
+                aliases.append({"heard": heard, "command": cmd, "slots": slots, "times": len(hits)})
+                from .matcher import Candidate
+
+                cmds = {x.name: x for x in self.config.commands}
+                if cmd in cmds:  # later wordings are tried with this one in place
+                    m.candidates.append(Candidate(heard, cmds[cmd], slots))
+                    m._texts.append(m._same(heard))
+                    m._sounds = None
+                for c in touched:
+                    c["ok"] = right(c, apply(c["raw"]))
+        clashes: Counter = Counter()
+        for c in cases:
+            if not c["ok"]:
+                hit = m.match(apply(c["raw"]))
+                if hit and hit.command.name != c["row"]["command"]:
+                    clashes[(c["row"]["said"], c["raw"], hit.command.name)] += 1
         if not dry:
+            fx = AccentFixes(self.config)
+            counts = fx.counts()
             for x, y in word_fixes.items():
                 counts[f"{x}>{y}"] = max(counts.get(f"{x}>{y}", 0), fx.MIN_SEEN)
             if word_fixes:
@@ -358,7 +423,31 @@ class Trainer:
                 except Exception as e:
                     log.info("couldn't learn %r: %s", a["heard"], e)
         return {"word_fixes": word_fixes, "sentences": aliases, "clashes": [list(k) + [n] for k, n in clashes.most_common(20)],
-                "skipped": conflicts}
+                "rejected_fixes": [t for t in tried if t[0] not in word_fixes][:30], "skipped": {}}
+
+
+# words people say all the time: never rewritten globally, whatever the recognizer does with them
+COMMON = set("""
+a about above after again against all am an and any are aren't as at be because been before being below between both
+but by can can't cannot could couldn't did didn't do does doesn't doing don't down during each few for from further had
+hadn't has hasn't have haven't having he he'd he'll he's her here here's hers herself him himself his how how's i i'd
+i'll i'm i've if in into is isn't it it's its itself let's me more most mustn't my myself no nor not of off on once only
+or other ought our ours ourselves out over own same shan't she she'd she'll she's should shouldn't so some such than that
+that's the their theirs them themselves then there there's these they they'd they'll they're they've this those through
+to too under until up very was wasn't we we'd we'll we're we've were weren't what what's when when's where where's which
+while who who's whom why why's with won't would wouldn't you you'd you'll you're you've your yours yourself yourselves
+said say says saying go goes going went gone get gets got getting make makes made making know knew known think thought
+take took taken see saw seen come came look looked want wanted give gave use used find found tell told ask asked work
+worked seem felt feel try tried leave left call called first last long great little old big high small large next early
+young important few public bad same able good new right just also back still even well way like time year day thing man
+woman life child world school state family student group country problem hand part place case week company system program
+question government number night point home water room mother area money story fact month lot study book eye job word
+business issue side kind head house service friend father power hour game line end member law car city community name
+president team minute idea body information nothing ago lead social whether watch together follow around parent stop face
+anything create speak read allow add spend grow open walk win offer remember love consider appear buy wait serve die send
+expect build stay fall cut reach kill remain suggest raise pass sell require report decide pull white late quite son sauce
+account else turned waking bound chop first that they work why
+""".split())
 
 
 def save_manifest(folder: Path, clips: list[dict]) -> None:
@@ -436,6 +525,11 @@ def report_md(before: dict, after: dict, learned: dict, missing: list[str], bg: 
         b, a = before[name], after.get(name, before[name])
         lines.append(f"| {name} | {b['commands_right']}/{b['clips']} ({b['accuracy']}%) | {a['commands_right']}/{a['clips']} "
                      f"({a['accuracy']}%) | {b['word_accuracy']}% | {a['word_accuracy']}% |")
+    for name, a in after.items():
+        if a.get("holdout"):
+            h = a["holdout"]
+            lines.append(f"\nHeld-out voices for {name} (never learned from, {h['clips']} clips): {h['before']}% before, "
+                         f"{h['after']}% after.")
     lines += ["", "## Learned word fixes", ""] + ([f"- heard \"{x}\" means \"{y}\"" for x, y in learned["word_fixes"].items()] or ["- none"])
     lines += ["", "## Learned wordings", ""] + ([f"- \"{a['heard']}\" means {a['command']} {a['slots'] or ''}" for a in learned["sentences"][:60]] or ["- none"])
     lines += ["", "## Clashes (came out as a different command: consider renaming one)", ""]
@@ -487,10 +581,22 @@ def run(config, n: int = 300, per_phrase: int = 2, voice_dirs: list[Path] = (), 
         if keep:
             save_manifest(t.out / "clips", clips)
     before = t.score(clips, "before")
-    learned = t.learn(before, dry=dry)
+    names = sorted({c["voice"] for c in clips})
+    holdout = set(names[::4]) if len(names) >= 3 else set()  # a quarter of the voices: measured, never learned from
+    learned = t.learn(before, dry=dry, holdout=holdout)
     show(f"  learned {len(learned['word_fixes'])} word fixes and {len(learned['sentences'])} wordings"
          + (" (dry run: not saved)" if dry else ""))
     after = before if dry else t.score(clips, "after ")
+    if holdout and not dry:
+        for name in before:
+            b = [r for r in before[name]["rows"] if r["voice"] in holdout]
+            a_ = [r for r in after[name]["rows"] if r["voice"] in holdout]
+            if b:
+                after[name]["holdout"] = {"before": round(100 * sum(r["ok"] for r in b) / len(b), 1),
+                                          "after": round(100 * sum(r["ok"] for r in a_) / len(a_), 1), "clips": len(b),
+                                          "voices": sorted(holdout)}
+                show(f"  held-out voices ({len(holdout)}, never learned from) {name}: "
+                     f"{after[name]['holdout']['before']}% -> {after[name]['holdout']['after']}%")
     missing = missing_words(config)
     bg = background(config, list(background_files), hear, show) if background_files else None
     t.out.mkdir(parents=True, exist_ok=True)

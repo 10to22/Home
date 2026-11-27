@@ -56,20 +56,29 @@ def test_mp3_round_trip_keeps_the_audio():
     assert abs(len(back) - len(pcm)) < 16000  # about the same length
 
 
-def test_learns_word_fixes_and_wordings_but_never_steals_a_command(home):
+def test_learns_only_what_makes_a_difference(home):
     ToneVoice.table = []
 
     def mishear(text):
-        return text.replace("kitchen", "kitten").replace("lockdown", "lock town")
+        return text.replace("kitchen", "kitten").replace("lockdown", "lock town").replace("lights on", "lice on")
 
-    voices = [ToneVoice("a"), ToneVoice("b"), ToneVoice("c")]
+    voices = [ToneVoice("a"), ToneVoice("b"), ToneVoice("c")]  # "a" is held out: measured, never learned from
     r = ht.run(home.config, per_phrase=3, voices=voices, hear={"fake": fake_ear(mishear)}, show=lambda *a: None,
                items=ITEMS)
-    assert r["learned"]["word_fixes"].get("kitten") == "kitchen"  # three voices, not a word the commands use
-    assert AccentFixes(home.config).rules().get("kitten") == "kitchen"
-    assert r["after"]["fake"]["accuracy"] > r["before"]["fake"]["accuracy"]  # "lock town" now runs lockdown
+    fixes = r["learned"]["word_fixes"]
+    assert fixes.get("lice") == "lights"  # "lice on" ran nothing; now it runs lights on
+    assert "kitten" not in fixes  # the matching already got "turn on the kitten lights" right: nothing to prove
     assert any(a["heard"] == "lock town" and a["command"] == "lockdown" for a in Aliases(home.config).all())
-    assert r["after"]["fake"]["word_accuracy"] > r["before"]["fake"]["word_accuracy"]
+    assert r["after"]["fake"]["accuracy"] > r["before"]["fake"]["accuracy"]
+    h = r["after"]["fake"]["holdout"]
+    assert h["voices"] == ["a"] and h["after"] > h["before"]  # and it helps a voice it never learned from
+
+
+def test_never_rewrites_common_words(home):
+    ToneVoice.table = []
+    r = ht.run(home.config, per_phrase=3, voices=[ToneVoice("a"), ToneVoice("b"), ToneVoice("c")],
+               hear={"fake": fake_ear(lambda t: t.replace("lights", "they"))}, show=lambda *a: None, items=ITEMS)
+    assert "they" not in r["learned"]["word_fixes"]
 
 
 def test_a_clash_is_reported_not_learned(home):
