@@ -31,3 +31,6 @@ phrasehome = "phrasehome.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["phrasehome*"]
+
+[tool.setuptools.package-data]
+phrasehome = ["*.json"]

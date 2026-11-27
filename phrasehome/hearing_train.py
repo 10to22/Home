@@ -492,3 +492,17 @@ def main(args) -> int:
         speakers=args.speakers, noise_file=Path(args.noise) if args.noise else None,
         background_files=[Path(b) for b in args.background or []], dry=args.dry, keep=args.keep)
     return 0
+
+
+_SHIPPED: dict | None = None
+
+
+def shipped() -> dict:
+    """What train-hearing learned about the built-in commands before release (trained_hearing.json)."""
+    global _SHIPPED
+    if _SHIPPED is None:
+        try:
+            _SHIPPED = json.loads((Path(__file__).with_name("trained_hearing.json")).read_text())
+        except (OSError, ValueError):
+            _SHIPPED = {}
+    return _SHIPPED

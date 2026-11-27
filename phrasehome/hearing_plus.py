@@ -86,6 +86,20 @@ class AccentFixes:
 
     def rules(self) -> dict[str, str]:
         best: dict[str, tuple[int, str]] = {}
+        try:  # fixes learned before shipping (train-hearing), unless this house taught something else
+            from .hearing_train import shipped
+
+            fixes = shipped().get("word_fixes", {})
+            if fixes:
+                if getattr(self, "_vocab", None) is None:
+                    from .matcher import expand
+
+                    self._vocab = {w for c in expand(self.config.commands, self.config.slots) for w in c.words}
+                for x, y in fixes.items():
+                    if x not in self._vocab:  # never rewrite a word this house's own commands use
+                        best[x] = (self.MIN_SEEN, y)
+        except Exception:
+            pass
         for key, n in self.counts().items():
             x, _, y = key.partition(">")
             if n >= self.MIN_SEEN and n > best.get(x, (0, ""))[0]:

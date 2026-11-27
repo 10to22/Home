@@ -143,8 +143,15 @@ class Aliases:
         from .matcher import Candidate
 
         cmds = {c.name: c for c in self.config.commands}
-        return [Candidate(a["heard"], cmds[a["command"]], dict(a.get("slots") or {}))
-                for a in self.all() if a.get("command") in cmds]
+        taught = [Candidate(a["heard"], cmds[a["command"]], dict(a.get("slots") or {}))
+                  for a in self.all() if a.get("command") in cmds]
+        # and how the built-in commands come out of the speech model, learned by train-hearing before shipping
+        from .hearing_train import shipped
+
+        mine = {c.text for c in taught}
+        written = {p.lower() for c in self.config.commands for p in c.phrases}
+        return taught + [Candidate(w["heard"], cmds[w["command"]], {}) for w in shipped().get("sentences", [])
+                         if w["command"] in cmds and w["heard"] not in mine and w["heard"] not in written]
 
 
 def meant_text(config, command: str, slots: dict | None = None) -> str | None:

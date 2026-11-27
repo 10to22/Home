@@ -117,3 +117,16 @@ def test_import_your_own_recordings(home, tmp_path):
     items = {i["expected"]: i["command"] for i in json.loads((out / "manifest.json").read_text())}
     assert items["turn on the kitchen lights"] == "room_lights_on" and items["lockdown"] == "lockdown"
     assert items["what's the weather tomorrow"] == "(ai)"
+
+
+def test_shipped_learnings_apply_only_to_commands_the_house_has(home, monkeypatch):
+    monkeypatch.setattr(ht, "_SHIPPED", {"word_fixes": {"loq": "lockdown", "kitchen": "kitten"},
+                                        "sentences": [{"heard": "lock dow", "command": "lockdown"},
+                                                      {"heard": "start the party", "command": "not_here"}]})
+    from phrasehome.matcher import Matcher
+    from phrasehome.understanding import candidates_with_aliases
+
+    m = Matcher(candidates_with_aliases(home.config))
+    assert m.match("lock dow").command.name == "lockdown"
+    rules = AccentFixes(home.config).rules()
+    assert rules.get("loq") == "lockdown" and "kitchen" not in rules  # never rewrites a word the house uses
