@@ -130,3 +130,11 @@ def test_shipped_learnings_apply_only_to_commands_the_house_has(home, monkeypatc
     assert m.match("lock dow").command.name == "lockdown"
     rules = AccentFixes(home.config).rules()
     assert rules.get("loq") == "lockdown" and "kitchen" not in rules  # never rewrites a word the house uses
+
+
+def test_keep_then_rescore(home):
+    ToneVoice.table = []
+    ht.run(home.config, per_phrase=1, voices=[ToneVoice("a")], hear={"fake": fake_ear(lambda t: t)},
+           show=lambda *a: None, items=ITEMS, keep=True, dry=True)
+    r = ht.run(home.config, hear={"fake": lambda pcm: "lockdown"}, show=lambda *a: None, rescore=True, dry=True)
+    assert len(r["clips"]) == len(ITEMS) and r["before"]["fake"]["clips"] == len(ITEMS)

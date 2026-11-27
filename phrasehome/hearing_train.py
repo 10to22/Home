@@ -361,6 +361,20 @@ class Trainer:
                 "skipped": conflicts}
 
 
+def save_manifest(folder: Path, clips: list[dict]) -> None:
+    rows = [{k: v for k, v in c.items() if k not in ("pcm", "by")} for c in clips if c.get("file")]
+    (folder / "manifest.json").write_text(json.dumps(rows, indent=1))
+
+
+def load_clips(folder: Path) -> list[dict]:
+    """The clips kept by an earlier run (--keep), to measure again after a change (--rescore)."""
+    try:
+        rows = json.loads((folder / "manifest.json").read_text())
+    except (OSError, ValueError):
+        raise SystemExit(f"no kept clips in {folder}: run train-hearing --keep first")
+    return [{**r, "pcm": to_pcm(folder / r["file"])} for r in rows if (folder / r["file"]).exists()]
+
+
 def missing_words(config, model_path: Path | None = None) -> list[str]:
     """Words in your commands that Vosk's model has never heard of (it can't recognise them)."""
     path = Path(model_path or config.resolve_path(config.settings.model_path))
@@ -448,23 +462,30 @@ def report_md(before: dict, after: dict, learned: dict, missing: list[str], bg: 
 def run(config, n: int = 300, per_phrase: int = 2, voice_dirs: list[Path] = (), speakers: int = 6,
         noise_file: Path | None = None, background_files: list[Path] = (), dry: bool = False, keep: bool = False,
         hear: dict | None = None, voices: list[Voice] | None = None, show=print, seed: int = 1,
-        items: list[dict] | None = None) -> dict:
+        items: list[dict] | None = None, rescore: bool = False) -> dict:
     from .speechtest import recognizers
 
     rng = random.Random(seed)
-    voices = voices if voices is not None else find_voices(voice_dirs, speakers, rng)
-    if not voices:
+    voices = voices if voices is not None else ([] if rescore else find_voices(voice_dirs, speakers, rng))
+    if not voices and not rescore:
         raise SystemExit("No voices to train with: on a Mac the built-in ones are used; elsewhere give --voices "
                          "(a folder of Piper .onnx voices) or install espeak-ng")
     hear = hear if hear is not None else recognizers(config)
     if not hear:
         raise SystemExit("No speech recognizer: run phrasehome download-models (Vosk) or pip install faster-whisper")
     noise = np.frombuffer(to_pcm(noise_file), dtype=np.int16) if noise_file else None
-    items = items if items is not None else phrases(config, n, seed)
-    show(f"Training on {len(items)} phrases x {per_phrase} voices, from {len(voices)} voices, through mp3, "
-         f"with {', '.join(hear)}")
+    items = items if items is not None else ([] if rescore else phrases(config, n, seed))
+    if not rescore:
+        show(f"Training on {len(items)} phrases x {per_phrase} voices, from {len(voices)} voices, through mp3, "
+             f"with {', '.join(hear)}")
     t = Trainer(config, voices, hear, noise, seed=seed, keep=keep, show=show)
-    clips = t.make_clips(items, per_phrase)
+    if rescore:
+        clips = load_clips(t.out / "clips")
+        show(f"  re-scoring {len(clips)} kept clips")
+    else:
+        clips = t.make_clips(items, per_phrase)
+        if keep:
+            save_manifest(t.out / "clips", clips)
     before = t.score(clips, "before")
     learned = t.learn(before, dry=dry)
     show(f"  learned {len(learned['word_fixes'])} word fixes and {len(learned['sentences'])} wordings"
@@ -490,7 +511,8 @@ def main(args) -> int:
     cfg = load_config(args.config)
     run(cfg, n=args.phrases, per_phrase=args.per_phrase, voice_dirs=[Path(v) for v in args.voices or []],
         speakers=args.speakers, noise_file=Path(args.noise) if args.noise else None,
-        background_files=[Path(b) for b in args.background or []], dry=args.dry, keep=args.keep)
+        background_files=[Path(b) for b in args.background or []], dry=args.dry, keep=args.keep or args.rescore,
+        rescore=args.rescore)
     return 0
 
 

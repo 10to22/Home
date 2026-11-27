@@ -1197,6 +1197,7 @@ def main(argv: list[str] | None = None) -> int:
     th.add_argument("--background", nargs="*", help="long real recordings that should run nothing (music, TV, talk)")
     th.add_argument("--dry", action="store_true", help="measure only; learn nothing")
     th.add_argument("--keep", action="store_true", help="keep the mp3 clips (data/train-hearing/clips)")
+    th.add_argument("--rescore", action="store_true", help="measure the kept clips again (after changing something)")
     th.set_defaults(fn=lambda a: __import__("phrasehome.hearing_train", fromlist=["main"]).main(a))
 
     ac = sub.add_parser("ai-check", help="check that the AI (Claude) is linked: key, model, a test question")
