@@ -427,3 +427,13 @@ def test_emotion_strength_scales_every_mood(tmp_path):
     base = EMOTIONS["annoyed"]
     assert soft["pitch"] == base["pitch"] * 0.5 and clear["pitch"] == base["pitch"] * 1.25
     assert clear["rate"] > base["rate"] > soft["rate"] > 1.0
+
+
+def test_piper_speed_is_the_moods_speed(tmp_path):
+    """Liveliness used to drive Piper's duration noise, which slowed cheerful down and sped calm up."""
+    m = VoiceModeler(make_cfg(tmp_path, "{engine: none}"))
+    p = {mood: m.engine_params("piper", mood) for mood in ("neutral", "calm", "cheerful", "annoyed", "soft")}
+    assert {x["noise_w"] for x in p.values()} == {0.8}
+    assert p["cheerful"]["length_scale"] < p["neutral"]["length_scale"] < p["calm"]["length_scale"]
+    assert p["annoyed"]["length_scale"] < p["neutral"]["length_scale"] < p["soft"]["length_scale"]
+    assert p["cheerful"]["noise_scale"] > p["calm"]["noise_scale"]  # livelier still sounds livelier

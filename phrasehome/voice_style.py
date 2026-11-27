@@ -56,7 +56,7 @@ EMOTIONS: dict[str, dict[str, Any]] = {
                "about": "playful, a grin in the voice"},
     "annoyed": {"rate": 1.12, "pitch": -2.5, "pause": 0.75, "lively": 1.3, "volume": 2.0, "exaggeration": 1.0,
                 "about": "exasperated, clipped"},
-    "cheerful": {"rate": 1.08, "pitch": 3.0, "pause": 0.9, "lively": 1.5, "volume": 1.0, "exaggeration": 0.85,
+    "cheerful": {"rate": 1.12, "pitch": 3.0, "pause": 0.9, "lively": 1.5, "volume": 1.0, "exaggeration": 0.85,
                  "about": "bright and upbeat"},
     "urgent": {"rate": 1.16, "pitch": 1.5, "pause": 0.7, "lively": 1.2, "volume": 3.5, "exaggeration": 0.8,
                "about": "quick and alert"},
@@ -347,10 +347,14 @@ class VoiceModeler:
                                                  k["exaggeration"])
         out: dict[str, Any] = {"mood": mood, "knobs": k, "post": {"pitch": pitch, "volume": vol, "tempo": 1.0}}
         if engine == "piper":
+            # noise_w is Piper's *duration* noise: tied to liveliness it slowed cheerful down and sped calm up
+            # (measured: 0.5 -> 1.79 s, 1.3 -> 2.24 s for one sentence). Liveliness is noise_scale (pitch
+            # movement) only; speed is length_scale only.
             out.update(length_scale=round(1 / (speed * rate), 3),
                        noise_scale=round(min(1.2, max(0.1, 0.667 * lively)), 3),
-                       noise_w=round(min(1.4, max(0.1, 0.8 * lively)), 3),
-                       sentence_silence=round(0.2 * pause, 3))
+                       noise_w=0.8, sentence_silence=round(0.2 * pause, 3))
+            # Piper only delivers about half of a speed change (13% faster asked, 7% heard): ffmpeg does the rest
+            out["post"]["tempo"] = round(rate ** 0.45, 3)
         elif engine == "say":
             out.update(rate=int(180 * speed * rate), extra_silence_ms=int(max(0.0, pause - 1.0) * 400))
         elif engine == "espeak":
@@ -359,7 +363,7 @@ class VoiceModeler:
             out["post"] = {"pitch": 0.0, "volume": 0.0, "tempo": 1.0}
         elif engine == "melo":
             out.update(speed=round(speed * rate, 3), noise_scale=round(min(1.2, max(0.1, 0.6 * lively)), 3),
-                       noise_scale_w=round(min(1.4, max(0.1, 0.8 * lively)), 3),
+                       noise_scale_w=0.8,  # duration noise: kept steady so the mood's speed is the speed you hear
                        sdp_ratio=round(min(1.0, max(0.0, 0.2 * lively)), 3))
         elif engine == "chatterbox":
             # more exaggeration talks faster; a lower cfg weight slows it back down and lets it act
