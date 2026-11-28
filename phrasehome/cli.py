@@ -39,6 +39,10 @@ def _cmd_check(args) -> int:
     cfg = load_config(args.config)
     cands = expand(cfg.commands, cfg.slots)
     print(f"OK: {len(cfg.commands)} commands, {len(cands)} phrases, backends: {', '.join(cfg.backends)}")
+    from .doctor import node_problems
+
+    for p in node_problems(cfg):
+        print(f"warning: {p}")
     if args.verbose:
         for c in cands:
             print(f"  {c.text!r:45} -> {c.command.name} {c.slots or ''}")
@@ -510,7 +514,13 @@ def _cmd_ask(args) -> int:
             questions = (q.strip() for q in sys.stdin)
         for q in questions:
             if q:
-                answer = ai.ask(q, room=args.room)
+                try:
+                    answer = ai.ask(q, room=args.room)
+                except Exception as e:
+                    from .assistant import ai_problem
+
+                    print(ai_problem(e, cfg), file=sys.stderr)
+                    return 1
                 print(f"{ai.names[0]}: {answer}")
                 if not args.quiet:
                     home.voice.speak(answer, room=args.room)  # in the house's voice

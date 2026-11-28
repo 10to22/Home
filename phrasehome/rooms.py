@@ -24,6 +24,7 @@ Events: room.occupied / room.empty {room}, person.room {person, room, source},
 
 from __future__ import annotations
 
+import re
 import json
 import logging
 import threading
@@ -297,7 +298,9 @@ class Locator:
             name = self.tags[t].get("name", t)
             w = self.where(t)
             if not w:
-                out.append(f"I haven't heard {name}'s tag recently.")
+                # "Sam's keys" is already possessive: "the tag on Sam's keys", never "Sam's keys's tag"
+                on = name if re.match(r"^(?:the|my|your|our|\w+'s?)\s", name, re.I) else f"the {name}"
+                out.append(f"I haven't heard from the tag on {on} recently.")
             elif w["minutes_ago"] <= 2:
                 out.append(f"{name[0].upper() + name[1:]} {'is' if not name.endswith('s') else 'are'} in the {w['room']}.")
             else:

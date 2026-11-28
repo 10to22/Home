@@ -738,6 +738,9 @@ class Voice:
         knobs: that mood's settings tried out without saving them."""
         v = v or self.base
         engine = self.available_engine(v.get("engine", "piper"), v)
+        if engine == "piper" and v.get("piper_model") and \
+                not Path(self.config.resolve_path(v["piper_model"])).exists():
+            engine = self._no_piper_model(v)  # say it some other way (or not at all), and say why once
         if engine == "none" or not text.strip():
             return None
         try:
@@ -866,6 +869,21 @@ class Voice:
 
         return ACCENTS[self.style.accent]["piper_prefix"] if self.style.accent else []
 
+    def _no_piper_model(self, v: dict[str, Any]) -> str:
+        """The Piper voice file isn't there (not downloaded yet). Use the Mac voice or espeak if there is
+        one, else stay quiet, and say so once instead of an error for every line."""
+        model = Path(self.config.resolve_path(v["piper_model"]))
+        if self.style.accent and model.parent.exists() and self.style.piper_model(model.parent):
+            return "piper"  # the accent's own Piper voice is there
+        back = "say" if sys.platform == "darwin" and shutil.which("say") else \
+            "espeak" if shutil.which("espeak-ng") else "none"
+        if "piper-model" not in _WARNED:
+            _WARNED.add("piper-model")
+            log.warning("the Piper voice file %s is missing: run `phrasehome download-models` (or set "
+                        "voice: {engine: say} on a Mac). %s", model,
+                        "Speaking with " + back + " meanwhile." if back != "none" else "The house can't talk until then.")
+        return back
+
     @staticmethod
     def _warn_accent(engine: str, msg: str) -> None:
         if f"accent-{engine}" not in _WARNED:
@@ -916,6 +934,8 @@ class Voice:
         home = getattr(self.config, "home", None)
         lang = home.language_for(room) if home is not None and hasattr(home, "language_for") else None
         targets = self.targets(room, rooms, everywhere, urgent)
+        if room and "room" not in values:
+            values["room"] = room  # "House meeting tomorrow, in the {room}": the room it's said in
         tagged, key_or_text = split_tag(key_or_text)
         text, clip, key, phrase_mood = self.resolve_full(key_or_text, lang=lang,
                                                          clean=self.keep_clean(targets or [room]), **values)

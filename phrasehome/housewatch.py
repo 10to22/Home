@@ -147,7 +147,9 @@ class Watch:
         if minutes >= 2:
             self._record("shower", {"person": st["person"] or "", "minutes": minutes})
             self.home.events.log("shower.off", person=st["person"] or "", minutes=minutes)
-        if minutes >= (warn[0] if warn else 10) or st["manual"]:
+        if minutes < 2 and st["manual"]:
+            self.home.voice.speak("shower_stopped", room=self.shower_room())  # not "0 minutes: a personal worst"
+        elif minutes >= (warn[0] if warn else 10) or st["manual"]:
             self.home.voice.speak("shower_done", room=self.shower_room(), minutes=minutes)
         return f"shower over: {minutes} minutes"
 

@@ -45,6 +45,7 @@ PLAIN: dict = {
     "exam_removed": "Okay, I've taken that exam off.",
     # door status lights
     "door_status_set": "Your door now says {status}.",
+    "door_status_which": "Which door? Say it in your own room and I'll set that one.",
     "door_status_clear": "Your door status is cleared.",
     "door_status_is": "{whose}: {status}.",
     # house meetings (meeting.py)
@@ -65,6 +66,7 @@ PLAIN: dict = {
     "shower_warn": "You've been in the shower for {minutes} minutes.",
     "shower_roast": "{minutes} minutes. That's a long shower. Others need hot water too.",
     "shower_done": "That was a {minutes} minute shower.",
+    "shower_stopped": "Shower timer off.",
     "shower_record": "This week's longest shower: {name}, {minutes} minutes.",
     "shower_none": "No showers timed this week.",
     # last out (housewatch.py)

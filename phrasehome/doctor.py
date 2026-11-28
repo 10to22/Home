@@ -49,6 +49,38 @@ def _row(name: str, ok: bool | None, detail: str, fix: str = "") -> dict:
     return {"name": name, "ok": ok, "detail": detail, "fix": "" if ok else fix}
 
 
+def node_problems(config) -> list[str]:
+    """Steps and sensors in config.yaml that name an ESP32 module the esp32 backend doesn't list (a typo,
+    or one not added yet): "windows.lounge window: node 'living' isn't one of: kitchen, bedroom, ..."."""
+    esp = {n for n, b in config.backends.items() if b.get("type") == "esp32"}
+    known = {str(k).lower() for n in esp for k in (config.backends[n].get("nodes") or {})}
+    if not known:
+        return []
+    default = config.settings.default_backend
+    out: list[str] = []
+
+    def walk(x, where: str) -> None:
+        if isinstance(x, dict):
+            node = x.get("node")
+            backend = x.get("backend", default)
+            if isinstance(node, str) and "{" not in node and node.lower() not in known | {"all"} \
+                    and (backend is None or backend in esp):
+                out.append(f"{where}: node '{node}' isn't one of: {', '.join(sorted(known))}")
+            for k, v in x.items():
+                if k not in ("node", "_context"):
+                    walk(v, f"{where}.{k}" if where else str(k))
+        elif isinstance(x, list):
+            for i, v in enumerate(x):
+                walk(v, f"{where}[{i}]")
+
+    walk({c.name: c.action for c in config.commands}, "commands")
+    for name in ("routines", "schedules", "automations", "sensors", "presence", "doors", "vacation", "extra"):
+        val = getattr(config, name, None)
+        if val:
+            walk(val, "" if name == "extra" else name)
+    return list(dict.fromkeys(out))
+
+
 def checks(home, online: bool = True) -> list[dict]:
     c = home.config
     s = c.settings
@@ -94,8 +126,13 @@ def checks(home, online: bool = True) -> list[dict]:
 
         eng = home.voice.base.get("engine", "piper")
         have = Voice.available_engine(eng, home.voice.base)
-        out.append(_row("Voice", have not in ("none", "") or eng == "none", f"{eng} -> {have}",
-                        "Install Piper (pip install piper-tts) or set voice: {engine: say} on a Mac"))
+        model = home.voice.base.get("piper_model")
+        if have == "piper" and model and not Path(c.resolve_path(model)).exists():
+            out.append(_row("Voice", False, f"Piper voice file missing ({Path(model).name})",
+                            "Download it: phrasehome download-models (or voice: {engine: say} on a Mac)"))
+        else:
+            out.append(_row("Voice", have not in ("none", "") or eng == "none", f"{eng} -> {have}",
+                            "Install Piper (pip install piper-tts) or set voice: {engine: say} on a Mac"))
     except Exception as e:
         out.append(_row("Voice", False, str(e)[:120], "Check the voice: section of config.yaml"))
     # ---- the AI
@@ -139,6 +176,10 @@ def checks(home, online: bool = True) -> list[dict]:
         stale = [n for n, f in cams.feeds.items() if not getattr(f, "jpeg", None)]
         out.append(_row("Cameras", not stale, f"no picture from {', '.join(stale)}" if stale else f"{len(cams.feeds)} sending",
                         "Check the camera's power and address in config.yaml (cameras:)"))
+    bad_nodes = node_problems(c)
+    if bad_nodes:
+        out.append(_row("Device names in config", False, f"{len(bad_nodes)} unknown: {bad_nodes[0]}",
+                        "Fix the name in config.yaml, or add the module under backends: esp32: nodes:"))
     # ---- the computer
     data = Path(c.resolve_path(c.data_dir))
     try:

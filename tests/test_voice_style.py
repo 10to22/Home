@@ -177,6 +177,7 @@ def test_piper_moods_and_the_accent_fallback(tmp_path, runs):
     models = tmp_path / "models" / "piper"
     models.mkdir(parents=True)
     (models / "en_GB-alan-medium.onnx").write_bytes(b"x")
+    (models / "en_US-lessac-medium.onnx").write_bytes(b"x")
     cfg = make_cfg(tmp_path, "{engine: piper, piper_model: models/piper/en_US-lessac-medium.onnx}")
     v = Voice(cfg)
     v.synthesize("Hello.", v.base)
@@ -195,6 +196,20 @@ def test_piper_moods_and_the_accent_fallback(tmp_path, runs):
     assert len(runs.cmds) == n  # cached
     v2.synthesize("Hello.", v2.base, emotion="calm")
     assert len(runs.cmds) == n + 1  # another mood is another sound
+
+
+def test_missing_piper_voice_file_warns_once_and_falls_back(tmp_path, runs, monkeypatch, caplog):
+    vmod._WARNED.discard("piper-model")
+    monkeypatch.setattr(vmod.sys, "platform", "linux")
+    monkeypatch.setattr(vmod.shutil, "which", lambda name: f"/usr/bin/{name}" if name in ("piper", "espeak-ng") else None)
+    cfg = make_cfg(tmp_path, "{engine: piper, piper_model: models/piper/en_US-lessac-medium.onnx}")
+    v = Voice(cfg)
+    with caplog.at_level("WARNING"):
+        v.synthesize("Hello.", v.base)
+        v.synthesize("Hello again.", v.base)
+    assert not any(c[0] == "piper" for c in runs.cmds)  # never runs Piper without its voice file
+    assert any(c[0] == "espeak-ng" for c in runs.cmds)  # says it with espeak meanwhile
+    assert sum("Piper voice file" in r.message for r in caplog.records) == 1  # and says why once
 
 
 def test_mac_say_picks_an_australian_voice(tmp_path, runs, monkeypatch):

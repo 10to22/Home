@@ -241,6 +241,7 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | One-click updates | `phrasehome update` (or Update now on /health): fast-forward from GitHub, reinstall if dependencies changed, check every file compiles and the config loads (`--test` runs the tests too). If anything fails, the old version goes back. `update: {auto: true, at: "04:00"}` does it nightly and restarts itself. Refuses if you've changed files yourself |
 | Sync learning | `phrasehome sync http://house.local:8080`, or `sync: {peer: ..., every_minutes: 30}`: taught wordings, accent fixes, proven fixes and "was that for the house?" examples are merged both ways between your Mac and the Pi. Nothing is deleted |
 | What's broken? | `phrasehome doctor` or /health: the speech model, Whisper and the hearing server, ffmpeg, the voice, the AI (Ollama or Claude), phones, ESP32 modules, cameras, disk space, the dashboard password, updates, and the last warnings and errors, each problem with its fix |
+| Typos in config.yaml | `phrasehome check` (and /health) warns about any step or sensor naming an ESP32 module that isn't under `backends: esp: nodes:` ("windows.lounge window: node 'living' isn't one of: ..."). A missing Piper voice file or sound player is one warning with the fix, and the house falls back to the Mac or espeak voice meanwhile |
 
 ## Laptop companion
 

@@ -18,6 +18,7 @@ price_check: { stores: [Aldi, Coles, Woolworths] }
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 import uuid
@@ -25,6 +26,8 @@ from fractions import Fraction
 
 from . import clock
 from .life_base import Part, clean, join, money
+
+log = logging.getLogger("phrasehome.kitchen")
 
 GRAMS_PER_CUP = {"flour": 125, "plain flour": 125, "self raising flour": 125, "bread flour": 130, "sugar": 200,
                  "white sugar": 200, "caster sugar": 220, "brown sugar": 220, "icing sugar": 120, "powdered sugar": 120,
@@ -173,7 +176,11 @@ class Kitchen(Part):
         a = getattr(self.home, "assistant", None)
         if a is None:
             return "needs_ai", {}
-        answer = a.ask(question, room=room, person=getattr(speaker, "id", None))
+        try:
+            answer = a.ask(question, room=room, person=getattr(speaker, "id", None))
+        except Exception as e:  # no key, Ollama not running, offline
+            log.warning("kitchen: the AI couldn't answer: %s", e)
+            return "needs_ai", {}
         self.say(answer, room=room)
         return "done"
 

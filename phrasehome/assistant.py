@@ -777,6 +777,28 @@ def _similar(a: str, b: str) -> bool:
     return bool(a and b) and (fuzz.ratio(a, b) >= 70 or fuzz.token_set_ratio(a, b) >= 85)
 
 
+def ai_problem(e: BaseException, config=None) -> str:
+    """What went wrong with the AI, in words someone can act on (not the SDK's raw error)."""
+    raw = str(e)
+    low = raw.lower()
+    a = (getattr(config, "assistant", None) or {}) if config is not None else {}
+    local = str(a.get("provider", "claude")).lower() in ("local", "ollama")
+    if local and any(w in low for w in ("connection", "refused", "11434", "max retries", "failed to establish")):
+        return "The local AI isn't answering: start Ollama (ollama serve) and check the model is pulled (ollama pull qwen3:8b)."
+    if local and ("not found" in low or "pull" in low):
+        return "The local AI's model isn't downloaded yet: ollama pull qwen3:8b (or whichever model is in config.yaml)."
+    if any(w in low for w in ("authentication", "api_key", "api key", "x-api-key", "401", "unauthorized")):
+        return ("The AI isn't set up: put ANTHROPIC_API_KEY=... in the .env file, or use the free local AI "
+                "(assistant: {provider: local} with Ollama).")
+    if "credit" in low or "billing" in low:
+        return "The Claude account is out of credit: top it up in the Claude Console, or switch to the local AI."
+    if "overloaded" in low or "529" in low or "rate limit" in low or "429" in low:
+        return "The AI is busy right now: try again in a minute."
+    if any(w in low for w in ("connection", "timed out", "timeout", "name resolution", "network")):
+        return "Can't reach the AI: check the internet connection."
+    return raw[:200]
+
+
 def spoken(text: str) -> str:
     """Strip anything that sounds bad read aloud."""
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # markdown links -> their text
@@ -1161,7 +1183,7 @@ class AssistantRouter:
                 # the house asked something back ("which door?"): the reply doesn't need the name
                 self._listen_for(source, "reply")
         except Exception as e:
-            log.error("assistant failed: %s", e)
+            log.error("assistant failed: %s", ai_problem(e, self.assistant.home.config))
             self.assistant.home.voice.speak("assistant_error", room=room)
             if reply:
                 reply("failed")

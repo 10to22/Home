@@ -102,4 +102,8 @@ def number_words(n: int) -> str:
     if n < 1000:
         h, rest = divmod(n, 100)
         return f"{ONES[h]} hundred" + (f" {number_words(rest)}" if rest else "")
+    for size, name in ((10 ** 9, "billion"), (10 ** 6, "million"), (1000, "thousand")):
+        if n >= size:
+            big, rest = divmod(n, size)
+            return f"{number_words(big)} {name}" + (f" {number_words(rest)}" if rest else "")
     raise ValueError("number too large")

@@ -583,6 +583,8 @@ class DoorStatus:
             target = room
             if speaker is not None and not speaker.main and speaker.rooms:
                 target = speaker.rooms[0]
+            if not target:  # said at the hub, by someone it doesn't know
+                return "door_status_which", {}
             mins_ = float(m.group(2)) * (60 if "hour" in s else 1) if m.group(2) else None
             self.set(target, m.group(1), mins_)
             return "done"

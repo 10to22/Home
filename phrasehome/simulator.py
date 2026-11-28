@@ -49,6 +49,9 @@ def scan_usage(data: Any, nodes: list[str]) -> dict[str, dict[str, dict[str, str
                 node = node.lower()
                 if isinstance(x.get("channel"), str):
                     add(node, "channels", x["channel"].lower(), "level" in x)
+                if isinstance(x.get("channels"), list):  # door_status: {node: bedroom, channels: [r, g, b]}
+                    for ch in x["channels"]:
+                        add(node, "channels", str(ch).lower())
                 if isinstance(x.get("input"), str):
                     name = x["input"].lower()
                     add(node, "inputs", name, "below" in x or "above" in x or name.startswith(ANALOG_HINTS))

@@ -33,6 +33,7 @@ move_in: { items: [kettle, toaster, microwave, vacuum] }
 
 from __future__ import annotations
 
+import logging
 import math
 import random
 import re
@@ -44,6 +45,8 @@ from pathlib import Path
 
 from . import clock
 from .life_base import Part, clean, join
+
+log = logging.getLogger("phrasehome.housemates")
 
 MOVE_IN = ["kettle", "toaster", "microwave", "vacuum", "pots and pans", "frying pan", "cutlery", "plates", "bowls",
            "mugs", "glasses", "chopping board", "kitchen knives", "baking tray", "dish rack", "iron", "laundry rack",
@@ -442,9 +445,13 @@ class Referee(Part):
             a = getattr(self.home, "assistant", None)
             if a is None or not m.group(1):
                 return "coin", {"side": random.choice(["heads", "tails"])}
-            answer = a.ask("You're the house referee. Settle this argument between housemates with a clear ruling "
-                           "in two short, funny but fair sentences; check facts with search if you need to: "
-                           + m.group(1), room=room, person=getattr(speaker, "id", None))
+            try:
+                answer = a.ask("You're the house referee. Settle this argument between housemates with a clear "
+                               "ruling in two short, funny but fair sentences; check facts with search if you need "
+                               "to: " + m.group(1), room=room, person=getattr(speaker, "id", None))
+            except Exception as e:  # the AI isn't available: a coin's fair too
+                log.warning("referee: the AI couldn't answer: %s", e)
+                return "coin", {"side": random.choice(["heads", "tails"])}
             self.say(answer, room=room)
             return "done"
         return None

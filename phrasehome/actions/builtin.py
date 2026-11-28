@@ -73,7 +73,13 @@ class VoiceBackend(_Builtin):
     def run(self, action: dict[str, Any], phrase: str) -> str:
         if action.get("hush"):  # "shut up"
             return self.home.voice.hush()
+        from .. import clock
+
         values = _ctx(action, "speak", "rooms", "everywhere", "urgent")
+        t = clock.now()  # for lines like "It's {time}." ({speak: time_now})
+        values.setdefault("time", clock.spoken_time(t))
+        values.setdefault("date", t.strftime("%A, %B %-d"))
+        values.setdefault("day", t.strftime("%A"))
         rooms = action.get("rooms")
         if isinstance(rooms, str):
             rooms = [rooms]
@@ -203,7 +209,16 @@ class AskBackend(_Builtin):
         if ai is None:
             log.warning("`ask:` step skipped: the AI assistant isn't enabled")
             return "assistant off"
-        answer = ai.ask(str(action["ask"]), room=room)
+        try:
+            answer = ai.ask(str(action["ask"]), room=room)
+        except Exception as e:  # no key, Ollama not running, offline: say so plainly, and the routine goes on
+            from ..assistant import ai_problem
+
+            why = ai_problem(e, self.home.config)
+            log.warning("`ask:` step: %s", why)
+            if not action.get("silent"):
+                self.home.voice.speak("assistant_error", room=room)
+            return f"the AI couldn't answer: {why}"
         if action.get("silent"):
             return answer
         self.home.voice.speak(answer, room=room, rooms=action.get("rooms"),

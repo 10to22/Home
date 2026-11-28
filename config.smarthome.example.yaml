@@ -78,6 +78,7 @@ backends:
       front door: phrasehome-front-door.local
       garage: phrasehome-garage.local     # parking assistant (firmware/parking) + opener relay
       garden: phrasehome-garden.local
+      bathroom: phrasehome-bathroom.local   # humidity + door sensor (shower timer, bathroom queue)
     ir_codes:                          # or learn them: phrasehome ir learn tv_power --node "living room"
       tv_power: { protocol: NEC, code: "0x20DF10EF", bits: 32 }
   music:                             # ESP32 speakers (firmware/speaker)
@@ -247,19 +248,19 @@ party:
   playlist: "house party"          # Spotify
   guest_wifi: { ssid: Party Time, password: CHANGE-ME }
   quiet_time: { weekdays: "22:30", weekends: "00:30" }
-  at_quiet: [ { node: living, channel: lamp, level: 40 } ]
+  at_quiet: [ { node: living room, channel: lamp, level: 40 } ]
   cleanup: [bottles and recycling, kitchen benches and dishes, vacuum the lounge, bins out]
   cleanup_time: "11:00"
 study: { focus: 25, break: 5, long_break: 15, light: [ { node: "{here}", channel: lamp, level: 100 } ] }
 exams: { quiet_from: "21:30", heads_up: "19:00" }   # from calendars, config, or "I've got an exam on Friday at 9"
 door_status:                       # an RGB LED by each bedroom door (red, green, blue channels)
   rooms:
-    bedroom: { node: bedroom_door }
+    bedroom: { node: bedroom, channels: [door_red, door_green, door_blue] }   # an RGB LED on the bedroom module
 house_meeting: { window: "18:00-22:00", minutes: 30, room: living room }
 shower: { sensor: { node: bathroom, input: humidity }, rise: 8, warn: [10, 20], roast: 30 }
 last_out: { lock: true, tell: both }   # tell the last one out, and the rest of the house
 windows:
-  lounge window: { node: living, input: window }
+  lounge window: { node: living room, input: window }
 winter_lamp:
   lights:
     bedroom: { node: bedroom, channel: lamp }

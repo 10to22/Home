@@ -142,42 +142,116 @@ class WebServer:
 
     # ---------- typed commands ("as if heard in a room") ----------
     def heard(self, text: str, room: str | None) -> dict:
+        """Typed as if said in `room`, in the same order as speech: a command (with or without the name in
+        front), then the house's own things ("house points", "Sam's a vegetarian"), then the AI."""
         h = self.home
         ai = h.assistant
-        if ai is not None:
-            rest = ai.addressed(text, room)
-            if rest:
+        hist = getattr(h, "history", None)
+        rest = ai.addressed(text, room) if ai is not None else self._without_name(text)
+        matcher = self._typed_matcher(room)
+        for said in [text] + ([rest] if rest else []):
+            got = self._typed_commands(said, matcher, room)
+            if got is not None:
+                return got
+        life = getattr(h, "life", None)
+        said = rest if rest is not None else text
+        if life is not None and said.strip():
+            try:
+                if life.quick(said, room, None, strict=rest is None):
+                    if hist:
+                        hist.add(kind="command", room=room, heard=text, matched="house life", via="typed")
+                    return {"matched": "house life"}
+            except Exception as e:
+                log.error("house life couldn't handle %r: %s", said, e)
+        if rest is not None and rest.strip():
+            if ai is None:
+                return {"matched": None, "hint": "The AI assistant is off (add an assistant: section to config.yaml)."}
+            try:
                 answer = ai.ask(rest, room)
-                h.voice.speak(answer, room=room)
-                if getattr(h, "history", None):
-                    h.history.add(kind="ai", room=room, question=rest, answer=answer, via="typed")
-                return {"assistant": answer}
+            except Exception as e:
+                from .assistant import ai_problem
+
+                why = ai_problem(e, h.config)
+                log.warning("the AI couldn't answer %r: %s", rest, why)
+                h.voice.speak("assistant_error", room=room)
+                return {"assistant": None, "error": why}
+            h.voice.speak(answer, room=room)
+            if hist:
+                hist.add(kind="ai", room=room, question=rest, answer=answer, via="typed")
+            return {"assistant": answer}
+        if hist:
+            hist.add(kind="none", room=room, heard=text, via="typed")
+        return {"matched": None, "hint": "No command matches that. Start with the wake name to ask the AI."}
+
+    def _without_name(self, text: str) -> str | None:
+        """No AI: still take "house, ..." off the front (assistant names from config, else "house")."""
+        from .matcher import normalize
+
+        names = [normalize(n) for n in (self.home.config.assistant or {}).get("names", ["house", "home"])]
+        words = normalize(text).split()
+        while words and words[0] in ("hey", "ok", "okay", "hi"):
+            words = words[1:]
+        for n in sorted(names, key=len, reverse=True):
+            if n and words[:len(n.split())] == n.split():
+                return " ".join(words[len(n.split()):])
+        return None
+
+    def _typed_matcher(self, room: str | None):
+        h = self.home
         engine = getattr(h, "engine", None)
         if engine is not None:
-            matcher = engine._lang(room).matcher
-        else:
-            from .understanding import Aliases
+            return engine._lang(room).matcher
+        from .understanding import Aliases
 
-            key = (len(h.config.commands), len(Aliases(h.config).all()))
-            if getattr(self, "_matcher_n", None) != key:
-                from .matcher import Matcher
-                from .understanding import candidates_with_aliases
+        key = (len(h.config.commands), len(Aliases(h.config).all()))
+        if getattr(self, "_matcher_n", None) != key:
+            from .matcher import Matcher
+            from .understanding import candidates_with_aliases
 
-                s = h.config.settings
-                self._matcher = Matcher(candidates_with_aliases(h.config), s.match_mode,
-                                        s.match_threshold, s.block_words)
-                self._matcher_n = key
-            matcher = self._matcher
-        m = matcher.match(text)
-        if not m:
-            if getattr(h, "history", None):
-                h.history.add(kind="none", room=room, heard=text, via="typed")
-            return {"matched": None, "hint": "No command matches that. Start with the wake name to ask the AI."}
-        m.room, m.via = room, "typed"
-        if getattr(h, "history", None):
-            h.history.add(kind="command", room=room, heard=text, matched=m.command.name, via="typed")
-        h.submit(m)
-        return {"matched": m.command.name, "slots": m.slots}
+            s = h.config.settings
+            self._matcher = Matcher(candidates_with_aliases(h.config), s.match_mode,
+                                    s.match_threshold, s.block_words)
+            self._matcher_n = key
+        return self._matcher
+
+    def _typed_commands(self, text: str, matcher, room: str | None) -> dict | None:
+        """Run what `text` asks for, understood like speech ("dim the lights a bit", "... in five minutes",
+        "lock up and turn the lights off"). Typed is deliberate, so nothing waits for a "no"."""
+        from .listener import find_commands
+
+        h = self.home
+        if not text.strip():
+            return None
+        try:
+            found = find_commands(text, matcher, h, h.config, room)
+        except Exception as e:
+            log.error("understanding typed %r: %s", text, e)
+            found = None
+        if found is None:
+            m = matcher.match(text)
+            found = ([m], [0.0], None) if m else None
+        if found is None:
+            return None
+        matches, delays, say = found
+        if say:
+            h.voice.speak(say, room=room)
+            return {"matched": None, "said": say}
+        if not matches:
+            return None
+        hist = getattr(h, "history", None)
+        for m, delay in zip(matches, delays or [0.0] * len(matches)):
+            m.room, m.via = room, "typed"
+            if hist:
+                hist.add(kind="command", room=room, heard=text, matched=m.command.name, via="typed")
+            if delay and delay > 0:
+                h.timeline.call_in(delay, lambda m=m: h.submit(m))
+            else:
+                h.submit(m)
+        first = matches[0]
+        out = {"matched": first.command.name, "slots": first.slots}
+        if len(matches) > 1:
+            out["all"] = [m.command.name for m in matches]
+        return out
 
     # ---------- the History page ----------
     def history_get(self, query: str = "") -> dict:
@@ -426,7 +500,12 @@ class WebServer:
         if path == "/api/ask":
             if h.assistant is None:
                 raise RuntimeError("the AI assistant isn't enabled")
-            answer = h.assistant.ask(str(body["question"]), room=body.get("room"))
+            try:
+                answer = h.assistant.ask(str(body["question"]), room=body.get("room"))
+            except Exception as e:
+                from .assistant import ai_problem
+
+                raise RuntimeError(ai_problem(e, h.config)) from e
             if body.get("speak"):
                 h.voice.speak(answer, room=body.get("room"))
             return {"answer": answer}

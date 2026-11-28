@@ -93,7 +93,7 @@ PLAIN: dict = {
     "errand_done": "Thanks {name}. Plus one for shopping for the house.",
     "errand_back": "{name}'s back from the shops.",
     # move-in
-    "movein_ok": "Noted: you're bringing {items}.",
+    "movein_ok": "Noted: you're bringing the {items}.",
     "movein_dup": "Heads up: {name}'s already bringing a {item}.",
     "movein_who": "{name}'s bringing the {item}.",
     "movein_nobody": "Nobody's bringing a {item} yet.",

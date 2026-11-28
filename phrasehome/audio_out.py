@@ -156,6 +156,8 @@ class AudioRouter:
     def _play_local(self, audio: Path, volume: float) -> None:
         if not (self.play_local and self.player):
             return
+        if getattr(self, "_no_player", False):
+            return  # said why once already
         path, tmp = audio, None
         if abs(volume - 1.0) > 0.01 and shutil.which("ffmpeg"):
             tmp = Path(tempfile.mkstemp(suffix=".wav")[1])
@@ -167,7 +169,13 @@ class AudioRouter:
         try:
             _far_end(path, volume)
             cmd = [str(c).replace("{file}", str(path)) for c in self.player]
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except FileNotFoundError:  # e.g. no aplay: say so once, not an error for every line
+                self._no_player = True
+                log.warning("can't play sound on this computer: %s isn't installed (%s), or set voice: {player: [...]}",
+                            cmd[0], "sudo apt install alsa-utils" if cmd[0] == "aplay" else "install it")
+                return
             with _busy_lock:
                 _procs.add(proc)
             try:

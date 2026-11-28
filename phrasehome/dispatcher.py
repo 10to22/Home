@@ -184,6 +184,12 @@ class Dispatcher:
         ctx.update({k: str(v) for k, v in (values or {}).items() if v is not None})
         if "{here}" in str(action) and "here" not in ctx and self.default_room():
             ctx["here"] = self.default_room()  # e.g. a routine started from the dashboard
+        if "room" not in ctx and "{room}" in str(action):
+            # "a smoke alarm is going off ({room})": the room it was heard in, if nothing says which
+            if ctx.get("here"):
+                ctx["room"] = ctx["here"]
+            elif "{room}" not in str(action.get("node", "")):  # (a device still needs a real room)
+                ctx["room"] = "somewhere in the house"
         action = render(action, ctx)
         if "{here}" in str(action):
             raise ValueError("this needs {here}, but the mic that heard it has no room set")
