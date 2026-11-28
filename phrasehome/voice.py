@@ -747,6 +747,9 @@ class Voice:
                    knobs: dict | None = None) -> Path | None:
         """Make the audio for one line. emotion: a mood from voice_style (None = as configured).
         knobs: that mood's settings tried out without saving them."""
+        from .speech_text import for_speech
+
+        text = for_speech(text)  # no emoji read by name, no "rolls eyes", symbols said properly
         v = v or self.base
         engine = self.available_engine(v.get("engine", "piper"), v)
         if engine == "piper" and v.get("piper_model") and \

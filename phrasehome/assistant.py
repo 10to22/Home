@@ -723,13 +723,15 @@ class SentenceSpeaker:
     def hushed(self) -> bool:
         return getattr(self.voice, "hush_count", 0) != self.hushes
 
-    def feed(self, piece: str) -> None:
+    def feed(self, piece: str, final: bool = False) -> None:
+        from .speech_text import sentence_end
+
         self.buf += piece
         while True:
-            m = re.search(r"(?<=[.!?])\s+|\n+", self.buf)
-            if not m:
+            end = sentence_end(self.buf, final)  # not after "Dr." or "e.g.", not at "out... finally"
+            if end is None:
                 return
-            sentence, self.buf = self.buf[: m.start()], self.buf[m.end():]
+            sentence, self.buf = self.buf[:end], self.buf[end:].lstrip()
             self._say(sentence)
 
     def _say(self, sentence: str) -> None:
@@ -763,6 +765,7 @@ class SentenceSpeaker:
 
     def finish(self, timeout: float = 120) -> None:
         """Say whatever's left, and wait until it's all been said."""
+        self.feed("", final=True)  # the answer's complete: its last sentences can be told apart now
         if self.buf.strip():
             self._say(self.buf)
             self.buf = ""
@@ -801,6 +804,9 @@ def ai_problem(e: BaseException, config=None) -> str:
 
 def spoken(text: str) -> str:
     """Strip anything that sounds bad read aloud."""
+    from .speech_text import first_pass
+
+    text = first_pass(text)  # <think> notes, `code`, *stage directions* (before the asterisks go)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # markdown links -> their text
     text = re.sub(r"https?://\S+|www\.\S+", "", text)
     text = re.sub(r"(?im)^\s*(sources?|references?)\s*:.*$", "", text)  # "Sources: ..." lines
