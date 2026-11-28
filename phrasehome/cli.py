@@ -273,6 +273,10 @@ def _cmd_voice(args) -> int:
         return _voice_match(cfg, text, args)
     if args.action == "check":
         return _voice_check(cfg)
+    if args.action == "echo-test":  # does it hear itself on this computer?
+        from .echo_test import main as echo_main
+
+        return echo_main(cfg)
     if args.action == "tune":
         return _voice_tune(cfg, args)
     home = Dispatcher(cfg)  # noqa: F841  (speech is routed through it)
@@ -1053,7 +1057,7 @@ def main(argv: list[str] | None = None) -> int:
                                     "emotions [text] [--save moods.wav] | tune [mood] [--pitch 2 ...] [--reset] | "
                                     "serve [--port 8810]")
     vo.add_argument("action", choices=["list", "say", "record", "match", "demo", "check", "emotions", "tune",
-                                       "serve"], nargs="?", default="list")
+                                       "serve", "echo-test"], nargs="?", default="list")
     vo.add_argument("text", nargs="*")
     vo.add_argument("--seconds", type=float, default=4.0)
     vo.add_argument("--top", type=int, default=8, help="match: how many voices to show")

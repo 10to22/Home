@@ -112,6 +112,9 @@ and the fingerprint sensor.
    "set a timer for one minute", "lockdown", or "house, ..." for the AI. What it hears is printed, so
    you can see when it mishears. It stops listening while it's talking, so it doesn't hear itself
    through the laptop speakers (with headphones: `local_mic: { mute_while_speaking: false }`).
+   If it ever answers its own voice, run `phrasehome voice echo-test`: it plays three lines, measures how
+   late your speaker plays (AirPods and AirPlay lag) and how long the room echoes, and tells you the
+   `echo_tail:` to add under `local_mic:` if it needs one.
 
    With the webcam too: `simulate --mic --webcam`. The dashboard's **Laptop (testing)** card moves
    them while it runs: "Microphone is in" picks the room you're pretending to stand in ("lights on"

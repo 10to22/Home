@@ -66,7 +66,7 @@ def _engine(cfg, partial, monkeypatch):
     e = Engine.__new__(Engine)
     e.config, e.buffers, e._stops = cfg, {"local": bytearray(b"x")}, None
     rec = FakeRec(partial)
-    e._recognizer = lambda source, room=None: rec
+    e._recognizer = e._talk_recognizer = lambda source, room=None: rec
     e.dispatcher = types.SimpleNamespace(voice=types.SimpleNamespace(hush=lambda: hushed.append(1)),
                                          submit=submitted.append)
     return e, rec, hushed, submitted

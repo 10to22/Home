@@ -605,6 +605,17 @@ DEMO: list[tuple[str, dict]] = [
 ]
 
 
+def _seconds(audio: Path) -> float:
+    """How long a sound lasts (WAV), or a guess."""
+    import wave
+
+    try:
+        with wave.open(str(audio)) as w:
+            return w.getnframes() / float(w.getframerate() or 1)
+    except Exception:
+        return 4.0
+
+
 class _Safe(dict):
     def __missing__(self, key: str) -> str:
         return "{" + key + "}"
@@ -1029,6 +1040,10 @@ class Voice:
 
     def _play_one(self, text: str, audio: Path, room: str | None, volume: float, route: str) -> None:
         try:
+            from . import audio_out
+
+            if route != "local":  # a room speaker: its mic may hear it, so remember the words (own_echo)
+                audio_out.note_said(text, _seconds(audio))
             where = self.router.play(audio, room, volume / 100, route=route)
             log.info("say [%s via %s]: %s", room or "hub", where, text or audio.name)
         except Exception as e:

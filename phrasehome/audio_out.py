@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 log = logging.getLogger("phrasehome.audio")
@@ -27,10 +28,62 @@ _busy_lock = threading.Lock()
 
 _procs: set = set()  # players running right now (killed by "shut up")
 speaking_text = ""  # what the hub's speaker is saying, to tell "shut up" from its own echo
+# After the player stops, the sound is still on its way (Bluetooth / AirPlay speakers lag behind) and the room
+# echoes: the mic stays deaf to ordinary speech this long. local_mic: {echo_tail: 2} for AirPlay; Bluetooth
+# speakers and AirPods are spotted by name and get 1.5 s (listener.py).
+ECHO_TAIL = 0.8
+_busy_since = 0.0
+_busy_text = ""
+_local_spoken: deque = deque(maxlen=40)  # (start, end, text): the hub's own speaker, for muting by time
+_spoken: deque = deque(maxlen=80)        # (start, end, text): anything said anywhere, to spot its own words
 
 
 def local_busy() -> bool:
     return _busy > 0 or time.monotonic() < _quiet_until
+
+
+def busy_at(t: float | None) -> bool:
+    """Was the hub's speaker talking (or still echoing) when audio recorded at monotonic time `t` was heard?
+    Audio is often handled a moment after it's recorded (the computer's busy), so this is what to ask, not
+    local_busy()."""
+    if t is None:
+        return local_busy()
+    with _busy_lock:
+        if _busy > 0 and t >= _busy_since - 0.05:
+            return True
+        return any(s - 0.05 <= t <= e + ECHO_TAIL for s, e, _ in _local_spoken)
+
+
+def note_said(text: str, seconds: float, start: float | None = None) -> None:
+    """Something was said on a speaker other than the hub's own (a room speaker): remember its words."""
+    if text:
+        s = time.monotonic() if start is None else start
+        with _busy_lock:
+            _spoken.append((s, s + max(0.5, seconds), text))
+
+
+def own_echo(heard: str, at: float | None = None, window: float = 4.0) -> bool:
+    """Is `heard` the house's own voice coming back (from any speaker), not a person? Three or more words that
+    run along something it said, heard while it spoke or up to `window` seconds after. Shorter things are
+    left to the timing (busy_at): "the front" right after "which door, the front or the back?" is an answer."""
+    import re
+
+    words = re.findall(r"[a-z0-9']+", heard.lower())
+    if len(words) < 3:
+        return False
+    t = time.monotonic() if at is None else at
+    with _busy_lock:
+        recent = list(_spoken) + ([(_busy_since, t, _busy_text)] if _busy > 0 else [])
+    from rapidfuzz import fuzz
+
+    h = " ".join(words)
+    for s, e, text in recent:
+        if not (s - 0.5 <= t <= e + window + ECHO_TAIL):
+            continue
+        said = " ".join(re.findall(r"[a-z0-9']+", text.lower()))
+        if said and len(h) <= len(said) + 12 and fuzz.partial_ratio(h, said) >= 85:
+            return True
+    return False
 
 
 def hush_local() -> int:
@@ -46,11 +99,21 @@ def hush_local() -> int:
 
 
 def _speaking(on: bool) -> None:
-    global _busy, _quiet_until
+    global _busy, _quiet_until, _busy_since, _busy_text
     with _busy_lock:
-        _busy += 1 if on else -1
-        if not on:
-            _quiet_until = time.monotonic() + 0.5  # the room's echo dies down
+        now = time.monotonic()
+        if on:
+            if _busy == 0:
+                _busy_since, _busy_text = now, speaking_text
+            else:
+                _busy_text = f"{_busy_text} {speaking_text}" if speaking_text not in _busy_text else _busy_text
+            _busy += 1
+            return
+        _busy = max(0, _busy - 1)
+        if _busy == 0:
+            _local_spoken.append((_busy_since, now, _busy_text))
+            _spoken.append((_busy_since, now, _busy_text))
+        _quiet_until = now + ECHO_TAIL  # the sound's still arriving, and the room echoes
 
 
 def _far_end(path: Path, volume: float) -> None:

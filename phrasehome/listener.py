@@ -297,7 +297,9 @@ class Engine:
                 log.info("no second opinion from Whisper (%s)", e)
         return w
 
-    def feed(self, source: str, room: str | None, pcm: bytes, reply: Reply | None) -> None:
+    def feed(self, source: str, room: str | None, pcm: bytes, reply: Reply | None, at: float | None = None) -> None:
+        """at: when this audio was recorded (monotonic). It's often handled a moment later (the computer's busy),
+        and whether the house was talking is a question about when it was recorded."""
         smoke = getattr(self.dispatcher, "smoke", None)
         if smoke is not None:
             try:
@@ -310,8 +312,9 @@ class Engine:
             beeps_for(self.dispatcher).feed(room or source, pcm)
         except Exception as e:
             log.debug("beep listener: %s", e)
+        talking = source == "local" and self._hub_talking(at)
         life = getattr(self.dispatcher, "life", None)
-        if life is not None and not self._hub_talking():
+        if life is not None and not talking:
             try:
                 life.noise.level(room or source, pcm)  # loudness only, for quiet hours
             except Exception as e:
@@ -320,15 +323,18 @@ class Engine:
         pcm = plus.pre(source, room, pcm)  # mic health, echo cancelling, the room's noise, direction
         if not pcm:
             return
-        if source == "local" and self._hub_talking() and not plus.echo_on(source):
+        if talking and not plus.echo_on(source):
+            self.__dict__.setdefault("_was_talking", set()).add(source)
             self._while_talking(source, room, pcm, reply)
             return
+        if source in self.__dict__.get("_was_talking", ()):
+            self._after_talking(source)  # forget anything half-heard while it talked: that was its own voice
         if self.config.settings.noise_cleanup:
             from .hearing import StreamCleaner
 
             pcm = self.cleaners.setdefault(source, StreamCleaner())(pcm)
         if self.whisper is not None:
-            self._feed_whisper(source, room, pcm, reply)
+            self._feed_whisper(source, room, pcm, reply, at)
             return
         rec = self._recognizer(source, room)
         L = self._lang(room)
@@ -345,6 +351,8 @@ class Engine:
         buf.clear()
         text = plus.fix_text(result.get("text", "").strip())  # learned accent fixes
         result["text"] = text
+        if text and self._own_echo(text, at):
+            return
         if text and not self.dispatcher.state.is_private(room):
             boosted = self._say_again(source, text, audio, room, L)
             if boosted is not None:
@@ -483,7 +491,8 @@ class Engine:
             rec = self.free[source] = self._vosk.KaldiRecognizer(self._lang(room).model, self.config.settings.sample_rate)
         return rec
 
-    def _feed_whisper(self, source: str, room: str | None, pcm: bytes, reply: Reply | None) -> None:
+    def _feed_whisper(self, source: str, room: str | None, pcm: bytes, reply: Reply | None,
+                      at: float | None = None) -> None:
         from .hearing import Vad
 
         self._spot(source, room, pcm)
@@ -497,7 +506,7 @@ class Engine:
             vad = self.vads[source] = Vad(end_silence=self.config.settings.vad_silence)
         for clip in vad.feed(pcm):
             try:
-                self._wq.put_nowait((source, room, clip, reply))
+                self._wq.put_nowait((source, room, clip, reply, at))
             except queue.Full:
                 log.warning("too much to write down; skipped a sentence")
 
@@ -511,7 +520,8 @@ class Engine:
             except Exception as e:
                 log.error("couldn't write that down: %s", e)
 
-    def _handle_clip(self, source: str, room: str | None, clip: bytes, reply: Reply | None) -> None:
+    def _handle_clip(self, source: str, room: str | None, clip: bytes, reply: Reply | None,
+                     at: float | None = None) -> None:
         import time as _t
 
         from .hearing import clean, sounds_like_name
@@ -520,7 +530,7 @@ class Engine:
         audio = clean(clip) if self.config.settings.noise_cleanup else clip
         text, conf, words = self.whisper.transcribe(audio, self.prompt, L.lang)
         text = self._plus().fix_text(text)
-        if not text:
+        if not text or self._own_echo(text, at):
             return
         result = {"text": text, "result": words}
         if self.dispatcher.state.is_private(room):
@@ -568,10 +578,47 @@ class Engine:
         return person
 
     # ---------- "shut up" while the house is talking (the hub's own microphone) ----------
-    def _hub_talking(self) -> bool:
-        from .audio_out import local_busy
+    def _hub_talking(self, at: float | None = None) -> bool:
+        from . import audio_out
 
-        return bool((self.config.sources.get("local_mic") or {}).get("mute_while_speaking", True)) and local_busy()
+        if not bool((self.config.sources.get("local_mic") or {}).get("mute_while_speaking", True)):
+            return False
+        return audio_out.local_busy() if at is None else audio_out.busy_at(at)
+
+    def _after_talking(self, source: str) -> None:
+        """The house has stopped talking: start listening afresh, with nothing of its own voice left over."""
+        self.__dict__.get("_was_talking", set()).discard(source)
+        for store in ("recognizers", "free"):
+            rec = getattr(self, store, {}).get(source)
+            if rec is not None:
+                try:
+                    rec.Reset()
+                except Exception:
+                    getattr(self, store).pop(source, None)
+        self.buffers.get(source, bytearray()).clear()
+        for store in ("vads", "spotters", "_live"):
+            getattr(self, store, {}).pop(source, None)
+
+    def _own_echo(self, text: str, at: float | None) -> bool:
+        """The house's own words coming back through a mic (a speaker that lags, a loud room): not a person."""
+        from . import audio_out
+
+        try:
+            if audio_out.own_echo(text, at):
+                log.info("ignored its own voice: %r", text)
+                return True
+        except Exception as e:
+            log.debug("own echo check: %s", e)
+        return False
+
+    def _talk_recognizer(self, source: str, room: str | None):
+        """A recognizer of its own for "shut up" while the house talks, so the house's speech never ends up
+        in the one that listens for commands."""
+        recs = self.__dict__.setdefault("_talk_recs", {})
+        rec = recs.get(source)
+        if rec is None:
+            rec = recs[source] = self._vosk.KaldiRecognizer(self._lang(room).model, self.config.settings.sample_rate)
+        return rec
 
     def _stop_phrases(self) -> list[tuple[re.Pattern, Any]]:
         """Phrases that may cut in while the house talks: "shut up" and friends, alarm stop/snooze."""
@@ -593,7 +640,7 @@ class Engine:
         so far (not a clean sentence), and act on it straight away, mid-word."""
         from . import audio_out
 
-        rec = self._recognizer(source, room)
+        rec = self._talk_recognizer(source, room)
         if rec.AcceptWaveform(pcm):
             text = json.loads(rec.Result()).get("text", "")
         else:
@@ -713,8 +760,21 @@ def listen(config: Config, dry_run: bool = False) -> None:
 
         log.info("Listening for %d phrases (%d commands). Ctrl+C to stop.",
                  len(engine.candidates), len(config.commands))
+        behind = {"warned": 0.0, "skipped": 0}
         while True:
-            engine.feed(*audio.get())
+            item = audio.get()
+            at = item[4] if len(item) > 4 else None
+            if at is not None and time.monotonic() - at > MAX_LAG:
+                # so far behind that answering would be pointless: skip ahead, and say why (once in a while)
+                behind["skipped"] += 1
+                engine._after_talking(item[0])
+                if time.monotonic() - behind["warned"] > 300:
+                    behind["warned"] = time.monotonic()
+                    log.warning("hearing fell %.0f s behind (the computer's too busy: the local AI or Whisper?), so "
+                                "it skipped ahead. If this keeps happening: settings: {second_opinion: off}, or a "
+                                "smaller AI model", time.monotonic() - at)
+                continue
+            engine.feed(*item)
     except KeyboardInterrupt:
         log.info("stopping")
     finally:
@@ -759,8 +819,10 @@ def _open_local_mic(config: Config, opts: dict, put):
                     log.warning("the microphone is only giving silence. On a Mac: System Settings > Privacy & "
                                 "Security > Microphone > allow Terminal, then quit and reopen Terminal")
         r = opts.get("room")  # while the house talks, the engine only listens for "shut up" (_while_talking)
-        put(("local", str(r).lower() if r else None, data, None))
+        # stamped with when it was recorded: it may be handled a moment later, after the house stops talking
+        put(("local", str(r).lower() if r else None, data, None, _time.monotonic()))
 
+    set_echo_tail(opts, sd)
     stream = sd.RawInputStream(
         samplerate=config.settings.sample_rate, blocksize=4000,
         device=opts.get("device", config.settings.device),
@@ -769,6 +831,28 @@ def _open_local_mic(config: Config, opts: dict, put):
     stream.start()
     log.info("local microphone on%s", f" ({room})" if room else "")
     return stream
+
+
+WIRELESS = re.compile(r"airpods|bluetooth|beats|bose|jbl|sony|soundcore|marshall|boom|airplay|homepod|sonos", re.I)
+
+
+def set_echo_tail(opts: dict, sd=None) -> float:
+    """How long after the house stops talking its own mic stays deaf to ordinary speech: local_mic.echo_tail,
+    else longer for wireless speakers (they play a moment behind) than for the computer's own."""
+    from . import audio_out
+
+    tail = opts.get("echo_tail")
+    out_name = ""
+    try:
+        out_name = str(sd.query_devices(kind="output")["name"]) if sd is not None else ""
+    except Exception:
+        pass
+    if tail is None:
+        tail = 1.5 if WIRELESS.search(out_name) else 0.8
+    audio_out.ECHO_TAIL = float(tail)
+    if out_name:
+        log.info("speaking through %s: the mic ignores its own voice until %.1f s after it stops", out_name, float(tail))
+    return float(tail)
 
 
 def handle_result(result: dict, matcher: Matcher, dispatcher: Dispatcher, config: Config,
@@ -995,6 +1079,7 @@ def _flipped(v):
     return v
 
 
+MAX_LAG = 6.0  # seconds: audio older than this when its turn comes is skipped (the computer fell behind)
 SECOND_LOOK_WORD_GAP: int | None = 1  # a near miss gets a second listen only within this many words of a command
 
 POLARITY = {"on", "off", "up", "down", "open", "close", "shut", "lock", "unlock", "start", "stop", "arm", "disarm"}
