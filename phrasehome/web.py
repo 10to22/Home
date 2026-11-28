@@ -711,6 +711,10 @@ class _Handler(BaseHTTPRequestHandler):
             from .dashboard_house import HOUSE_PAGE
 
             return self._send(200, HOUSE_PAGE, "text/html; charset=utf-8")
+        if u.path == "/help":  # what can I say? (built from config.yaml)
+            from .help import page
+
+            return self._send(200, page(self.web.home.config, self.web.home.instances), "text/html; charset=utf-8")
         if u.path == "/health":
             from .doctor import HEALTH_PAGE
 

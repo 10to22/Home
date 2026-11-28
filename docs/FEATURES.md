@@ -242,6 +242,11 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Sync learning | `phrasehome sync http://house.local:8080`, or `sync: {peer: ..., every_minutes: 30}`: taught wordings, accent fixes, proven fixes and "was that for the house?" examples are merged both ways between your Mac and the Pi. Nothing is deleted |
 | What's broken? | `phrasehome doctor` or /health: the speech model, Whisper and the hearing server, ffmpeg, the voice, the AI (Ollama or Claude), phones, ESP32 modules, cameras, disk space, the dashboard password, updates, and the last warnings and errors, each problem with its fix |
 | Typos in config.yaml | `phrasehome check` (and /health) warns about any step or sensor naming an ESP32 module that isn't under `backends: esp: nodes:` ("windows.lounge window: node 'living' isn't one of: ..."). A missing Piper voice file or sound player is one warning with the fix, and the house falls back to the Mac or espeak voice meanwhile |
+| Self-test | `phrasehome selftest`: builds a virtual copy of your house (simulated devices, phones and Google to the log, nothing spoken, a copy of data/) and tries every command's own wording in everyone's room, ~100 everyday sentences, junk, every routine and every dashboard page. Lists crashes, a wording that runs the wrong command, rooms with no module, `{placeholders}` left in anything said or sent, and anything slow. About 10 seconds; `--ai` also asks the real AI three questions and times it. The last result is on /health, and nightly updates go back if the new version crashes more than the old one |
+| Wordings it could mix up | `phrasehome check` (and /health) lists wordings of different commands that are the same, sound the same, or are a sound-alike word apart ("hallway lights off" / "all lights off"). On/off pairs aren't listed: those are opposite on purpose, and the house double-checks unclear ones |
+| Answers without the AI | "who's home" and "what's on today" are answered from what the house knows: instant, offline, and never made up. Today = your reminders, your calendar link, your exams and deadlines, the house calendar, a house meeting, and whose turn the bins are. `{ask: ..., fallback: {report: today}}`: an AI step that says something useful when the AI is off |
+| What can I say? | "what can you do", "what can I say about music", or /help on the dashboard: every command by topic with a search box, plus the things you can tell the house. `phrasehome cheatsheet` writes it as a page to print for the fridge. Built from config.yaml, so new commands show up by themselves |
+| Runs in the background | `phrasehome service install` (Mac): starts at login, restarts itself, log in ~/Library/Logs/phrasehome.log; `--simulate --mic` for the virtual house. `service status / logs / stop / start / uninstall`. On the Pi it's the boot service (`sudo ./deploy/enable-service.sh`) |
 
 ## Laptop companion
 
@@ -301,7 +306,7 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Privacy mode | "stop listening" (an hour) / "start listening": nothing else is matched, logged or sent |
 | Hardware mute | Mute button on each room module: no audio leaves the device; the LED stays on |
 | Forget strangers | `remember_unknown: false` |
-| Backups | `phrasehome backup`: one private file with config, face bank, reminders and recordings |
+| Backups | Every night at 3:30 (keeps 14) into backups/, and `phrasehome backup` any time: house points, what it knows about people, reminders, taught wordings, hearing fixes, face bank, voiceprints, recorded lines, config and secrets. `--restore FILE` moves the current data aside (never deletes it). `backup: {at: "03:30", keep: 14, to: /Volumes/USB}`; /health shows the last one |
 
 ## Hearing and understanding
 

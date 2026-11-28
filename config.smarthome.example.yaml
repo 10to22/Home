@@ -79,6 +79,7 @@ backends:
       garage: phrasehome-garage.local     # parking assistant (firmware/parking) + opener relay
       garden: phrasehome-garden.local
       bathroom: phrasehome-bathroom.local   # humidity + door sensor (shower timer, bathroom queue)
+      kids room: phrasehome-kids-room.local
     ir_codes:                          # or learn them: phrasehome ir learn tv_power --node "living room"
       tv_power: { protocol: NEC, code: "0x20DF10EF", bits: 32 }
   music:                             # ESP32 speakers (firmware/speaker)
@@ -407,7 +408,7 @@ routines:
     - { node: living room, channel: blinds, state: on }
     - { backend: google, say: set the thermostat to 70 }
     - { speak: good_morning }
-    - { ask: "Give me a 3 sentence morning briefing: today's weather, my reminders and calendar today, and anything that happened overnight at the door." }
+    - { ask: "Give me a 3 sentence morning briefing: today's weather, my reminders and calendar today, and anything that happened overnight at the door.", fallback: { report: today } }
   movie_time:
     - { node: living room, channel: blinds, state: off }
     - { node: living room, channel: lights, state: off }
@@ -515,8 +516,8 @@ commands:
 
   # ---- intercom presets
   - { name: dinner, phrases: ["dinner's ready", dinner time], action: { speak: dinner, everywhere: true } }
-  - { name: whos_home, phrases: ["who's home", "who is home"], action: { ask: "Who's home right now? One sentence." } }
-  - { name: my_reminders, phrases: [read my reminders, "what's on today"], action: { ask: "What are my reminders and calendar events today? Keep it short." } }
+  - { name: whos_home, phrases: ["who's home", "who is home", "is anyone home"], action: { report: home } }   # instant, no AI
+  - { name: my_reminders, phrases: [read my reminders, "what's on today", "what's on my calendar today"], action: { report: today } }   # instant, no AI
 
   # ---- music (ESP32 speakers)
   - { name: play_everywhere, phrases: [play everywhere, all speakers], action: { backend: music, speaker: all, mode: group } }
@@ -752,7 +753,7 @@ schedules:
     at: "07:15"
     days: weekdays
     if: { home: [sam] }
-    do: [ { ask: "Good morning briefing for Sam: weather, Sam's reminders and calendar today. Three sentences.", room: bedroom } ]
+    do: [ { ask: "Good morning briefing for Sam: weather, Sam's reminders and calendar today. Three sentences.", room: bedroom, fallback: { report: today, person: sam } } ]
   - name: trash night
     at: "19:00"
     days: [tue]

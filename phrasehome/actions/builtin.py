@@ -206,7 +206,11 @@ class AskBackend(_Builtin):
     def run(self, action: dict[str, Any], phrase: str) -> str:
         room = self.room(action)
         ai = self.home.assistant
+        fallback = action.get("fallback")  # {report: today}: what to do instead when the AI can't answer
+        ctx = dict(action.get("_context") or {})
         if ai is None:
+            if fallback:
+                return self.home.run_action(fallback, ctx, phrase)
             log.warning("`ask:` step skipped: the AI assistant isn't enabled")
             return "assistant off"
         try:
@@ -216,6 +220,8 @@ class AskBackend(_Builtin):
 
             why = ai_problem(e, self.home.config)
             log.warning("`ask:` step: %s", why)
+            if fallback:
+                return self.home.run_action(fallback, ctx, phrase)
             if not action.get("silent"):
                 self.home.voice.speak("assistant_error", room=room)
             return f"the AI couldn't answer: {why}"

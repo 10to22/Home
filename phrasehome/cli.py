@@ -39,10 +39,15 @@ def _cmd_check(args) -> int:
     cfg = load_config(args.config)
     cands = expand(cfg.commands, cfg.slots)
     print(f"OK: {len(cfg.commands)} commands, {len(cands)} phrases, backends: {', '.join(cfg.backends)}")
-    from .doctor import node_problems
+    from .doctor import node_problems, wording_problems
 
     for p in node_problems(cfg):
         print(f"warning: {p}")
+    close = wording_problems(cfg)
+    if close:
+        print("Wordings the house could mix up:")
+        for p in close:
+            print(f"  {p}")
     if args.verbose:
         for c in cands:
             print(f"  {c.text!r:45} -> {c.command.name} {c.slots or ''}")
@@ -587,26 +592,6 @@ def _cmd_fingerprint(args) -> int:
     return 0
 
 
-def _cmd_backup(args) -> int:
-    """Pack config + data (face bank, events, reminders) + recorded voices into one file."""
-    import tarfile
-    import time as _t
-    from pathlib import Path
-
-    cfg = load_config(args.config)
-    out = Path(args.to or ".") / _t.strftime("phrasehome-backup-%Y%m%d-%H%M.tar.gz")
-    with tarfile.open(out, "w:gz") as tar:
-        tar.add(args.config, arcname="config.yaml")
-        for extra in (cfg.data_dir, "voice_bank", ".env", "credentials.json"):
-            p = cfg.resolve_path(extra)
-            if p.exists():
-                tar.add(p, arcname=Path(extra).name,
-                        filter=lambda ti: None if "voice_cache" in ti.name else ti)
-    out.chmod(0o600)
-    print(f"saved {out}\nIt contains face data, voice recordings and secrets: keep it somewhere private.")
-    return 0
-
-
 def _cmd_auth_spotify(args) -> int:
     from .dispatcher import Dispatcher
     from .spotify import login
@@ -1098,9 +1083,17 @@ def main(argv: list[str] | None = None) -> int:
     fpp.add_argument("--door", default="front")
     fpp.set_defaults(fn=_cmd_fingerprint)
 
-    bk = sub.add_parser("backup", help="back up config, face bank, reminders and recordings")
-    bk.add_argument("--to", help="folder to save the backup in")
-    bk.set_defaults(fn=_cmd_backup)
+    bk = sub.add_parser("backup", help="back up everything the house has learned (also nightly by itself)")
+    bk.add_argument("--to", help="folder to save the backup in (default: backups/ next to config.yaml)")
+    bk.add_argument("--list", action="store_true", help="list the backups")
+    bk.add_argument("--restore", metavar="FILE", help="put a backup back (the current data is moved aside, not deleted)")
+    bk.set_defaults(fn=lambda a: __import__("phrasehome.backup", fromlist=["main"]).main(a))
+
+    sv = sub.add_parser("service", help="keep the house running in the background (starts at login, restarts itself)")
+    sv.add_argument("action", nargs="?", default="status", choices=["install", "uninstall", "status", "start", "stop", "logs"])
+    sv.add_argument("--simulate", action="store_true", help="run the virtual house instead of the real one (testing)")
+    sv.add_argument("--mic", action="store_true", help="with --simulate: listen on this computer's microphone")
+    sv.set_defaults(fn=lambda a: __import__("phrasehome.service", fromlist=["main"]).main(a))
 
     sa = sub.add_parser("auth-spotify", help="link your Spotify account (one time)")
     sa.add_argument("--no-browser", action="store_true")
@@ -1173,6 +1166,17 @@ def main(argv: list[str] | None = None) -> int:
     au = sub.add_parser("ai-usage", help="what the AI has cost and how fast it's been, per person, room and model")
     au.add_argument("--days", type=int, default=31)
     au.set_defaults(fn=_cmd_ai_usage)
+
+    cs = sub.add_parser("cheatsheet", help="a printable page of everything you can say (also /help on the dashboard)")
+    cs.add_argument("-o", "--output", default="cheatsheet.html")
+    cs.set_defaults(fn=lambda a: __import__("phrasehome.help", fromlist=["main"]).main(a))
+
+    st = sub.add_parser("selftest", help="bug-test a virtual copy of your house: every command, sentence, routine "
+                                         "and page (nothing real is touched)")
+    st.add_argument("--quick", action="store_true", help="just the command wordings, junk and pages")
+    st.add_argument("--ai", action="store_true", help="also ask the real AI three questions")
+    st.add_argument("--json", action="store_true", help="print the result as JSON")
+    st.set_defaults(fn=lambda a: __import__("phrasehome.selftest", fromlist=["main"]).main(a))
 
     dr = sub.add_parser("doctor", help="what's broken, and how to fix it")
     dr.set_defaults(fn=lambda a: __import__("phrasehome.doctor", fromlist=["main"]).main(a))

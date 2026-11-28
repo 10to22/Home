@@ -376,7 +376,8 @@ def run(config, mic: bool = False, base_port: int = 9100, real_backends: bool = 
         if p and port_busy(p):
             print(f"Port {p} is already in use: another `phrasehome simulate` (or `run`) is probably still running,\n"
                   f"and your browser would be showing that old one. Stop it with Control+C in its window, or run:\n"
-                  f"  pkill -f 'phrasehome.*(simulate|run)'\nthen start this again.")
+                  f"  pkill -f 'phrasehome.*(simulate|run)'\nthen start this again. (If you installed the background "
+                  f"service: phrasehome service stop)")
             raise SystemExit(1)
     config.extra["sim"] = {"mic": mic, "webcam": False, "camera": camera}
     if room:

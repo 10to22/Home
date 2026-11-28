@@ -6,13 +6,14 @@
     update: { auto: true, at: "04:00", test: false }    # in config.yaml: every night at 4
 
 What it does: git fetch, fast-forward to the new version, reinstall if the dependencies changed, then
-checks it (every file compiles, the config still loads, optionally the tests). If anything fails it
-puts the old version back. The house restarts itself to use the new version (nightly), or asks you to.
+checks it (every file compiles, the config still loads, the self-test on a virtual copy of your house
+doesn't crash more than before, optionally the tests). If anything fails it puts the old version back. The house restarts itself to use the new version (nightly), or asks you to.
 The dashboard's health page has an "Update now" button.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -58,10 +59,24 @@ def default_checks(repo: Path, config_path: str | None, tests: bool) -> list[lis
     return out
 
 
+def selftest_crashes(repo: Path, config_path: str | None) -> int | None:
+    """Crashes found by `phrasehome selftest --quick` on the code in `repo` (None: it couldn't run at all)."""
+    if not config_path or not Path(config_path).exists():
+        return None
+    try:
+        r = subprocess.run([sys.executable, "-m", "phrasehome", "-c", str(config_path), "selftest", "--quick", "--json"],
+                           cwd=str(repo), capture_output=True, text=True, timeout=900)
+        return int(json.loads(r.stdout.strip().splitlines()[-1])["crashes"])
+    except Exception:
+        return None
+
+
 def update(repo: Path = REPO, config_path: str | None = None, tests: bool = False, force: bool = False,
            checks: list[list[str]] | None = None, install: Callable[[Path], None] | None = None,
-           show=print) -> dict:
-    """Update to the latest version, or leave things exactly as they were. Returns what happened."""
+           show=print, selftest: bool | None = None) -> dict:
+    """Update to the latest version, or leave things exactly as they were. Returns what happened.
+    selftest: also bug-test your house on the new version, and go back if it crashes more than the old one
+    did (default: on when there's a config and the usual checks)."""
     st = status(repo)
     if not st.get("ok"):
         return {"updated": False, "why": st.get("why")}
@@ -73,6 +88,9 @@ def update(repo: Path = REPO, config_path: str | None = None, tests: bool = Fals
     if st["ahead"]:
         return {"updated": False, "why": f"this copy has {st['ahead']} commits GitHub doesn't: not touching it"}
     old = _git(repo, "rev-parse", "HEAD")
+    if selftest is None:
+        selftest = checks is None and bool(config_path)
+    before = selftest_crashes(repo, config_path) if selftest else None
     _git(repo, "merge", "--ff-only", f"origin/{st['branch']}")
     new = _git(repo, "rev-parse", "HEAD")
     changed = _git(repo, "diff", "--name-only", old, new).splitlines()
@@ -88,6 +106,16 @@ def update(repo: Path = REPO, config_path: str | None = None, tests: bool = Fals
             if "pyproject.toml" in changed:
                 install(repo)
             return {"updated": False, "rolled_back": True, "why": (r.stdout + r.stderr)[-500:],
+                    "from": old[:8], "to": new[:8]}
+    if selftest and before is not None:
+        after = selftest_crashes(repo, config_path)
+        if after is None or after > before:
+            show("the new version did worse on the self-test: going back to the old version")
+            _git(repo, "reset", "--hard", old)
+            if "pyproject.toml" in changed:
+                install(repo)
+            why = "the self-test couldn't run" if after is None else f"self-test crashes went from {before} to {after}"
+            return {"updated": False, "rolled_back": True, "why": why + " (run: phrasehome selftest)",
                     "from": old[:8], "to": new[:8]}
     log.info("updated %s -> %s (%d commits)", old[:8], new[:8], st["behind"])
     return {"updated": True, "from": old[:8], "to": new[:8], "commits": st["behind"], "files": len(changed)}

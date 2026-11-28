@@ -81,6 +81,61 @@ def node_problems(config) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+def wording_problems(config, limit: int = 12) -> list[str]:
+    """Wordings of different commands that the house could mix up: the same wording twice, two that sound
+    the same, or two a sound-alike word (or one small word) apart. On/off pairs are fine (that's the point)."""
+    import numpy as np
+    from rapidfuzz import fuzz, process
+
+    from .listener import POLARITY
+    from .matcher import expand
+    from .speech_tuning import phonetic, phonetic_word
+
+    uniq: dict[str, Any] = {}
+    out: list[tuple[float, str]] = []
+    for cd in expand(config.commands, config.slots):
+        prev = uniq.setdefault(cd.text, cd)
+        if prev.command.name != cd.command.name and prev.command.action != cd.command.action:
+            out.append((200, f"'{cd.text}' is a wording of both {prev.command.name} and {cd.command.name}: "
+                             f"only one of them can ever run"))
+    items = list(uniq.values())
+    texts = [x.text for x in items]
+    if len(texts) < 2:
+        return [m for _, m in out]
+
+    def differ(i: int, j: int) -> bool:
+        a, b = items[i].command, items[j].command
+        return a.name != b.name and a.action != b.action
+
+    by_sound: dict[str, int] = {}
+    for i, t in enumerate(texts):
+        j = by_sound.setdefault(phonetic(t), i)
+        if j != i and differ(i, j):
+            out.append((150, f"'{texts[j]}' ({items[j].command.name}) and '{t}' ({items[i].command.name}) sound the "
+                             f"same: change a word in one"))
+    M = process.cdist(texts, texts, scorer=fuzz.ratio, score_cutoff=86, workers=-1)
+    for i, j in np.argwhere(np.triu(M, 1) > 0):
+        if not differ(i, j):
+            continue
+        a, b = texts[i].split(), texts[j].split()
+        if len(a) == len(b):
+            diff = [(x, y) for x, y in zip(a, b) if x != y]
+            if any(x in POLARITY or y in POLARITY for x, y in diff):
+                continue  # lights on / lights off
+            if not all(phonetic_word(x) == phonetic_word(y) or fuzz.ratio(x, y) >= 60 for x, y in diff):
+                continue  # a clearly different word ("time" / "date")
+            why = "a sound-alike word apart"
+        elif abs(len(a) - len(b)) == 1 and M[i][j] >= 90:
+            why = "one small word apart"
+        else:
+            continue
+        out.append((float(M[i][j]), f"'{texts[i]}' ({items[i].command.name}) and '{texts[j]}' "
+                                    f"({items[j].command.name}) are {why}: fine if the house never mixes them up, "
+                                    f"otherwise make one more different"))
+    out.sort(key=lambda x: -x[0])
+    return [m for _, m in out[:limit]]
+
+
 def checks(home, online: bool = True) -> list[dict]:
     c = home.config
     s = c.settings
@@ -176,6 +231,14 @@ def checks(home, online: bool = True) -> list[dict]:
         stale = [n for n, f in cams.feeds.items() if not getattr(f, "jpeg", None)]
         out.append(_row("Cameras", not stale, f"no picture from {', '.join(stale)}" if stale else f"{len(cams.feeds)} sending",
                         "Check the camera's power and address in config.yaml (cameras:)"))
+    try:
+        close = wording_problems(c, limit=50)
+        same = [w for w in close if "only one of them can ever run" in w or "sound the same" in w]
+        out.append(_row("Command wordings", False if same else (None if close else True),
+                        (same or close)[0] if close else "no two commands sound alike",
+                        "Change a word in one of them (phrasehome check lists them all)"))
+    except Exception as e:
+        log.debug("wording check: %s", e)
     bad_nodes = node_problems(c)
     if bad_nodes:
         out.append(_row("Device names in config", False, f"{len(bad_nodes)} unknown: {bad_nodes[0]}",
@@ -196,6 +259,19 @@ def checks(home, online: bool = True) -> list[dict]:
     if c.web.get("host", "0.0.0.0") not in ("127.0.0.1", "localhost") and not c.web.get("token"):
         out.append(_row("Dashboard password", False, "anyone on the Wi-Fi can open it",
                         "Add web: {token: something-long} to config.yaml"))
+    try:
+        from .backup import existing, settings
+
+        files = existing(c)
+        if files:
+            age = (time.time() - files[-1].stat().st_mtime) / 3600
+            out.append(_row("Backups", age < 50, f"last one {age:.0f} hours ago, {len(files)} kept in {files[-1].parent}",
+                            "The nightly backup isn't happening: is the house running at night? Or: phrasehome backup"))
+        else:
+            out.append(_row("Backups", None, "none yet" + (" (the first is made tonight)" if settings(c)["auto"] else ""),
+                            "phrasehome backup (and copy one off this computer now and then)"))
+    except Exception as e:
+        log.debug("backup row: %s", e)
     # ---- learning and updates
     try:
         from .hearing_train import trained_fixes
@@ -215,6 +291,18 @@ def checks(home, online: bool = True) -> list[dict]:
                                 f"{st['behind']} new commits waiting", "Update now (button below) or: phrasehome update"))
         except Exception as e:
             log.debug("update check: %s", e)
+    try:
+        from .selftest import last_result
+
+        r = last_result(c)
+        if r:
+            serious = [p for p in r.get("problems", []) if p.get("ok") is None and p["kind"] not in ("note", "warning", "not set up", "ai")]
+            out.append(_row("Self-test", bool(r.get("ok")), f"{r['time']}: " + (f"{len(serious)} problems" if serious else "all good")
+                            + (" (quick)" if r.get("quick") else ""), "Run phrasehome selftest and fix what it lists"))
+        else:
+            out.append(_row("Self-test", None, "never run", "phrasehome selftest: bug-tests a virtual copy of the house"))
+    except Exception as e:
+        log.debug("self-test row: %s", e)
     recent = list(watch_log().items) if _RECENT is not None else []
     errors = [r for r in recent if r["level"] in ("error", "critical")]
     out.append(_row("Recent errors", not errors, f"{len(errors)} in the log lately" if errors else "none",

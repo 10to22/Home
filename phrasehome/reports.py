@@ -202,3 +202,133 @@ def report_climate(home, action) -> str:
     cold, warm = min(temps, key=temps.get), max(temps, key=temps.get)
     return (f"The coldest room is the {cold} at {temps[cold]:.0f} degrees, and the warmest is the "
             f"{warm} at {temps[warm]:.0f}.")
+
+
+# ---------------------------------------------------------------- answers that never need the AI
+def _names(xs: list[str]) -> str:
+    return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1]
+
+
+@register("home")
+def report_home(home, action) -> str:
+    """{report: home}: who's in and who's out, from presence tracking (instant, works offline)."""
+    people = [i for i in home.instances.all.values() if not i.main]
+    pres = home.state.presence
+    if not people:
+        return "Nobody's set up as living here yet."
+    if not pres:
+        return "I can't tell who's home yet: nothing's tracking it. Add your phones under presence: in config.yaml."
+    here = set(home.state.home_people())
+    inn = [i for i in people if i.id in here]
+    out = [i.name for i in people if i.id in pres and i.id not in here]
+    unknown = [i.name for i in people if i.id not in pres]
+    rooms = getattr(home, "rooms", None)
+    where = []
+    for i in inn:
+        try:
+            w = rooms.where(i.id) if rooms is not None else None
+        except Exception:
+            w = None
+        where.append(f"{i.name} in the {w[0]}" if w else i.name)
+    if inn and not out and not unknown:
+        bits = ["Everyone's home" + (f": {_names(where)}" if any(" in the " in w for w in where) else "")]
+    elif not inn:
+        bits = ["Nobody's home"]
+    else:
+        bits = [f"{_names(where)} {'is' if len(inn) == 1 else 'are'} home"]
+        if out:
+            bits.append(f"{_names(out)} {'is' if len(out) == 1 else 'are'} out")
+    if unknown and inn:
+        bits.append(f"not sure about {_names(unknown)}")
+    return ". ".join(b[0].upper() + b[1:] for b in bits) + "."
+
+
+@register("today")
+def report_today(home, action) -> str:
+    """{report: today}: the asker's reminders, calendar, exams and deadlines, the house calendar, a house
+    meeting and the bins, all for today (instant, works offline; reads a calendar link if they have one)."""
+    from datetime import datetime, timedelta
+
+    from . import clock
+
+    ctx = action.get("_context") or {}
+    person = action.get("person") or ctx.get("person")
+    inst = home.instances.all.get(person) if person in home.instances.all else home.instances.for_room(ctx.get("here"))
+    now = clock.now()
+    end = now.replace(hour=23, minute=59, second=59)
+    t = clock.spoken_time
+    bits: list[tuple[datetime, str]] = []
+
+    def when(at: datetime) -> datetime:
+        return at if at.tzinfo else at.astimezone()
+
+    for i in home.instances.items(inst):
+        try:
+            at = when(datetime.fromisoformat(i["due"]))
+        except (KeyError, ValueError):
+            continue
+        if now <= at <= end and i.get("kind") in ("reminder", "alarm", "event", "timer"):
+            what = (i.get("text") or i.get("label") or i["kind"]).strip()
+            bits.append((at, f"{what} at {t(at)}" if i["kind"] != "alarm" else f"an alarm at {t(at)}"))
+    if getattr(inst, "calendar", None):
+        try:
+            from .calendar_feed import upcoming
+
+            for e in upcoming(inst.calendar, days=1):
+                if e.get("all_day"):
+                    bits.append((now, str(e["summary"])))
+                    continue
+                at = datetime.strptime(e["start"][:16], "%Y-%m-%d %H:%M").astimezone()
+                if at >= now - timedelta(minutes=10):
+                    bits.append((at, f"{e['summary']} at {t(at)}"))
+        except Exception:
+            pass  # offline: the rest still works
+    life = getattr(home, "life", None)
+    if life is not None:
+        try:
+            for e in life.calendar.events(days=1, include_past_hours=0):
+                at = when(datetime.fromisoformat(e["start"]))
+                if at <= end:
+                    bits.append((at, f"{e.get('what') or e.get('title') or 'something on the house calendar'} at {t(at)}"))
+        except Exception:
+            pass
+        try:
+            for who, ex in life.exams.all(2):
+                if who is not None and who.id == inst.id:
+                    day = "today" if ex["at"].date() == now.date() else "tomorrow"
+                    bits.append((ex["at"], f"your {ex['subject']} exam {day} at {t(ex['at'])}"))
+        except Exception:
+            pass
+        try:
+            for who, d in life.deadlines.all(2):
+                if who.id == inst.id:
+                    at = when(datetime.fromisoformat(d["due"]))
+                    day = "today" if at.date() == now.date() else "tomorrow"
+                    bits.append((at, f"{d['what']} due {day} at {t(at)}"))
+        except Exception:
+            pass
+        try:
+            b = life.meeting.booked()
+            if b:
+                at = when(datetime.fromisoformat(b["at"]))
+                if now.date() == at.date() and at >= now:
+                    bits.append((at, f"the house meeting at {t(at)} in the {b['room']}"))
+        except Exception:
+            pass
+        try:
+            bins = life.bins
+            if bins.cfg and clock.day_matches(str(bins.cfg.get("night", "thu")), now.date()):
+                turn = bins.turn(now)
+                if turn is not None and turn.id == inst.id:
+                    bits.append((end, "it's your turn to take the bins out tonight"))
+        except Exception:
+            pass
+    if not bits:
+        return "Nothing on for you today." if not inst.main else "Nothing on today."
+    seen, items = set(), []
+    for _, b in sorted(bits, key=lambda x: x[0]):
+        if b.lower() not in seen:
+            seen.add(b.lower())
+            items.append(b)
+    head = "Today" if inst.main else f"Today for {inst.name}"
+    return f"{head}: {_names(items[:6])}" + (f", and {len(items) - 6} more" if len(items) > 6 else "") + "."

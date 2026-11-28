@@ -190,8 +190,12 @@ class Engine:
         words = text.split()
         if not audio or len(words) > 10 or L.matcher.match(text) is not None:
             return None
-        if not L.matcher.near(text, floor=55, n=1):
-            return None  # nothing like a command: chat, not a misheard command
+        near = L.matcher.near(text, floor=55, n=3)
+        # nothing like a command, or only chat that shares a few words with one ("what a lovely day it is" ~
+        # "what is on today"): a misheard command has about as many words as the command
+        if not any(SECOND_LOOK_WORD_GAP is None or abs(len(c.words) - len(words)) <= SECOND_LOOK_WORD_GAP
+                   for _, c in near):
+            return None
         n = int(getattr(st, "alternatives", 5) or 0)
         # with a fixed vocabulary the first guess is already the best (measured: 98.3% either way)
         if n > 1 and not L.grammar and getattr(self, "_vosk", None) is not None:
@@ -990,6 +994,8 @@ def _flipped(v):
         return {k: _flipped(x) for k, x in v.items()}
     return v
 
+
+SECOND_LOOK_WORD_GAP: int | None = 1  # a near miss gets a second listen only within this many words of a command
 
 POLARITY = {"on", "off", "up", "down", "open", "close", "shut", "lock", "unlock", "start", "stop", "arm", "disarm"}
 

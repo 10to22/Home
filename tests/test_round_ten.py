@@ -199,6 +199,29 @@ def test_update_fast_forwards_and_rolls_back(tmp_path):
     assert "changed files" in updater.update(house, checks=[["true"]], show=lambda *a: None)["why"]
 
 
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_update_goes_back_if_the_selftest_gets_worse(tmp_path, monkeypatch):
+    from phrasehome import updater
+
+    def git(cwd, *a):
+        return subprocess.run(["git", "-C", str(cwd), *a], check=True, capture_output=True, text=True).stdout.strip()
+
+    origin, house, dev = tmp_path / "origin.git", tmp_path / "house", tmp_path / "dev"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "clone", "-q", str(origin), str(dev)], check=True)
+    git(dev, "config", "user.email", "t@t"), git(dev, "config", "user.name", "t"), git(dev, "checkout", "-q", "-b", "main")
+    (dev / "a.txt").write_text("1")
+    git(dev, "add", "."), git(dev, "commit", "-qm", "one"), git(dev, "push", "-q", "origin", "main")
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(origin), str(house)], check=True)
+    (dev / "a.txt").write_text("2")
+    git(dev, "commit", "-qam", "two"), git(dev, "push", "-q", "origin", "main")
+    before = git(house, "rev-parse", "HEAD")
+    crashes = iter([0, 3])  # the old version: no crashes; the new one: three
+    monkeypatch.setattr(updater, "selftest_crashes", lambda repo, cfg: next(crashes))
+    out = updater.update(house, config_path="c.yaml", checks=[["true"]], selftest=True, show=lambda *a: None)
+    assert out["rolled_back"] and "0 to 3" in out["why"] and git(house, "rev-parse", "HEAD") == before
+
+
 # ---------------------------------------------------------------- 22: sync
 def test_learning_merges_both_ways(home, tmp_path):
     from phrasehome.sync import bundle, merge_file, merge_in

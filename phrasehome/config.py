@@ -177,6 +177,12 @@ BUILTIN_COMMANDS = [
     # so it isn't heard as "five".
     ("fire", ["fire", "there's a fire", "fire fire", "fire fire fire", "house fire", "something's on fire",
               "help fire"], {"backend": "routine", "routine": "fire_mode"}),
+    # instant answers from what the house knows (no AI, so they work offline and never make things up)
+    ("whos_home", ["who's home", "who is home", "is anyone home", "who's in"], {"backend": "report", "report": "home"}),
+    ("help", ["what can you do", "what can i say", "what can i ask you", "what commands are there"],
+     {"backend": "life", "life": "quick"}),
+    ("whats_on_today", ["what's on today", "what's on my calendar today", "what's on for me today", "read my reminders"],
+     {"backend": "report", "report": "today"}),
 ]
 # the student-house features (house_life.py): {life: <what>}
 LIFE_COMMANDS = [
@@ -291,6 +297,8 @@ def normalize_action(action: dict[str, Any], default_backend: str | None,
             raw = [raw] if isinstance(raw, dict) else raw
             action[branch] = [normalize_action(a, default_backend, backends, f"{where} {branch}")
                               for a in raw]
+    if isinstance(action.get("fallback"), dict):  # {ask: ..., fallback: {report: today}}
+        action["fallback"] = normalize_action(action["fallback"], default_backend, backends, f"{where} fallback")
     if not action.get("backend"):
         builtin = next((b for k, b in BUILTIN_BACKENDS.items() if k in action), None)
         action["backend"] = builtin or default_backend

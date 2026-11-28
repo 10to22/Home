@@ -72,11 +72,14 @@ class HouseLife:
         self.usual, self.tv, self.mood_dial = personal.Usual(home), personal.TVTimer(home), personal.MoodDial(home)
         self.blitz, self.semester = personal.Blitz(home), personal.SemesterBreak(home)
         self.horoscope, self.year = personal.Horoscope(home), personal.YearReview(home)
+        from .help import Help
+
+        self.help = Help(home)  # "what can you do" / "what can I say about music"
         from .companion import CompanionHub
 
         self.companion = CompanionHub(home)  # the laptop companions (companion.py)
         # the order sentences are tried in: specific first, then house points, then facts about people
-        self.parts = [self.kitchen, self.takeout, self.bets, self.bins, self.bathroom, self.borrow, self.calendar,
+        self.parts = [self.help, self.kitchen, self.takeout, self.bets, self.bins, self.bathroom, self.borrow, self.calendar,
                       self.things, self.place_reminders, self.nicknames, self.usual, self.tv, self.rules, self.referee,
                       self.locked_out, self.polls, self.thermostat, self.errands, self.move_in, self.secrets,
                       self.projects, self.deadlines, self.together, self.reader, self.grades, self.hangover,

@@ -23,7 +23,8 @@ def start_services(home) -> list:
 
     watch_log()  # the health page shows recent warnings and errors
     for label, make in (("learning sync", lambda: __import__("phrasehome.sync", fromlist=["Syncer"]).Syncer(home)),
-                        ("nightly update", lambda: __import__("phrasehome.updater", fromlist=["Nightly"]).Nightly(home))):
+                        ("nightly update", lambda: __import__("phrasehome.updater", fromlist=["Nightly"]).Nightly(home)),
+                        ("nightly backup", lambda: __import__("phrasehome.backup", fromlist=["AutoBackup"]).AutoBackup(home))):
         try:
             svc = make()
             home.__dict__["_" + label.replace(" ", "_")] = svc
