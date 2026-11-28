@@ -11,3 +11,11 @@ firmware/**/config.h
 # personal data: face bank + photos, event log, door states, your recorded voice
 data/
 voice_bank/
+
+# backups hold face data, voices and secrets (.env)
+backups/
+phrasehome-backup-*.tar.gz
+data.before-restore-*/
+.restore-*/
+config.restored.yaml
+cheatsheet.html
