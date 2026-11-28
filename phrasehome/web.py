@@ -468,6 +468,20 @@ class WebServer:
 
             return {"result": run_tool(h, {"action": body.get("action", "remember"), "person": body["person"],
                                            "fact": body.get("fact", "")})}
+        if path == "/api/learned":  # another computer's learning: merged in, nothing deleted
+            from .sync import merge_in
+
+            return {"merged": merge_in(h.config, body, h)}
+        if path == "/api/update":
+            from .updater import Nightly
+
+            n = h.__dict__.get("_nightly_update") or Nightly(h)
+            out = n.run_now(restart_after=False)
+            if out.get("updated"):
+                from .updater import restart
+
+                h.timeline.call_in(2, restart)  # answer the page first, then restart on the new code
+            return out
         if path == "/api/companion/report":  # from a laptop companion: {person, category, app, minutes, words}
             return h.life.companion.report(str(body["person"]).lower(), body)
         if path == "/api/companion/screen":  # {person, id, image | text | refused}
@@ -618,6 +632,10 @@ class _Handler(BaseHTTPRequestHandler):
             from .dashboard_house import HOUSE_PAGE
 
             return self._send(200, HOUSE_PAGE, "text/html; charset=utf-8")
+        if u.path == "/health":
+            from .doctor import HEALTH_PAGE
+
+            return self._send(200, HEALTH_PAGE, "text/html; charset=utf-8")
         if u.path in ("/house.ics",) or (u.path.startswith("/cal/") and u.path.endswith(".ics")):
             if not self._authorized(q):
                 return self._send(401, {"error": "token required"})
@@ -641,6 +659,14 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(200, self.web.history_get(q.get("q", [""])[0]))
         if u.path == "/api/house":
             return self._send(200, self.web.home.life.status())
+        if u.path == "/api/health":
+            from .doctor import report
+
+            return self._send(200, report(self.web.home))
+        if u.path == "/api/learned":  # for phrasehome sync between computers
+            from .sync import bundle
+
+            return self._send(200, bundle(self.web.home.config))
         if u.path == "/api/companion/poll":
             return self._send(200, self.web.home.life.companion.poll(q.get("person", [""])[0].lower()))
         if u.path == "/api/voice/tune":

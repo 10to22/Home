@@ -55,7 +55,13 @@ class Settings:
     # a short sentence that nearly matched a command: look again at the recognizer's next best guesses
     # (Vosk's top 5) and, if Whisper is installed, ask it too ("auto": on a Mac when installed; "off")
     alternatives: int = 5
-    second_opinion: str = "auto"
+    second_opinion: str = "auto"  # or the address of a hearing server: http://finns-mac.local:8765
+    whisper_server: str = ""  # recognizer: whisper, but on another computer (phrasehome hearing-server)
+    # two near misses in a row from a room: the next sentence there goes to Whisper (local or the server)
+    say_again: bool = True
+    # risky commands the house is sure of announce themselves and wait this long for a "no" (0 = off;
+    # fire and panic never wait)
+    cancel_seconds: float = 3.0
     whisper_beam: int = 0  # Whisper's beam search width: 0 = 5 on a Mac, 2 elsewhere (1 is fastest)
     # "lock the front door and turn off the lights": run both (every part must be a command)
     multi_commands: bool = True
@@ -307,7 +313,7 @@ EXTRA_SECTIONS = ("weather", "alarm", "energy", "packages", "meals", "spotify", 
                   "points", "noise", "bathroom", "bins", "house_rules", "thermostat", "move_in", "deadlines",
                   "grades", "hangover", "showers", "conversions", "stove", "price_check", "night_out", "safe_word",
                   "network", "missed", "tv", "mood_dial", "blitz", "semester_break", "inbox", "companion",
-                  "scenarios")
+                  "scenarios", "beeps", "update", "sync")
 
 
 def load_config(path: str | Path) -> Config:

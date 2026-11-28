@@ -189,12 +189,74 @@ class Points(Part):
         top, n = board[0]
         self.home.voice.speak("points_winner", rooms=self.shared_rooms(), name=top, points=n)
         self.tell(self.housemates(), "points_winner", title="House points", name=top, points=n)
+        birds = self.early_birds(7)
+        if birds:
+            self.home.voice.speak("up_first_week", rooms=self.shared_rooms(), name=birds[0][0], n=birds[0][1])
+
+    # ---------- up first ----------
+    UP_EVENTS = ("wake.up", "bed.out", "person.room", "presence.arrived")
+
+    def on_event(self, ev: dict) -> None:
+        """The first person up each morning (4am-noon) gets a point: their alarm saw them get up, they left
+        their bed, or they showed up in another room."""
+        if ev["kind"] not in self.UP_EVENTS or self.cfg.get("up_first", True) is False:
+            return
+        now = clock.now()
+        if not 4 <= now.hour < 12:
+            return
+        pid = str(ev.get("instance") or ev.get("person") or "")
+        inst = self.home.instances.all.get(pid) or self.find(pid)
+        if inst is None or inst.main:
+            return
+        if ev["kind"] == "person.room" and ev.get("room") in inst.rooms:
+            return  # still in their own room: not up yet
+        if ev["kind"] == "presence.arrived":
+            return  # coming home isn't getting up
+        day = now.strftime("%Y-%m-%d")
+        with self._lock:
+            d = self._data()
+            if d.get("up_first", {}).get("day") == day:
+                return
+            d["up_first"] = {"day": day, "person": inst.id}
+            d.setdefault("up_log", []).append({"day": day, "person": inst.id})
+            d["up_log"] = d["up_log"][-200:]
+            self.save(d)
+        self.add(inst.id, 1, "first up this morning", "house", willing=True)
+        self.home.voice.speak("up_first", room=self.room_of(inst), name=inst.name)
+
+    def early_birds(self, days: int = 7) -> list[tuple[str, int]]:
+        since = (clock.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        c: dict[str, int] = {}
+        for r in self._data().get("up_log", []):
+            if r["day"] >= since:
+                c[r["person"]] = c.get(r["person"], 0) + 1
+        return sorted(((self.name(p), n) for p, n in c.items()), key=lambda x: -x[1])
 
     # ---------- what people say ----------
     def heard(self, said: str, room, speaker):
         s = clean(said)
         who = self.who_rx()
         me = speaker if speaker is not None and not speaker.main else None
+        m = re.match(rf"^(?:shout ?out|big ups|props|kudos|thanks|thank you|cheers)(?: to)? ({who})(?: (?:for|because) (.+))?$", s) \
+            if re.match(r"^(?:shout ?out|big ups|props|kudos)", s) else None
+        if m:
+            inst = self.find(m.group(1))
+            why = (m.group(2) or "being a legend").strip()
+            if me is not None and inst.id == me.id:
+                return "shout_self", {}
+            giver = getattr(me, "id", "house")
+            today = clock.now().strftime("%Y-%m-%d")
+            given = [r for r in self._data()["points"] if r["by"] == giver and r["why"].startswith("shout-out")
+                     and r["time"].startswith(today)]
+            if me is not None and len(given) >= 3:
+                return "shout_capped", {}
+            self.add(inst.id, 1, f"shout-out: {why}", giver, willing=True)
+            self.home.voice.speak("shout_out", rooms=self.shared_rooms(), name=inst.name, why=why)
+            self.tell([inst], "shout_out", title="Shout-out", name=inst.name, why=why)
+            return "done"
+        if re.match(r"^who(?:'s| is| was) (?:up first|the early bird)|^early birds?$", s):
+            b = self.early_birds(7)
+            return ("up_first_week", {"name": b[0][0], "n": b[0][1]}) if b else ("points_board", {"board": "nobody yet"})
         if re.match(r"^(?:how many|what are my|my) (?:house )?points(?: do i have)?$|^how many points do i have$", s):
             if me is None:
                 return self._board(room)

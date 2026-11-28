@@ -280,6 +280,10 @@ bathroom: { sensor: { node: bathroom, input: door, busy_when: off } }
 # safe_word: { phrase: "CHANGE ME to something you'd never say by accident" }
 tv: { strict: true }               # "cut me off at 1am" can't be cancelled
 blitz: { minutes: 20 }
+beeps:                             # phrasehome beeps learn washer --file washer.m4a
+  washer: { say: "The washing's done", who: [sam] }
+update: { auto: false, at: "04:00", test: false }   # nightly updates from GitHub, rolled back if they fail
+# sync: { peer: http://house.local:8080, every_minutes: 30 }   # share learning with another computer
 wake:                              # alarms that make sure you're actually up (edit each one at /alarms)
   make_sure_up: true               # "stop" from bed only quiets it; it comes back until you're up
   recheck_minutes: 3

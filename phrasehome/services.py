@@ -19,6 +19,17 @@ def start_services(home) -> list:
         services.append(home.scheduler)
     except Exception as e:
         log.error("scheduler not started: %s", e)
+    from .doctor import watch_log
+
+    watch_log()  # the health page shows recent warnings and errors
+    for label, make in (("learning sync", lambda: __import__("phrasehome.sync", fromlist=["Syncer"]).Syncer(home)),
+                        ("nightly update", lambda: __import__("phrasehome.updater", fromlist=["Nightly"]).Nightly(home))):
+        try:
+            svc = make()
+            home.__dict__["_" + label.replace(" ", "_")] = svc
+            add(svc)
+        except Exception as e:
+            log.error("%s not started: %s", label, e)
     try:
         add(home.life)  # party, study, exams, meetings, shower, walk home, quiz, radio (house_life.py)
     except Exception as e:

@@ -27,7 +27,8 @@ log = logging.getLogger("phrasehome.understanding")
 
 YES = {"yes", "yeah", "yep", "yup", "correct", "do it", "yes please", "affirmative", "sure", "go ahead", "right"}
 NO = {"no", "nope", "nah", "cancel", "don't", "dont", "stop", "never mind", "no thanks", "wrong"}
-CONFIRM_WORDS = sorted({w for p in YES | NO for w in p.split()})
+CANCEL = {"wait", "hold on", "no no", "don't do that", "stop it", "abort", "cancel that", "not that", "oops"}
+CONFIRM_WORDS = sorted({w for p in YES | NO | CANCEL for w in p.split()})
 
 RISKY_BACKENDS = {"doors", "security", "freak"}
 RISKY_ROUTINES = {"lockdown", "panic", "fire_mode", "leaving"}
@@ -233,10 +234,47 @@ class Confirmations:
     def _target(m) -> str:
         return str(m.command.action.get("routine") or m.command.name)
 
+    # ---------- the cancel window: "Locking the front door... say no to stop it" ----------
+    def hold(self, m, seconds: float, then) -> None:
+        """Announce a risky command and run it (`then`) after `seconds`, unless someone in that room says no."""
+        holds = self.__dict__.setdefault("holds", {})
+        with self._lock:
+            holds[m.room] = (time.monotonic() + seconds, m)
+        self.home.events.live("cancel_window", room=m.room, command=m.command.name, seconds=seconds)
+        self.home.voice.speak("cancel_window", room=m.room, what=m.phrase or m.command.phrases[0],
+                              seconds=_n(seconds), urgent=True)
+
+        def go(room=m.room, mm=m):
+            with self._lock:
+                cur = holds.get(room)
+                if not cur or cur[1] is not mm:
+                    return  # cancelled
+                del holds[room]
+            then(mm)
+
+        self.home.timeline.call_in(seconds, go)
+
+    def _cancel_hold(self, room, said: str) -> bool:
+        holds = self.__dict__.get("holds") or {}
+        with self._lock:
+            cur = holds.get(room)
+            if not cur or time.monotonic() > cur[0] + 1:
+                return False
+            if not (said in NO or said in CANCEL or any(said.startswith(n + " ") for n in NO | CANCEL)):
+                return False
+            m = holds.pop(room)[1]
+        log.info("cancelled %s in time", m.command.name)
+        self.home.events.log("command.cancelled", name=m.command.name, room=room)
+        self.home.voice.speak("hold_cancelled", room=room, what=m.phrase or m.command.phrases[0])
+        return True
+
     def answer(self, room: str | None, text: str) -> bool:
-        """Called with the next thing heard in that room. True if it was the yes/no."""
+        """Called with the next thing heard in that room. True if it was the yes/no (or a "no" that
+        stopped a command in its cancel window)."""
         from .matcher import normalize
 
+        if self._cancel_hold(room, _without_name(self.home, normalize(text))):
+            return True
         with self._lock:
             cur = self.pending.get(room)
             if not cur:
@@ -352,3 +390,7 @@ def intent(home, said: str, name: str = "house") -> str:
         return "question"
     kind = (out or {}).get("kind")
     return kind if kind in ("task", "question") else "ignore"
+
+
+def _n(x: float) -> str:
+    return str(int(x)) if float(x).is_integer() else f"{x:g}"

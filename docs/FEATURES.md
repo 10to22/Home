@@ -169,6 +169,7 @@ instantly; lines starting "house, ..." go to the AI assistant.
 
 | Feature | How |
 |---|---|
+| Shout-outs and early birds | "house, shout-out to Jo for dinner": +1 for Jo, said out loud (3 a day each, never yourself). The first one up each morning (their alarm saw them up, out of bed, or in another room) gets +1; the week's early bird is announced Sunday |
 | House points | +1 for anything good done willingly: "I did the dishes", "Parker cleaned the bathroom", the bins when it wasn't your turn, shopping for others, letting someone in, finishing your cleaning-blitz bit. −1 for a job you were given and didn't do (your bin night, your party cleanup, any "Finn, your job is to clean the bathroom by Sunday"). Your own job done on time is just done. "that's a lie" takes a point back (another person, within 10 minutes). Three self-claimed points a day at most. "house points", "how many points do I have"; Sunday evening winner; +1/−1 buttons on /house |
 | Who owes whom | Takeout ("who's in on Thai?", "I'm in, pad thai", "it came to 60 dollars": split), bets ("Finn bets Parker a coffee it rains tomorrow", "Parker won the bet"), "who owes what", "Jo paid Finn back" |
 
@@ -233,9 +234,17 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Cleaning blitz / semester break | "cleaning blitz" (20 minutes, a job each); "semester break mode" (vacation, alarms paused, eco heating, back when someone's home) |
 | Horoscopes / year in review | Roast horoscopes from your week (Monday 9am); "year in review" |
 
+## Updates, sync and health
+
+| Feature | How |
+|---|---|
+| One-click updates | `phrasehome update` (or Update now on /health): fast-forward from GitHub, reinstall if dependencies changed, check every file compiles and the config loads (`--test` runs the tests too). If anything fails, the old version goes back. `update: {auto: true, at: "04:00"}` does it nightly and restarts itself. Refuses if you've changed files yourself |
+| Sync learning | `phrasehome sync http://house.local:8080`, or `sync: {peer: ..., every_minutes: 30}`: taught wordings, accent fixes, proven fixes and "was that for the house?" examples are merged both ways between your Mac and the Pi. Nothing is deleted |
+| What's broken? | `phrasehome doctor` or /health: the speech model, Whisper and the hearing server, ffmpeg, the voice, the AI (Ollama or Claude), phones, ESP32 modules, cameras, disk space, the dashboard password, updates, and the last warnings and errors, each problem with its fix |
+
 ## Laptop companion
 
-`phrasehome companion --person finn --hub http://<house>:8080` (add `--install` to start at login). Runs in the background: knows if you're studying, coding, in a call or distracted (decided on the laptop; only that and the app's name go to the house, never window titles, never private apps). Calls make your door say busy; distractions during study mode or a deadline crunch get a nudge; "house, look at my screen" / "what's this error?" / "explain this slide" / "read my screen" take one screenshot, only when asked. With OCR (`pip install ocrmac` on a Mac) your document's word count feeds the deadline pace, and an error stuck in your terminal gets an offer of help. "stop watching my screen" pauses it.
+`phrasehome companion --person finn --hub http://<house>:8080` (add `--install` to start at login). Runs in the background: knows if you're studying, coding, in a call or distracted (decided on the laptop; only that and the app's name go to the house, never window titles, never private apps). Calls make your door say busy and keep announcements out of your room; distractions during study mode or a deadline crunch get a nudge; "house, look at my screen" / "what's this error?" / "explain this slide" / "read my screen" take one screenshot, only when asked. With OCR (`pip install ocrmac` on a Mac) your document's word count feeds the deadline pace, and an error stuck in your terminal gets an offer of help. "stop watching my screen" pauses it.
 
 ## Hearing, precision and learning
 
@@ -247,6 +256,10 @@ instantly; lines starting "house, ..." go to the AI assistant.
 | Stronger Whisper | Beam search (`whisper_beam`, 5 on a Mac) and distil-medium.en on a Mac with 16 GB or more |
 | Clearer moods | `voice: {emotion_strength: 1.25}` (the default): every mood a bit further from neutral; 1 is as before. Measured through the real pipeline with Piper voices: calm 0.86x speed, cheerful 1.11x and +5 semitones, annoyed 1.12x and louder, urgent 1.19x, soft 0.9x and 6 dB quieter |
 | Second look at near misses | A short sentence that nearly matched a command: Vosk's next best guesses for the same audio (open vocabulary), then Whisper on a Mac if it's installed (`second_opinion`). On 300 real-voice clips: 89% -> 93% right, wrong commands halved, nothing fired on real talk or music |
+| Hearing server | `phrasehome hearing-server` on a laptop (a Mac's chip runs Whisper fast); the house uses it over Wi-Fi: `settings: {second_opinion: http://finns-mac.local:8765}` to double-check near misses, or `{recognizer: whisper, whisper_server: ...}` for all hearing. If the laptop's away, the house carries on with what it has |
+| Say that again | Two near misses from a room within 30 seconds: the next sentence there goes to Whisper (local or the server), since you're probably repeating yourself (`say_again`) |
+| Cancel window | A risky command it's sure of announces itself and waits 3 seconds: "Okay: lock the front door, in 3 seconds. Say no to stop it." "No", "stop", "wait" cancels (`cancel_seconds`; fire and panic never wait) |
+| Beep listener | `phrasehome beeps learn washer --file washer.m4a --who finn` (or `--record 10`): it learns the beep's pitch and rhythm, then hears it from the room mics (tones only, like the smoke listener) and tells the right person. Tested through mp3 and over music; it ignored other beeps, the wrong rhythm, music and talk |
 | On/off safety | The word that decides on or off (up/down, open/close, lock/unlock, start/stop) heard unclearly, or changed by a second guess: "did you say ...?" instead of maybe doing the opposite (`polarity_confidence: 0.85`) |
 | Train its vocabulary | `phrasehome train-hearing`: hundreds of your phrases (every command, every way of saying it) said by many voices (your Mac's voices, Piper voices including multi-speaker ones with hundreds of real readers), at different speeds, half of them over music or noise, all squeezed through mp3, then run through your recognizer. Mishearings that keep happening across voices are learned (word fixes and whole wordings, the same as teaching on the History page), never anything that would make another command fire. It also lists clashes (a phrase heard as a different command), words the Vosk model doesn't know, and accuracy before and after. `--background party.mp3` checks that real music, TV or talk runs nothing. `--dry` measures only |
 | Your own recordings | `phrasehome speech-test --files ~/voice-memos`: mp3, m4a, wav... named after what was said (or `transcripts.txt` with `file|what was said`), scored like `speech-test --record` |

@@ -1164,6 +1164,35 @@ def main(argv: list[str] | None = None) -> int:
     au.add_argument("--days", type=int, default=31)
     au.set_defaults(fn=_cmd_ai_usage)
 
+    dr = sub.add_parser("doctor", help="what's broken, and how to fix it")
+    dr.set_defaults(fn=lambda a: __import__("phrasehome.doctor", fromlist=["main"]).main(a))
+
+    sy = sub.add_parser("sync", help="share what's been learned with another computer (Mac <-> Pi)")
+    sy.add_argument("peer", nargs="?", default="", help="the other computer's dashboard, e.g. http://house.local:8080")
+    sy.add_argument("--token", default="", help="its dashboard token, if it has one")
+    sy.set_defaults(fn=lambda a: __import__("phrasehome.sync", fromlist=["main"]).main(a))
+
+    up = sub.add_parser("update", help="update from GitHub, checked first, rolled back if it fails")
+    up.add_argument("--check", action="store_true", help="only say whether there's an update")
+    up.add_argument("--test", action="store_true", help="also run the test suite before keeping it")
+    up.add_argument("--force", action="store_true", help="update even with files changed here")
+    up.set_defaults(fn=lambda a: __import__("phrasehome.updater", fromlist=["main"]).main(a))
+
+    bp = sub.add_parser("beeps", help="teach it an appliance's beep (washer, dryer, microwave, fridge door)")
+    bp.add_argument("action", choices=["learn", "list", "test", "forget"], nargs="?", default="list")
+    bp.add_argument("name", nargs="?", default="")
+    bp.add_argument("--file", default="", help="a recording of the beep (mp3, m4a, wav)")
+    bp.add_argument("--record", type=float, default=10.0, help="or record this many seconds from the mic")
+    bp.add_argument("--room", default="", help="only listen for it in this room")
+    bp.add_argument("--who", nargs="*", help="who to tell (default: whoever's home)")
+    bp.set_defaults(fn=lambda a: __import__("phrasehome.beeps", fromlist=["main"]).main(a))
+
+    hs = sub.add_parser("hearing-server", help="Whisper on this laptop, for the house to use over Wi-Fi")
+    hs.add_argument("--port", type=int, default=8765)
+    hs.add_argument("--model", default="", help="Whisper model (default: distil-medium.en on a 16 GB Mac)")
+    hs.add_argument("--token", default="", help="a shared secret the house must send")
+    hs.set_defaults(fn=lambda a: __import__("phrasehome.hearing_server", fromlist=["main"]).main(a))
+
     sc = sub.add_parser("scenario", help="play a whole evening against your config in seconds (dry run)")
     sc.add_argument("action", choices=["list", "run"], nargs="?", default="list")
     sc.add_argument("name", nargs="?", default="", help="a scenario name, or all")

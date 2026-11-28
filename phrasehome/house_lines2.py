@@ -202,6 +202,14 @@ PLAIN: dict = {
     "semester_on": "Semester break mode: {result}, eco heating, and I'll keep an eye on the place. Have a good break.",
     "semester_off": "Welcome back. Alarms are back on and the house is out of holiday mode.",
     "year_review": "{text}",
+    # the cancel window, shout-outs, up first
+    "cancel_window": "Okay: {what}, in {seconds} seconds. Say no to stop it.",
+    "hold_cancelled": "Okay, I won't {what}.",
+    "shout_out": "Shout-out to {name}, for {why}! Plus one house point.",
+    "shout_self": "Nice try. You can't shout yourself out.",
+    "shout_capped": "That's enough shout-outs from you for today.",
+    "up_first": "Morning, {name}. First one up today. Plus one.",
+    "up_first_week": "This week's early bird: {name}, first up {n} times.",
     # the laptop companion
     "companion_looking": "Taking a look at your screen.",
     "companion_offline": "Your laptop companion isn't running. Start it with: phrasehome companion --person and your name.",
@@ -256,6 +264,11 @@ MEAN: dict = {
     "missed_nothing": "Nothing happened while you were out, {name}. The house was peaceful. Then you came back.",
     "things_saved": "Got it: {item}, {where}. I'll remember, since you won't.",
     "things_where": "Your {item}: {where}. You told me {since}. You're welcome.",
+    "cancel_window": "{what}, in {seconds} seconds. Say no if you've changed your mind. Again.",
+    "shout_out": ["Shout-out to {name}, for {why}. Plus one. Don't let it go to your head.",
+                  "Public appreciation for {name}: {why}. Plus one. Savour it, it's rare."],
+    "up_first": ["First up today, {name}. Plus one. Who are you and what have you done with {name}?",
+                 "Morning, {name}. First one up. The others are still horizontal. Plus one."],
     "companion_nudge": ["{name}. {app}. {minutes} minutes. Your degree called, it's disappointed.",
                         "{minutes} minutes on {app}, {name}. Fascinating. Back to work."],
     "companion_report": "Today: {study} minutes of work, {distraction} minutes of distractions. Do the maths.",
@@ -288,6 +301,8 @@ UNCUT: dict = {
     "blitz_on": "Cleaning blitz, ya grubs. {minutes} minutes. {jobs}. Go.",
     "owes_none": "Nobody owes anybody a bloody cent. Suspicious as hell.",
     "companion_nudge": "Oi {name}. {minutes} bloody minutes on {app}. Back to the study, ya slacker.",
+    "shout_out": "Shout-out to {name}, for {why}! Bloody legend. Plus one.",
+    "up_first": "Morning, {name}. First one up, ya early bird. Plus one.",
 }
 
 MOODS: dict = {
@@ -297,7 +312,8 @@ MOODS: dict = {
                      "companion_nudge"],
                     "annoyed"),
     **dict.fromkeys(["hangover_on", "hangover_water", "reading_paused", "mood_dial", "tv_warn", "deadline_crunch"], "calm"),
-    **dict.fromkeys(["blitz_on", "blitz_left", "exam_kit", "job_reminder", "locked_out_ask"], "urgent"),
+    **dict.fromkeys(["blitz_on", "blitz_left", "exam_kit", "job_reminder", "locked_out_ask", "cancel_window"], "urgent"),
+    **dict.fromkeys(["shout_out", "up_first", "up_first_week"], "cheerful"),
     **dict.fromkeys(["coin", "pick_person", "thermo_war", "grades_impossible", "owes_none", "usual_done"], "cheeky"),
 }
 SAFETY: set = {"safe_word_alert", "night_out_check", "night_out_late", "stove_alert"}

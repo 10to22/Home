@@ -31,7 +31,7 @@ svg.plan rect.handle{fill:var(--acc)}
 .diary{white-space:pre-wrap}
 </style>
 <header><h1>Home</h1><div class="chips">
-<a href="/meals" class="pill" style="padding:6px 10px">Meal planner</a> <a href="/alarms" class="pill" style="padding:6px 10px">Alarms</a> <a href="/history" class="pill" style="padding:6px 10px">History</a> <a href="/ai" class="pill" style="padding:6px 10px">AI</a> <a href="/voice" class="pill" style="padding:6px 10px">Voice</a> <a href="/house" class="pill" style="padding:6px 10px">House</a>
+<a href="/meals" class="pill" style="padding:6px 10px">Meal planner</a> <a href="/alarms" class="pill" style="padding:6px 10px">Alarms</a> <a href="/history" class="pill" style="padding:6px 10px">History</a> <a href="/ai" class="pill" style="padding:6px 10px">AI</a> <a href="/voice" class="pill" style="padding:6px 10px">Voice</a> <a href="/house" class="pill" style="padding:6px 10px">House</a> <a href="/health" class="pill" style="padding:6px 10px">Health</a>
 <span id="alarmTop"></span><span id="freakTop"></span>
 <select id="mode" onchange="post('/api/mode',{mode:this.value})"></select>
 <select id="aiMode" title="AI: smart = best answers, fast = quicker" style="display:none" onchange="post('/api/ai',{mode:this.value})"><option value="smart">AI: smart</option><option value="fast">AI: fast</option></select>

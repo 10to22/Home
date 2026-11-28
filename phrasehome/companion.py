@@ -367,13 +367,18 @@ class CompanionHub:
         # calls: the door says busy while you're on one
         if room:
             manual = life.door_status.manual.get(room)
-            if cat == "call" and not manual:
-                life.door_status.manual[room] = ("busy", 0.0)
-                st["call"] = True
+            if cat == "call" and not st.get("call"):
+                if not manual:
+                    life.door_status.manual[room] = ("busy", 0.0)
+                st["call"], st["dnd_before"] = True, h.instances.dnd(inst)
+                h.instances.set_dnd(inst, True)  # no announcements in your room while you're on a call
+                h.events.log("companion.call", person=pid, on=True)
             elif cat != "call" and st.get("call"):
                 st["call"] = False
                 if manual and manual[0] == "busy" and not manual[1]:
                     life.door_status.manual.pop(room, None)
+                h.instances.set_dnd(inst, bool(st.get("dnd_before")))
+                h.events.log("companion.call", person=pid, on=False)
         # distractions while studying or crunching
         focused = (room and life.study.studying(room)) or life.deadlines.crunching(inst)
         if focused and cat == "distraction" and now - st["since"] >= self.nudge_after * 60 and now - st["nudged"] > 600:

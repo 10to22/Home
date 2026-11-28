@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import re
 import logging
 import queue
@@ -111,7 +112,16 @@ class Engine:
 
                 from .speech_tuning import whisper_beam
 
-                self.whisper = Whisper(st.whisper_model, beam=whisper_beam(self.config))
+                server = str(getattr(st, "whisper_server", "") or "")
+                if server:  # Whisper on another computer (phrasehome hearing-server)
+                    from .hearing_server import RemoteWhisper
+
+                    remote = RemoteWhisper(server, str(self.config.web.get("token", "") or ""))
+                    if not remote.available():
+                        raise RuntimeError(f"the hearing server at {server} isn't answering")
+                    self.whisper = remote
+                else:
+                    self.whisper = Whisper(st.whisper_model, beam=whisper_beam(self.config))
                 import threading as _th
 
                 self._wq: queue.Queue = queue.Queue(maxsize=50)
@@ -212,11 +222,62 @@ class Engine:
                 log.debug("second opinion: %s", e)
         return None
 
+    def _count_miss(self, source: str, text: str, L) -> None:
+        """A sentence that nearly was a command and ran nothing is a miss; a command clears them."""
+        misses = self.__dict__.setdefault("_misses", {})
+        if L.matcher.match(text) is not None:
+            misses.pop(source, None)
+            return
+        words = text.split()
+        near = L.matcher.near(text, floor=58, n=1) if len(words) <= 10 else []
+        # a misheard command has about as many words as the command ("lock toe" ~ "lockdown"); chat that
+        # happens to share words ("what a lovely day it is today" ~ "what should i wear today") doesn't
+        if near and abs(len(near[0][1].words) - len(words)) <= 1:
+            now = time.monotonic()
+            misses[source] = [t for t in misses.get(source, []) if now - t < 30] + [now]
+
+    def _say_again(self, source: str, text: str, audio: bytes, room, L):
+        """Two near misses from this mic in 30 seconds: hear this sentence with Whisper instead (they're
+        probably repeating themselves). Returns the new result, or None."""
+        if not getattr(self.config.settings, "say_again", True) or getattr(self, "whisper", None) is not None:
+            return None
+        misses = self.__dict__.setdefault("_misses", {})
+        now = time.monotonic()
+        recent = [t for t in misses.get(source, []) if now - t < 30]
+        if len(recent) < 2 or not audio:
+            return None
+        w = self._second_whisper()
+        if w is None:
+            return None
+        try:
+            from .hearing import clean
+            from .matcher import normalize
+
+            st = self.config.settings
+            wtext, conf, words = w.transcribe(clean(audio) if st.noise_cleanup else audio, self.prompt, L.lang)
+            wtext = self._plus().fix_text(normalize(wtext))
+        except Exception as e:
+            log.debug("say again: %s", e)
+            return None
+        if not wtext:
+            return None
+        misses.pop(source, None)
+        log.info("heard %r twice wrong before; Whisper hears %r", text, wtext)
+        return {"text": wtext, "result": words, "alternative_of": text}
+
     def _second_whisper(self):
         """Whisper as a second opinion while Vosk does the listening (loaded the first time it's needed)."""
         mode = str(getattr(self.config.settings, "second_opinion", "auto")).lower()
         if mode in ("off", "none", "false", "no") or getattr(self, "whisper", None) is not None:
             return None
+        if mode.startswith("http"):  # a hearing server on a laptop
+            w = self.__dict__.get("_whisper2")
+            if w is None:
+                from .hearing_server import RemoteWhisper
+
+                w = self.__dict__["_whisper2"] = RemoteWhisper(str(self.config.settings.second_opinion),
+                                                               str(self.config.web.get("token", "") or ""))
+            return w
         if mode == "auto" and sys.platform != "darwin":
             return None
         w = self.__dict__.get("_whisper2")
@@ -239,6 +300,12 @@ class Engine:
                 smoke.feed(room or source, pcm)  # beep patterns only, even in privacy mode
             except Exception as e:
                 log.debug("smoke listener: %s", e)
+        try:  # appliance beeps you taught it (tones only, like the smoke listener)
+            from .beeps import beeps_for
+
+            beeps_for(self.dispatcher).feed(room or source, pcm)
+        except Exception as e:
+            log.debug("beep listener: %s", e)
         life = getattr(self.dispatcher, "life", None)
         if life is not None and not self._hub_talking():
             try:
@@ -275,11 +342,15 @@ class Engine:
         text = plus.fix_text(result.get("text", "").strip())  # learned accent fixes
         result["text"] = text
         if text and not self.dispatcher.state.is_private(room):
-            better = self._second_guess(text, audio, room, L)
+            boosted = self._say_again(source, text, audio, room, L)
+            if boosted is not None:
+                result, text = boosted, boosted["text"]
+            better = None if boosted else self._second_guess(text, audio, room, L)
             if better and better != text:
                 log.info("heard %r; the next best guess %r is a command", text, better)
                 result = {**result, "text": better, "alternative_of": text}
                 text = better
+            self._count_miss(source, text, L)
         if self.dispatcher.state.is_private(room):
             # Privacy mode: nothing is logged, matched or sent to the AI, except the
             # command that turns privacy off (otherwise you could never say it).
@@ -959,6 +1030,16 @@ def run_or_confirm(m, dispatcher: Dispatcher, config: Config) -> None:
 
     history = getattr(dispatcher, "history", None)
     confirm = getattr(dispatcher, "confirm", None)
+    hold = float(getattr(config.settings, "cancel_seconds", 3.0) or 0)
+    if (confirm is not None and hold > 0 and not m.confirmed and not getattr(m, "held", False)
+            and getattr(m, "via", "voice") == "voice" and is_risky(m.command, config)
+            and (is_sure(m) and not getattr(m, "unsure", False))):
+        from .understanding import GO_AHEAD_IF_NO_ANSWER
+
+        if confirm._target(m) not in GO_AHEAD_IF_NO_ANSWER | {"panic", "panic_mode"}:  # never delay fire or panic
+            m.held = True
+            confirm.hold(m, hold, lambda mm: run_or_confirm(mm, dispatcher, config))
+            return
     if confirm is not None and not m.confirmed and (getattr(m, "unsure", False)
                                                     or (is_risky(m.command, config) and not is_sure(m))):
         if history:
