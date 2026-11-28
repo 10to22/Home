@@ -3,8 +3,28 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 log = logging.getLogger("phrasehome")
+
+
+class VoiceWarmUp:
+    """Makes the house's fixed lines in the background after it starts, so replies are instant.
+    voice: {warm_up: false} to skip it."""
+
+    def __init__(self, home) -> None:
+        self.home = home
+        self._running = False
+
+    def start(self) -> None:
+        v = self.home.voice
+        if v.dry_run or not (self.home.config.voice or {}).get("warm_up", True):
+            return
+        self._running = True
+        threading.Thread(target=lambda: v.warm(stop=lambda: not self._running), daemon=True).start()
+
+    def stop(self) -> None:
+        self._running = False
 
 
 def start_services(home) -> list:
@@ -24,7 +44,8 @@ def start_services(home) -> list:
     watch_log()  # the health page shows recent warnings and errors
     for label, make in (("learning sync", lambda: __import__("phrasehome.sync", fromlist=["Syncer"]).Syncer(home)),
                         ("nightly update", lambda: __import__("phrasehome.updater", fromlist=["Nightly"]).Nightly(home)),
-                        ("nightly backup", lambda: __import__("phrasehome.backup", fromlist=["AutoBackup"]).AutoBackup(home))):
+                        ("nightly backup", lambda: __import__("phrasehome.backup", fromlist=["AutoBackup"]).AutoBackup(home)),
+                        ("voice warm-up", lambda: VoiceWarmUp(home))):
         try:
             svc = make()
             home.__dict__["_" + label.replace(" ", "_")] = svc

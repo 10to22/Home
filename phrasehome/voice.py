@@ -32,7 +32,9 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import threading
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -757,8 +759,11 @@ class Voice:
             engine = self._no_piper_model(v)  # say it some other way (or not at all), and say why once
         if engine == "none" or not text.strip():
             return None
+        t0 = time.monotonic()
         try:
-            return self._synthesize(text, v, engine, emotion, knobs)
+            out = self._synthesize(text, v, engine, emotion, knobs)
+            self._timed(text, engine, time.monotonic() - t0)
+            return out
         except Exception as e:
             if engine not in self.NEURAL:
                 raise
@@ -800,9 +805,11 @@ class Voice:
                         "--sentence_silence", str(p["sentence_silence"])]
             subprocess.run(cmd, input=text.encode(), check=True, capture_output=True, timeout=60)
         elif engine == "say":  # macOS
-            said = text
+            said = re.sub(r"\[\[.*?\]\]", " ", text)  # say obeys [[...]] in the text: only ours, never a reply's
+            if said.lstrip().startswith("-"):
+                said = " " + said.lstrip()  # "-5 tonight" would be taken as an option, not spoken
             if p and p["extra_silence_ms"]:
-                said = re.sub(r"([.!?])\s+", rf"\1 [[slnc {p['extra_silence_ms']}]] ", text)
+                said = re.sub(r"([.!?])\s+", rf"\1 [[slnc {p['extra_silence_ms']}]] ", said)
             cmd = ["say", "--file-format=WAVE", "--data-format=LEI16@22050",
                    "-r", str(p["rate"] if p else int(180 * speed)), "-o", str(tmp), said]
             name = mac_voice(v.get("say_voice")) if v.get("say_voice") else None
@@ -882,6 +889,72 @@ class Voice:
         from .voice_style import ACCENTS
 
         return ACCENTS[self.style.accent]["piper_prefix"] if self.style.accent else []
+
+    # ---------- speed: how long lines take to make, and making the fixed ones ahead of time ----------
+    def _timed(self, text: str, engine: str, seconds: float) -> None:
+        stats = self.__dict__.setdefault("_speed", deque(maxlen=60))
+        made = seconds > 0.03  # under that it came from the cache
+        stats.append((made, seconds))
+        if made and seconds > 2.5 and time.monotonic() - self.__dict__.get("_slow_said", 0) > 300:
+            self.__dict__["_slow_said"] = time.monotonic()
+            log.warning("the voice (%s) took %.1f s to make %r: the house will feel slow to answer. A lighter "
+                        "voice helps (on a Mac, Lee rather than Lee (Premium)), or voice: {emotion: false}",
+                        engine, seconds, text[:50])
+
+    def speed(self) -> dict[str, Any]:
+        """{"lines": n, "cached": n, "made": n, "average": s, "slowest": s} for the recent lines."""
+        stats = list(self.__dict__.get("_speed", ()))
+        made = [s for m, s in stats if m]
+        return {"lines": len(stats), "cached": len(stats) - len(made), "made": len(made),
+                "average": round(sum(made) / len(made), 2) if made else 0.0,
+                "slowest": round(max(made), 2) if made else 0.0}
+
+    def warm_lines(self, limit: int = 250) -> list[tuple[str, str, Any]]:
+        """The house's fixed lines (nothing filled in), the ones its commands use first: (key, text, mood)."""
+        used = {str(c.action.get("speak")) for c in getattr(self.config, "commands", []) if c.action.get("speak")}
+        common = ["listening", "didnt_catch", "assistant_error", "matched", "done", "cancel_window", "hush",
+                  "privacy_on", "privacy_off", "dnd_on", "dnd_off", "go_on", "timer_cancelled", "alarm_stopped"]
+        out = []
+        for key, entry in self.phrases.items():
+            if isinstance(entry, dict) and not ({"text", "file"} & set(entry)):
+                continue  # per-language table
+            for e in entry if isinstance(entry, list) else [entry]:
+                if isinstance(e, dict) and e.get("file"):
+                    continue
+                text = str(e.get("text", "") if isinstance(e, dict) else e)
+                if not text or "{" in text or len(text) > 160:
+                    continue
+                rank = 0 if key in used else 1 if key in common else 2
+                out.append((rank, len(text), key, text, e.get("emotion") if isinstance(e, dict) else None))
+        out.sort()
+        return [(k, t, m) for _, _, k, t, m in out[:limit]]
+
+    def warm(self, limit: int = 250, stop=lambda: False) -> int:
+        """Make the fixed lines now, quietly, so they're instant when needed. Returns how many were made."""
+        from . import audio_out
+        from .voice_style import split_tag
+
+        settings = [self.base] + [v for v in (self.settings_for(r) for r in self.router.rooms()) if v != self.base]
+        done = 0
+        for key, text, mood_e in self.warm_lines(limit):
+            for v in settings[:3]:
+                while audio_out.local_busy() and not stop():
+                    time.sleep(0.5)  # never compete with the house talking
+                if stop():
+                    return done
+                tagged, said = split_tag(text)
+                mood = self.style.pick(key, said, phrase_mood=mood_e, tagged=tagged)
+                try:
+                    t0 = time.monotonic()
+                    (self.synthesize(said, v, emotion=mood) if mood else self.synthesize(said, v))
+                    done += time.monotonic() - t0 > 0.03
+                except Exception as e:
+                    log.debug("warm %s: %s", key, e)
+                    return done  # the voice isn't working: the health page will say why
+                time.sleep(0.05)
+        if done:
+            log.info("voice: made %d lines ahead of time", done)
+        return done
 
     def _no_piper_model(self, v: dict[str, Any]) -> str:
         """The Piper voice file isn't there (not downloaded yet). Use the Mac voice or espeak if there is

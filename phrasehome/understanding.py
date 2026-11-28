@@ -210,13 +210,25 @@ class Confirmations:
         self.pending: dict[str | None, tuple[float, Any]] = {}
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _listening_again() -> float:
+        """Seconds after the house stops talking until its own mic listens again (the echo wait)."""
+        from . import audio_out
+
+        return float(getattr(audio_out, "ECHO_TAIL", 0.0))
+
     def ask(self, m) -> None:
         with self._lock:
-            self.pending[m.room] = (time.monotonic() + self.window, m)
+            self.pending[m.room] = (time.monotonic() + self.window + 60, m)  # (while it asks)
         what = m.command.phrases[0]
         self.home.events.live("confirming", room=m.room, command=m.command.name, what=what)
         self.home.voice.speak("confirm_ask", room=m.room, what=what, urgent=True)
-        self.home.timeline.call_in(self.window, lambda room=m.room, mm=m: self._timeout(room, mm))
+        # the time to answer starts once it has asked and can hear again, not before it started asking
+        wait = self.window + self._listening_again()
+        with self._lock:
+            if self.pending.get(m.room, (0, None))[1] is m:
+                self.pending[m.room] = (time.monotonic() + wait, m)
+        self.home.timeline.call_in(wait, lambda room=m.room, mm=m: self._timeout(room, mm))
 
     def _timeout(self, room, m) -> None:
         with self._lock:
@@ -239,10 +251,15 @@ class Confirmations:
         """Announce a risky command and run it (`then`) after `seconds`, unless someone in that room says no."""
         holds = self.__dict__.setdefault("holds", {})
         with self._lock:
-            holds[m.room] = (time.monotonic() + seconds, m)
+            holds[m.room] = (time.monotonic() + seconds + 60, m)  # (while it says so)
         self.home.events.live("cancel_window", room=m.room, command=m.command.name, seconds=seconds)
         self.home.voice.speak("cancel_window", room=m.room, what=m.phrase or m.command.phrases[0],
                               seconds=_n(seconds), urgent=True)
+        # "in 3 seconds" means 3 seconds of being able to say no: from when it has finished saying so
+        seconds += self._listening_again()
+        with self._lock:
+            if holds.get(m.room, (0, None))[1] is m:
+                holds[m.room] = (time.monotonic() + seconds, m)
 
         def go(room=m.room, mm=m):
             with self._lock:

@@ -190,6 +190,15 @@ def checks(home, online: bool = True) -> list[dict]:
                             "Install Piper (pip install piper-tts) or set voice: {engine: say} on a Mac"))
     except Exception as e:
         out.append(_row("Voice", False, str(e)[:120], "Check the voice: section of config.yaml"))
+    try:
+        sp = home.voice.speed()
+        if sp["made"]:
+            slow = sp["average"] > 1.5
+            out.append(_row("Voice speed", not slow, f"new lines take {sp['average']} s to make (slowest "
+                            f"{sp['slowest']} s); {sp['cached']} of the last {sp['lines']} were ready already",
+                            "A lighter voice (on a Mac: Lee rather than Lee (Premium)), or voice: {emotion: false}"))
+    except Exception as e:
+        log.debug("voice speed: %s", e)
     # ---- the AI
     a = c.assistant or {}
     if a:

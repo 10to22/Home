@@ -159,3 +159,46 @@ def test_wireless_speakers_get_a_longer_wait():
     assert set_echo_tail({"echo_tail": 2.5}, SD("Living Room (AirPlay)")) == 2.5
     assert audio_out.ECHO_TAIL == 2.5
     audio_out.ECHO_TAIL = 0.8
+
+
+# ---------------------------------------------------------------- time to answer starts after it stops talking
+def test_say_no_window_starts_after_the_announcement(monkeypatch):
+    from tests.test_assistant import home as make_home  # noqa: F401
+    from tests.test_round_ten import _lock_match
+    from tests.test_wake import Clock
+    from phrasehome.listener import run_or_confirm
+    import pathlib
+    import tempfile
+
+    from phrasehome.config import load_config
+    from phrasehome.dispatcher import Dispatcher
+    from tests.test_assistant import AI_CONFIG
+
+    d = pathlib.Path(tempfile.mkdtemp())
+    (d / "c.yaml").write_text(AI_CONFIG)
+    home = Dispatcher(load_config(d / "c.yaml"))
+    home.voice.dry_run = True
+    try:
+        ck = Clock(monkeypatch)
+        real = home.voice.speak
+
+        def slow_speak(key, **v):  # the announcement takes 2.5 s to say
+            out = real(key, **v)
+            ck.offset += 2.5
+            return out
+        home.voice.speak = slow_speak
+        monkeypatch.setattr(audio_out, "ECHO_TAIL", 1.5)  # AirPods
+        ran = []
+        home.submit = lambda m: ran.append(m.command.name) or True
+        run_or_confirm(_lock_match(home), home, home.config)
+        ck.advance(home, 2.5)  # 2.5 s after it finished talking (1 s after it could hear again)
+        assert ran == [] and home.confirm.answer("kitchen", "no")  # still in time
+        ck.advance(home, 5)
+        assert ran == []
+        run_or_confirm(_lock_match(home), home, home.config)
+        ck.advance(home, 4.0)
+        assert ran == []  # 3 s of listening haven't passed yet (1.5 s of echo wait first)
+        ck.advance(home, 0.6)
+        assert ran == ["lockdown"]
+    finally:
+        home.close()

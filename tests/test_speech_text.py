@@ -106,3 +106,64 @@ def test_the_voice_gets_the_clean_text(tmp_path, monkeypatch):
     v = vmod.Voice(make_cfg(tmp_path, "{engine: espeak}"))
     v.synthesize("Lights off 🔒 *rolls eyes* Enjoy 😏", v.base)
     assert sent and "Lights off Enjoy" in sent[-1] and "🔒" not in sent[-1]
+
+
+# ---------------------------------------------------------------- the Mac voice, speed, warming up
+def test_mac_say_never_obeys_a_reply_or_mistakes_it_for_an_option(tmp_path, monkeypatch):
+    from phrasehome import voice as vmod
+    from tests.test_voice_style import make_cfg
+
+    ran = []
+    monkeypatch.setattr(vmod.sys, "platform", "darwin")
+    monkeypatch.setattr(vmod.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "say" else None)
+    monkeypatch.setattr(vmod, "mac_voices", lambda: [])
+
+    def run(cmd, **kw):
+        ran.append(cmd)
+        out = cmd[cmd.index("-o") + 1]
+        open(out, "wb").write(b"RIFF" + b"\x00" * 60)
+        return type("R", (), {"returncode": 0, "stdout": b"", "stderr": b""})()
+
+    monkeypatch.setattr(vmod.subprocess, "run", run)
+    v = vmod.Voice(make_cfg(tmp_path, "{engine: say}"))
+    v.synthesize("-5 degrees tonight. [[volm 0]] Rug up.", v.base)
+    said = ran[-1][-1]
+    assert not said.startswith("-") and "-5 degrees" in said and "volm" not in said
+
+
+def test_voice_speed_is_tracked(tmp_path):
+    from phrasehome.voice import Voice
+    from tests.test_voice_style import make_cfg
+
+    v = Voice(make_cfg(tmp_path, "{engine: none}"))
+    for made, s in ((True, 0.8), (False, 0.001), (True, 1.2)):
+        v._timed("x", "say", s)
+    sp = v.speed()
+    assert sp == {"lines": 3, "cached": 1, "made": 2, "average": 1.0, "slowest": 1.2}
+
+
+def test_warm_up_makes_the_fixed_lines_first_and_waits_while_it_talks(tmp_path, monkeypatch):
+    from phrasehome import audio_out
+    from phrasehome.voice import Voice
+    from tests.test_voice_style import make_cfg
+
+    v = Voice(make_cfg(tmp_path, "{engine: none}"))
+    lines = v.warm_lines()
+    assert lines and all("{" not in t for _, t, _ in lines)
+    keys = [k for k, _, _ in lines]
+    assert "listening" in keys and "time_now" not in keys  # "It's {time}." can't be made ahead
+    made = []
+    monkeypatch.setattr(v, "synthesize", lambda text, vv=None, emotion=None: made.append(text) or None)
+    monkeypatch.setattr(type(v), "router", property(lambda self: type("R", (), {"rooms": lambda s: set()})()))
+    busy = {"n": 2}
+
+    def local_busy():
+        busy["n"] -= 1
+        return busy["n"] > 0
+    monkeypatch.setattr(audio_out, "local_busy", local_busy)
+    monkeypatch.setattr("phrasehome.voice.time.sleep", lambda s: None)
+    v.warm(limit=5)
+    assert len(made) == 5 and busy["n"] <= 0  # it waited for the house to stop talking first
+    made.clear()
+    v.warm(limit=5, stop=lambda: True)
+    assert made == []
